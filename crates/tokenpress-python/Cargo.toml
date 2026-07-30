@@ -1,0 +1,14 @@
+[package]
+name = "tokenpress-python"
+description = "TokenPress for Python: token-minimizing formatter with parse-format-parse verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokenpress-core.workspace = true
+# Internal ruff crates: no semver guarantees, so pin exact versions and keep
+# all parser access isolated behind src/parser.rs.
+ruff_python_parser = "=0.0.6"
+ruff_python_ast = "=0.0.6"

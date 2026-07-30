@@ -1,0 +1,23 @@
+[package]
+name = "tokenpress-cli"
+description = "The tokenpress binary: token-aware formatting for Python and Rust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "tokenpress"
+path = "src/main.rs"
+
+[lib]
+name = "tokenpress_cli"
+path = "src/cli.rs"
+
+[dependencies]
+tokenpress-core.workspace = true
+tokenpress-python.workspace = true
+tokenpress-rust.workspace = true
+clap = { version = "4", features = ["derive"] }
+ignore = "0.4"
+similar = "2"

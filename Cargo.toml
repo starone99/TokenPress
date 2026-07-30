@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tokenpress-core",
+    "crates/tokenpress-python",
+    "crates/tokenpress-rust",
+    "crates/tokenpress-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/starone99/TokenPress"
+
+[workspace.dependencies]
+tokenpress-core = { path = "crates/tokenpress-core" }
+tokenpress-python = { path = "crates/tokenpress-python" }
+tokenpress-rust = { path = "crates/tokenpress-rust" }
+thiserror = "2"
+tiktoken-rs = "0.12"

@@ -1,0 +1,11 @@
+[package]
+name = "tokenpress-core"
+description = "Language-agnostic core for TokenPress: formatter/tokenizer interfaces, options, results"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tiktoken-rs.workspace = true

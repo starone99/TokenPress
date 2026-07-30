@@ -1,0 +1,4 @@
+# ruff_python_parser 0.0.6+ requires rustc 1.95.
+[toolchain]
+channel = "1.95.0"
+components = ["llvm-tools-preview", "clippy", "rustfmt"]
