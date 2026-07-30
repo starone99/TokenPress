@@ -1,6 +1,6 @@
 # TokenPress 벤치마크 결과
 
-측정일: 2026-07-31
+측정일: 2026-07-31 (오픈 모델 tokenizer 측정 추가: 2026-08-01)
 측정 바이너리: 이 파일이 포함된 커밋의 `cargo build --release -p tokenpress-cli`
 측정 명령: `tokenpress stats <corpus> --tokenizer <name> [옵션]`
 플랫폼: Windows 11, rustc 1.95.0
@@ -17,15 +17,17 @@
 
 ## 어떤 LLM 기준인가 (tokenizer ↔ 모델 매핑)
 
-| Tokenizer | 해당 모델 | 비고 |
-|---|---|---|
-| `o200k_base` | OpenAI GPT-4o, GPT-4.1, o1/o3/o4 시리즈 (Codex 계열 포함) | tiktoken 공개 vocab, 로컬 실측 |
-| `cl100k_base` | OpenAI GPT-4, GPT-3.5-turbo | tiktoken 공개 vocab, 로컬 실측 |
+| Tokenizer | 해당 모델 | 획득 방법 | 비고 |
+|---|---|---|---|
+| `o200k_base` | OpenAI GPT-4o, GPT-4.1, o1/o3/o4 시리즈 (Codex 계열 포함) | tiktoken 내장 | 로컬 실측 |
+| `cl100k_base` | OpenAI GPT-4, GPT-3.5-turbo | tiktoken 내장 | 로컬 실측 |
+| Qwen3.6 | Qwen/Qwen3.6-35B-A3B (rev `995ad96e`) | `--tokenizer hf:` + tokenizer.json | 로컬 실측 |
+| GLM-5.2 | zai-org/GLM-5.2 (rev `b4734de4`) | `--tokenizer hf:` + tokenizer.json | 로컬 실측 |
+| Kimi K3 | moonshotai/Kimi-K3 (rev `9f62e4e9`) | `--tokenizer kimi:` + tiktoken.model | tiktoken ranks + Kimi pat_str 로더로 로컬 실측 |
 
-Claude·Gemma·Qwen·Kimi·GLM 등은 아직 미측정 — Claude는 vocab 비공개라
-`count_tokens` API 실측이 필요하고, 오픈 모델은 HF tokenizer 지원(DESIGN §8.1)
-구현 후 같은 방법으로 측정한다. **비공개 tokenizer 절감률을 아래 수치에서
-외삽하지 말 것** (설계 원칙).
+Claude는 vocab 비공개라 아직 미측정 — `count_tokens` API 실측이 필요하다.
+**비공개 tokenizer 절감률을 아래 수치에서 외삽하지 말 것** (설계 원칙).
+tokenizer 파일은 `benchmarks/fetch.ps1`이 위 revision으로 고정해 내려받는다.
 
 ## 결과
 
@@ -37,8 +39,14 @@ Claude·Gemma·Qwen·Kimi·GLM 등은 아직 미측정 — Claude는 vocab 비�
 |---|---|---|---|---|
 | requests | o200k_base | 86,922 | 79,070 | **-9.0%** |
 | requests | cl100k_base | 86,531 | 78,703 | **-9.0%** |
+| requests | Qwen3.6 | 94,786 | 85,525 | **-9.8%** |
+| requests | GLM-5.2 | 86,791 | 78,961 | **-9.0%** |
+| requests | Kimi K3 | 87,235 | 79,622 | **-8.7%** |
 | ripgrep | o200k_base | 420,944 | 341,242 | **-18.9%** |
 | ripgrep | cl100k_base | 419,272 | 342,663 | **-18.3%** |
+| ripgrep | Qwen3.6 | 458,041 | 351,962 | **-23.2%** |
+| ripgrep | GLM-5.2 | 419,526 | 342,819 | **-18.3%** |
+| ripgrep | Kimi K3 | 420,393 | 343,904 | **-18.2%** |
 
 ### 공격적 설정 (컨텍스트 손실 감수)
 
@@ -50,8 +58,14 @@ Claude·Gemma·Qwen·Kimi·GLM 등은 아직 미측정 — Claude는 vocab 비�
 |---|---|---|---|---|
 | requests | o200k_base | 86,922 | 69,012 | **-20.6%** |
 | requests | cl100k_base | 86,531 | 68,619 | **-20.7%** |
+| requests | Qwen3.6 | 94,786 | 74,882 | **-21.0%** |
+| requests | GLM-5.2 | 86,791 | 68,839 | **-20.7%** |
+| requests | Kimi K3 | 87,235 | 69,599 | **-20.2%** |
 | ripgrep | o200k_base | 420,944 | 260,047 | **-38.2%** |
 | ripgrep | cl100k_base | 419,272 | 259,429 | **-38.1%** |
+| ripgrep | Qwen3.6 | 458,041 | 262,670 | **-42.7%** |
+| ripgrep | GLM-5.2 | 419,526 | 259,578 | **-38.1%** |
+| ripgrep | Kimi K3 | 420,393 | 261,072 | **-37.9%** |
 
 ## 해석
 
@@ -60,18 +74,25 @@ Claude·Gemma·Qwen·Kimi·GLM 등은 아직 미측정 — Claude는 vocab 비�
   때문이다(MVP 제약). ripgrep은 doc comment 비중이 커서 공격적 설정의 폭이 크다.
 * requests 기본 설정 -9.0%는 주석·docstring을 전부 유지한 수치다. requests는
   문서화 밀도가 높은 프로젝트라 유지 비용이 크다.
-* tokenizer 간 차이(o200k vs cl100k)가 1%p 미만~0.6%p로 작지만 존재한다 —
-  문자가 아니라 토큰을 최적화한다는 전제의 근거 데이터.
+* tokenizer 간 차이가 실재한다 — 특히 **Qwen3.6은 ripgrep에서 -23.2%로
+  o200k(-18.9%)보다 4.3%p 더 절감**된다. Qwen tokenizer가 들여쓰기·공백 런을
+  상대적으로 비싸게 인코딩하기 때문에(같은 corpus의 Before가 45.8만 vs 42.1만)
+  공백 제거의 이득이 더 크다. "문자가 아니라 토큰을 최적화한다"는 전제의
+  가장 강한 근거 데이터.
 * 컨텍스트 환산: ripgrep 전체 소스는 기본 설정만으로 128k 컨텍스트 기준
   약 3.3개 → 2.7개 컨텍스트 분량으로 줄어든다 (o200k 기준).
 
 ## 재현 방법
 
 ```powershell
-.\benchmarks\fetch.ps1
+.\benchmarks\fetch.ps1     # corpus + tokenizer 파일 다운로드 (revision 고정)
 cargo build --release -p tokenpress-cli
 .\target\release\tokenpress.exe stats benchmarks\corpus\requests --tokenizer o200k_base
 .\target\release\tokenpress.exe stats benchmarks\corpus\ripgrep --tokenizer o200k_base
+# 오픈 모델 tokenizer
+.\target\release\tokenpress.exe stats benchmarks\corpus\ripgrep --tokenizer hf:benchmarks\tokenizers\qwen3.6.json
+.\target\release\tokenpress.exe stats benchmarks\corpus\ripgrep --tokenizer hf:benchmarks\tokenizers\glm-5.2.json
+.\target\release\tokenpress.exe stats benchmarks\corpus\ripgrep --tokenizer kimi:benchmarks\tokenizers\kimi-k3.tiktoken
 # 공격적 설정
 .\target\release\tokenpress.exe stats benchmarks\corpus\requests --tokenizer o200k_base --py-strip-comments --py-strip-annotations
 .\target\release\tokenpress.exe stats benchmarks\corpus\ripgrep --tokenizer o200k_base --rs-strip-doc-comments

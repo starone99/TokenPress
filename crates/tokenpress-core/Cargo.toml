@@ -9,3 +9,7 @@ repository.workspace = true
 [dependencies]
 thiserror.workspace = true
 tiktoken-rs.workspace = true
+# fancy-regex backend avoids the C onig build; training-only features unused.
+tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
+base64 = "0.22"
+rustc-hash = "2"

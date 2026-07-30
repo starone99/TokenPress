@@ -88,7 +88,7 @@ impl Formatter for PythonFormatter {
                 verify::full(&parsed, &tokens, &code, &self.options, modified)?;
             }
         }
-        let tokenizer = options.tokenizer.load();
+        let tokenizer = options.tokenizer.load()?;
         Ok(FormatResult {
             original_tokens: tokenizer.count(source),
             formatted_tokens: tokenizer.count(&code),

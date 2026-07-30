@@ -61,7 +61,7 @@ impl Formatter for RustFormatter {
                 verify::equivalent(&file, &code)?;
             }
         }
-        let tokenizer = options.tokenizer.load();
+        let tokenizer = options.tokenizer.load()?;
         Ok(FormatResult {
             original_tokens: tokenizer.count(source),
             formatted_tokens: tokenizer.count(&code),

@@ -1,5 +1,8 @@
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
 
+use base64::Engine;
 use tiktoken_rs::CoreBPE;
 
 use crate::{Error, Result};
@@ -7,8 +10,8 @@ use crate::{Error, Result};
 /// Counts tokens for a specific LLM vocabulary.
 ///
 /// Language crates only ever need [`Tokenizer::count`] to decide which of two
-/// equivalent renderings is cheaper, so adding new tokenizer backends (e.g.
-/// HuggingFace `tokenizer.json`) never touches language crates.
+/// equivalent renderings is cheaper, so adding new tokenizer backends never
+/// touches language crates.
 pub trait Tokenizer: Send + Sync {
     fn name(&self) -> &str;
     fn count(&self, text: &str) -> usize;
@@ -17,17 +20,50 @@ pub trait Tokenizer: Send + Sync {
 /// A named, loadable tokenizer.
 ///
 /// Loading parses multi-megabyte vocabulary data, so [`TokenizerKind::load`]
-/// caches one instance per kind for the lifetime of the process.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// caches instances for the lifetime of the process.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum TokenizerKind {
+    /// tiktoken `o200k_base` (GPT-4o / GPT-4.1 / o-series), embedded.
     #[default]
     O200kBase,
+    /// tiktoken `cl100k_base` (GPT-4 / GPT-3.5), embedded.
     Cl100kBase,
+    /// A HuggingFace `tokenizer.json` file (Qwen, GLM, Gemma, Llama, ...).
+    HuggingFaceFile(PathBuf),
+    /// A tiktoken BPE ranks file (`tiktoken.model`) split with the Kimi
+    /// pattern (Kimi K2/K3 publish this format instead of tokenizer.json).
+    KimiTiktokenFile(PathBuf),
 }
 
+/// The `pat_str` from Kimi's `tokenization_kimi.py`, verbatim.
+const KIMI_PATTERN: &str = concat!(
+    r"[\p{Han}]+",
+    "|",
+    r"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?",
+    "|",
+    r"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?",
+    "|",
+    r"\p{N}{1,3}",
+    "|",
+    r" ?[^\s\p{L}\p{N}]+[\r\n]*",
+    "|",
+    r"\s*[\r\n]+",
+    "|",
+    r"\s+(?!\S)",
+    "|",
+    r"\s+",
+);
+
 impl TokenizerKind {
-    /// Resolves a CLI-facing name like `"o200k_base"`.
+    /// Resolves a CLI-facing name: `"o200k_base"`, `"cl100k_base"`,
+    /// `"hf:<tokenizer.json>"`, or `"kimi:<tiktoken.model>"`.
     pub fn from_name(name: &str) -> Result<Self> {
+        if let Some(path) = name.strip_prefix("hf:") {
+            return Ok(Self::HuggingFaceFile(PathBuf::from(path)));
+        }
+        if let Some(path) = name.strip_prefix("kimi:") {
+            return Ok(Self::KimiTiktokenFile(PathBuf::from(path)));
+        }
         match name {
             "o200k_base" => Ok(Self::O200kBase),
             "cl100k_base" => Ok(Self::Cl100kBase),
@@ -35,42 +71,103 @@ impl TokenizerKind {
         }
     }
 
-    pub fn name(self) -> &'static str {
+    pub fn load(&self) -> Result<Arc<dyn Tokenizer>> {
         match self {
-            Self::O200kBase => "o200k_base",
-            Self::Cl100kBase => "cl100k_base",
+            Self::O200kBase => {
+                static CACHE: OnceLock<Arc<Tiktoken>> = OnceLock::new();
+                Ok(CACHE
+                    .get_or_init(|| {
+                        Arc::new(Tiktoken {
+                            name: "o200k_base".into(),
+                            bpe: tiktoken_rs::o200k_base().expect("embedded o200k_base vocabulary"),
+                        })
+                    })
+                    .clone())
+            }
+            Self::Cl100kBase => {
+                static CACHE: OnceLock<Arc<Tiktoken>> = OnceLock::new();
+                Ok(CACHE
+                    .get_or_init(|| {
+                        Arc::new(Tiktoken {
+                            name: "cl100k_base".into(),
+                            bpe: tiktoken_rs::cl100k_base()
+                                .expect("embedded cl100k_base vocabulary"),
+                        })
+                    })
+                    .clone())
+            }
+            Self::HuggingFaceFile(path) => load_cached(path, |p| {
+                let tk = tokenizers::Tokenizer::from_file(p)
+                    .map_err(|e| Error::UnknownTokenizer(format!("hf:{}: {e}", p.display())))?;
+                Ok(Arc::new(HfTokenizer {
+                    name: format!("hf:{}", p.display()),
+                    tokenizer: tk,
+                }))
+            }),
+            Self::KimiTiktokenFile(path) => load_cached(path, |p| {
+                let bpe = load_tiktoken_ranks(p)?;
+                Ok(Arc::new(Tiktoken {
+                    name: format!("kimi:{}", p.display()),
+                    bpe,
+                }))
+            }),
         }
-    }
-
-    pub fn load(self) -> Arc<dyn Tokenizer> {
-        static O200K: OnceLock<Arc<Tiktoken>> = OnceLock::new();
-        static CL100K: OnceLock<Arc<Tiktoken>> = OnceLock::new();
-        let cached = match self {
-            Self::O200kBase => O200K.get_or_init(|| {
-                Arc::new(Tiktoken {
-                    name: "o200k_base",
-                    bpe: tiktoken_rs::o200k_base().expect("embedded o200k_base vocabulary"),
-                })
-            }),
-            Self::Cl100kBase => CL100K.get_or_init(|| {
-                Arc::new(Tiktoken {
-                    name: "cl100k_base",
-                    bpe: tiktoken_rs::cl100k_base().expect("embedded cl100k_base vocabulary"),
-                })
-            }),
-        };
-        cached.clone()
     }
 }
 
+/// Process-wide cache for file-based tokenizers.
+fn load_cached(
+    path: &PathBuf,
+    load: impl FnOnce(&PathBuf) -> Result<Arc<dyn Tokenizer>>,
+) -> Result<Arc<dyn Tokenizer>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Arc<dyn Tokenizer>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().expect("tokenizer cache lock");
+    if let Some(cached) = cache.get(path) {
+        return Ok(cached.clone());
+    }
+    let loaded = load(path)?;
+    cache.insert(path.clone(), loaded.clone());
+    Ok(loaded)
+}
+
+/// Parses a `tiktoken.model` ranks file: one `<base64 token> <rank>` per line.
+fn load_tiktoken_ranks(path: &PathBuf) -> Result<CoreBPE> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut ranks = rustc_hash::FxHashMap::default();
+    for line in raw.lines().filter(|l| !l.trim().is_empty()) {
+        let (token, rank) = line
+            .split_once(' ')
+            .ok_or_else(|| bad_ranks(path, "missing separator"))?;
+        let token = base64::engine::general_purpose::STANDARD
+            .decode(token)
+            .map_err(|e| bad_ranks(path, &e.to_string()))?;
+        let rank: u32 = rank
+            .trim()
+            .parse()
+            .map_err(|_| bad_ranks(path, "invalid rank"))?;
+        ranks.insert(token, rank);
+    }
+    // CoreBPE::new only fails on an invalid split pattern; ours is a fixed,
+    // valid constant.
+    Ok(
+        CoreBPE::new(ranks, rustc_hash::FxHashMap::default(), KIMI_PATTERN)
+            .expect("the Kimi split pattern is valid"),
+    )
+}
+
+fn bad_ranks(path: &std::path::Path, detail: &str) -> Error {
+    Error::UnknownTokenizer(format!("kimi:{}: {detail}", path.display()))
+}
+
 struct Tiktoken {
-    name: &'static str,
+    name: String,
     bpe: CoreBPE,
 }
 
 impl Tokenizer for Tiktoken {
     fn name(&self) -> &str {
-        self.name
+        &self.name
     }
 
     fn count(&self, text: &str) -> usize {
@@ -78,9 +175,33 @@ impl Tokenizer for Tiktoken {
     }
 }
 
+struct HfTokenizer {
+    name: String,
+    tokenizer: tokenizers::Tokenizer,
+}
+
+impl Tokenizer for HfTokenizer {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn count(&self, text: &str) -> usize {
+        self.tokenizer
+            .encode_fast(text, false)
+            .expect("hf tokenizer encodes plain text")
+            .len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn testdata(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join(name)
+    }
 
     #[test]
     fn from_name_resolves_known_tokenizers() {
@@ -91,6 +212,14 @@ mod tests {
         assert_eq!(
             TokenizerKind::from_name("cl100k_base").unwrap(),
             TokenizerKind::Cl100kBase
+        );
+        assert_eq!(
+            TokenizerKind::from_name("hf:some/tokenizer.json").unwrap(),
+            TokenizerKind::HuggingFaceFile(PathBuf::from("some/tokenizer.json"))
+        );
+        assert_eq!(
+            TokenizerKind::from_name("kimi:some/tiktoken.model").unwrap(),
+            TokenizerKind::KimiTiktokenFile(PathBuf::from("some/tiktoken.model"))
         );
     }
 
@@ -106,34 +235,69 @@ mod tests {
     }
 
     #[test]
-    fn kind_and_loaded_tokenizer_agree_on_name() {
-        for kind in [TokenizerKind::O200kBase, TokenizerKind::Cl100kBase] {
-            assert_eq!(kind.load().name(), kind.name());
+    fn builtin_tokenizers_load_and_count() {
+        for (kind, name) in [
+            (TokenizerKind::O200kBase, "o200k_base"),
+            (TokenizerKind::Cl100kBase, "cl100k_base"),
+        ] {
+            let tok = kind.load().unwrap();
+            assert_eq!(tok.name(), name);
+            assert_eq!(tok.count(""), 0);
+            assert!(tok.count("def add(a, b):\n    return a + b\n") > 0);
         }
     }
 
     #[test]
-    fn counts_empty_as_zero_and_code_as_nonzero() {
-        let tok = TokenizerKind::O200kBase.load();
-        assert_eq!(tok.count(""), 0);
-        assert!(tok.count("def add(a, b):\n    return a + b\n") > 0);
-        let tok = TokenizerKind::Cl100kBase.load();
-        assert_eq!(tok.count(""), 0);
-        assert!(tok.count("fn main() {}\n") > 0);
+    fn load_caches_one_instance_per_kind() {
+        let a = TokenizerKind::O200kBase.load().unwrap();
+        let b = TokenizerKind::O200kBase.load().unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
     }
 
     #[test]
-    fn load_caches_one_instance_per_kind() {
-        let a = TokenizerKind::O200kBase.load();
-        let b = TokenizerKind::O200kBase.load();
-        assert!(Arc::ptr_eq(&a, &b));
+    fn hf_tokenizer_loads_counts_and_caches() {
+        let kind = TokenizerKind::HuggingFaceFile(testdata("mini_tokenizer.json"));
+        let tok = kind.load().unwrap();
+        assert!(tok.name().starts_with("hf:"));
+        assert_eq!(tok.count("hello world"), 2);
+        assert_eq!(tok.count(""), 0);
+        assert!(Arc::ptr_eq(&tok, &kind.load().unwrap()));
+    }
+
+    #[test]
+    fn hf_tokenizer_errors_are_reported() {
+        let missing = TokenizerKind::HuggingFaceFile(testdata("nope.json"));
+        assert!(missing.load().err().unwrap().to_string().contains("hf:"));
+        let invalid = TokenizerKind::HuggingFaceFile(testdata("invalid.json"));
+        assert!(invalid.load().err().unwrap().to_string().contains("hf:"));
+    }
+
+    #[test]
+    fn kimi_ranks_file_loads_counts_and_caches() {
+        let kind = TokenizerKind::KimiTiktokenFile(testdata("mini_ranks.tiktoken"));
+        let tok = kind.load().unwrap();
+        assert!(tok.name().starts_with("kimi:"));
+        assert!(tok.count("ab ab") > 0);
+        assert_eq!(tok.count(""), 0);
+        assert!(Arc::ptr_eq(&tok, &kind.load().unwrap()));
+    }
+
+    #[test]
+    fn kimi_ranks_file_errors_are_reported() {
+        let missing = TokenizerKind::KimiTiktokenFile(testdata("nope.model"));
+        assert!(missing.load().is_err());
+        for fixture in ["bad_sep.tiktoken", "bad_b64.tiktoken", "bad_rank.tiktoken"] {
+            let kind = TokenizerKind::KimiTiktokenFile(testdata(fixture));
+            let err = kind.load().err().unwrap().to_string();
+            assert!(err.contains("kimi:"), "{fixture}: {err}");
+        }
     }
 
     #[test]
     fn whitespace_removal_reduces_token_count() {
         // The premise of the whole project: fewer syntax tokens in, fewer
         // LLM tokens out.
-        let tok = TokenizerKind::O200kBase.load();
+        let tok = TokenizerKind::O200kBase.load().unwrap();
         assert!(tok.count("x=f(a,b)") <= tok.count("x  =  f( a , b )"));
     }
 }

@@ -36,7 +36,8 @@ struct CommonOpts {
     /// Files or directories to process (`.py` / `.rs`).
     #[arg(required = true)]
     paths: Vec<PathBuf>,
-    /// Tokenizer to optimize for: o200k_base | cl100k_base.
+    /// Tokenizer to optimize for: o200k_base | cl100k_base |
+    /// hf:<tokenizer.json> | kimi:<tiktoken.model>.
     #[arg(long, default_value = "o200k_base")]
     tokenizer: String,
     /// Verification level applied to every output.
