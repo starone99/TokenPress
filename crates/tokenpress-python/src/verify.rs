@@ -7,8 +7,7 @@ use tokenpress_core::{Error, Result};
 
 /// Weakest level: the output must parse at all.
 pub fn reparse(code: &str) -> Result<ParsedModule> {
-    parser::parse(code)
-        .map_err(|e| Error::Verification(format!("output failed to re-parse: {e}")))
+    parser::parse(code).map_err(|e| Error::Verification(format!("output failed to re-parse: {e}")))
 }
 
 /// Full check: the output must parse, have an identical AST, and carry the
@@ -45,8 +44,8 @@ fn canonical_tokens<'a>(
         .tokens(source)
         .iter()
         .filter(|t| {
-            !matches!(t.kind, TokenKind::NonLogicalNewline | TokenKind::EndOfFile)
-                && !(t.kind == TokenKind::Comment && options.strip_comments)
+            !(matches!(t.kind, TokenKind::NonLogicalNewline | TokenKind::EndOfFile)
+                || (t.kind == TokenKind::Comment && options.strip_comments))
         })
         .map(|t| {
             let text = match t.kind {

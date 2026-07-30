@@ -147,7 +147,10 @@ mod tests {
 
     #[test]
     fn keyword_boundaries_keep_a_separating_space() {
-        assert_eq!(fmt("import os\nreturn_value = not True\n"), "import os\nreturn_value=not True");
+        assert_eq!(
+            fmt("import os\nreturn_value = not True\n"),
+            "import os\nreturn_value=not True"
+        );
         assert_eq!(fmt("x = 1 if flag else 2\n"), "x=1 if flag else 2");
     }
 
@@ -172,7 +175,10 @@ mod tests {
 
     #[test]
     fn annotations_and_walrus_are_preserved() {
-        assert_eq!(fmt("def f(x: int = 1) -> int:\n    return x\n"), "def f(x:int=1)->int:\n return x");
+        assert_eq!(
+            fmt("def f(x: int = 1) -> int:\n    return x\n"),
+            "def f(x:int=1)->int:\n return x"
+        );
         assert_eq!(fmt("if (n := 10) > 5:\n    pass\n"), "if(n:=10)>5:\n pass");
     }
 

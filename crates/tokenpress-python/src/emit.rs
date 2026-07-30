@@ -46,7 +46,11 @@ fn needs_space(prev: &Tok<'_>, next: &Tok<'_>) -> bool {
         return true;
     }
     // `1.real` lexes as a float; `1 .real` is the attribute access.
-    if matches!(prev.kind, TokenKind::Int | TokenKind::Float | TokenKind::Complex) && n == '.' {
+    if matches!(
+        prev.kind,
+        TokenKind::Int | TokenKind::Float | TokenKind::Complex
+    ) && n == '.'
+    {
         return true;
     }
     // An identifier glued onto a quote could form a string prefix (`r"x"`).

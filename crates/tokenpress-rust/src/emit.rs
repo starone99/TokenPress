@@ -37,7 +37,10 @@ enum Prev {
     Start,
     Ident(char),
     Literal(char),
-    Punct { ch: char, joint: bool },
+    Punct {
+        ch: char,
+        joint: bool,
+    },
     Close(char),
 }
 
@@ -242,13 +245,26 @@ mod tests {
             render_src("fn f(a: &u8, b: &&u8) -> bool { a == *b }"),
             "fn f(a:&u8,b:& &u8)->bool{a==*b}"
         );
-        assert!(needs_space(Prev::Punct { ch: '&', joint: false }, '&', false));
+        assert!(needs_space(
+            Prev::Punct {
+                ch: '&',
+                joint: false
+            },
+            '&',
+            false
+        ));
     }
 
     #[test]
     fn joint_operators_stay_glued() {
-        assert_eq!(render_src("fn f(a: u32) -> u32 { a << 2 }"), "fn f(a:u32)->u32{a<<2}");
-        assert_eq!(render_src("fn f() { for _ in 0..=3 {} }"), "fn f(){for _ in 0..=3{}}");
+        assert_eq!(
+            render_src("fn f(a: u32) -> u32 { a << 2 }"),
+            "fn f(a:u32)->u32{a<<2}"
+        );
+        assert_eq!(
+            render_src("fn f() { for _ in 0..=3 {} }"),
+            "fn f(){for _ in 0..=3{}}"
+        );
     }
 
     #[test]
@@ -277,7 +293,10 @@ mod tests {
 
     #[test]
     fn inner_doc_comments_use_bang_form() {
-        assert_eq!(render_src("//! Module.\nfn f() {}"), "//! Module.\nfn f(){}");
+        assert_eq!(
+            render_src("//! Module.\nfn f() {}"),
+            "//! Module.\nfn f(){}"
+        );
     }
 
     #[test]
@@ -288,10 +307,10 @@ mod tests {
 
     #[test]
     fn strip_doc_attrs_removes_doc_comments_but_keeps_doc_hidden() {
-        let file = syn::parse_file("/// gone\n#[doc(hidden)]\npub fn f() {}\nmod m { //! inner\n }")
-            .unwrap();
-        let stripped: syn::File =
-            syn::parse2(strip_doc_attrs(file.to_token_stream())).unwrap();
+        let file =
+            syn::parse_file("/// gone\n#[doc(hidden)]\npub fn f() {}\nmod m { //! inner\n }")
+                .unwrap();
+        let stripped: syn::File = syn::parse2(strip_doc_attrs(file.to_token_stream())).unwrap();
         let out = render(&stripped);
         assert_eq!(out, "#[doc(hidden)]pub fn f(){}mod m{}");
     }
@@ -300,7 +319,14 @@ mod tests {
     fn ident_before_quote_needs_space() {
         assert!(needs_space(Prev::Ident('b'), '\'', true));
         assert!(needs_space(Prev::Ident('r'), '"', true));
-        assert!(!needs_space(Prev::Punct { ch: '&', joint: false }, '\'', false));
+        assert!(!needs_space(
+            Prev::Punct {
+                ch: '&',
+                joint: false
+            },
+            '\'',
+            false
+        ));
     }
 
     #[test]

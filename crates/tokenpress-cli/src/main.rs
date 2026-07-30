@@ -2,5 +2,8 @@
 //! coverage gate can instrument it; this file is excluded from coverage.
 
 fn main() {
-    std::process::exit(tokenpress_cli::run(std::env::args_os(), &mut std::io::stdout()));
+    std::process::exit(tokenpress_cli::run(
+        std::env::args_os(),
+        &mut std::io::stdout(),
+    ));
 }

@@ -14,7 +14,11 @@ use tokenpress_python::{PythonFormatter, PythonOptions};
 use tokenpress_rust::{RustFormatter, RustOptions};
 
 #[derive(Parser)]
-#[command(name = "tokenpress", version, about = "Token-aware formatter for Python and Rust")]
+#[command(
+    name = "tokenpress",
+    version,
+    about = "Token-aware formatter for Python and Rust"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -210,8 +214,10 @@ fn execute(common: &CommonOpts, action: Action, out: &mut dyn Write) -> Result<i
             0
         }
         Action::Check => {
-            let changed: Vec<&FileOutcome> =
-                outcomes.iter().filter(|o| o.result.code != o.original).collect();
+            let changed: Vec<&FileOutcome> = outcomes
+                .iter()
+                .filter(|o| o.result.code != o.original)
+                .collect();
             for o in &changed {
                 let _ = writeln!(out, "would reformat: {}", o.path.display());
             }
@@ -221,7 +227,11 @@ fn execute(common: &CommonOpts, action: Action, out: &mut dyn Write) -> Result<i
                 changed.len(),
                 outcomes.len()
             );
-            if changed.is_empty() { 0 } else { 1 }
+            if changed.is_empty() {
+                0
+            } else {
+                1
+            }
         }
         Action::Diff => {
             for o in &outcomes {
@@ -254,7 +264,7 @@ fn thousands(n: usize) -> String {
     let digits = n.to_string();
     let mut with_sep = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             with_sep.push(',');
         }
         with_sep.push(c);
@@ -433,8 +443,7 @@ mod tests {
         let dir = Scratch::new();
         let py = dir.file("a.py", "x = 1\n");
         let clean = dir.file("b.py", "y=2");
-        let (code, text) =
-            run_cli(&["diff", py.to_str().unwrap(), clean.to_str().unwrap()]);
+        let (code, text) = run_cli(&["diff", py.to_str().unwrap(), clean.to_str().unwrap()]);
         assert_eq!(code, 0);
         assert!(text.contains("-x = 1"));
         assert!(text.contains("+x=1"));
@@ -497,8 +506,7 @@ mod tests {
     fn unknown_tokenizer_is_an_error() {
         let dir = Scratch::new();
         let py = dir.file("a.py", "x = 1\n");
-        let (code, text) =
-            run_cli(&["format", "--tokenizer", "nope", py.to_str().unwrap()]);
+        let (code, text) = run_cli(&["format", "--tokenizer", "nope", py.to_str().unwrap()]);
         assert_eq!(code, 2);
         assert!(text.contains("unknown tokenizer: nope"));
     }
@@ -508,8 +516,7 @@ mod tests {
         let dir = Scratch::new();
         let bad = dir.file("bad.py", "def f(:\n");
         let good = dir.file("good.py", "x = 1\n");
-        let (code, text) =
-            run_cli(&["format", bad.to_str().unwrap(), good.to_str().unwrap()]);
+        let (code, text) = run_cli(&["format", bad.to_str().unwrap(), good.to_str().unwrap()]);
         assert_eq!(code, 2);
         assert!(text.contains("parse error"));
         assert_eq!(std::fs::read_to_string(&good).unwrap(), "x=1");
@@ -546,8 +553,7 @@ mod tests {
     fn cl100k_tokenizer_is_accepted() {
         let dir = Scratch::new();
         let py = dir.file("a.py", "x = 1\n");
-        let (code, _) =
-            run_cli(&["stats", "--tokenizer", "cl100k_base", py.to_str().unwrap()]);
+        let (code, _) = run_cli(&["stats", "--tokenizer", "cl100k_base", py.to_str().unwrap()]);
         assert_eq!(code, 0);
     }
 

@@ -61,7 +61,9 @@ mod tests {
     fn parses_a_valid_module() {
         let m = parse("x = 1\n").unwrap();
         let toks = m.tokens("x = 1\n");
-        assert!(toks.iter().any(|t| t.kind == TokenKind::Name && t.text == "x"));
+        assert!(toks
+            .iter()
+            .any(|t| t.kind == TokenKind::Name && t.text == "x"));
         assert!(toks.iter().any(|t| t.kind == TokenKind::Newline));
     }
 

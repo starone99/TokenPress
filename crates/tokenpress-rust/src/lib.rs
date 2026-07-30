@@ -46,8 +46,7 @@ impl Formatter for RustFormatter {
     }
 
     fn format(&self, source: &str, options: &FormatOptions) -> Result<FormatResult> {
-        let mut file =
-            syn::parse_file(source).map_err(|e| Error::Parse(e.to_string()))?;
+        let mut file = syn::parse_file(source).map_err(|e| Error::Parse(e.to_string()))?;
         if self.options.strip_doc_comments {
             file = syn::parse2(emit::strip_doc_attrs(file.to_token_stream()))
                 .expect("removing attributes preserves syntax");
@@ -95,10 +94,7 @@ mod tests {
 
     #[test]
     fn doc_comments_are_kept_by_default() {
-        assert_eq!(
-            fmt("/// Adds.\npub fn f() {}\n"),
-            "/// Adds.\npub fn f(){}"
-        );
+        assert_eq!(fmt("/// Adds.\npub fn f() {}\n"), "/// Adds.\npub fn f(){}");
     }
 
     #[test]
@@ -135,7 +131,9 @@ mod tests {
             verify: VerifyLevel::Reparse,
             ..FormatOptions::default()
         };
-        let r = RustFormatter::default().format("fn f() {}\n", &opts).unwrap();
+        let r = RustFormatter::default()
+            .format("fn f() {}\n", &opts)
+            .unwrap();
         assert_eq!(r.code, "fn f(){}");
     }
 
@@ -145,7 +143,9 @@ mod tests {
             verify: VerifyLevel::External,
             ..FormatOptions::default()
         };
-        let r = RustFormatter::default().format("fn f() {}\n", &opts).unwrap();
+        let r = RustFormatter::default()
+            .format("fn f() {}\n", &opts)
+            .unwrap();
         assert_eq!(r.code, "fn f(){}");
     }
 
