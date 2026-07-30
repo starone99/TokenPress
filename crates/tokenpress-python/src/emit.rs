@@ -53,6 +53,11 @@ fn needs_space(prev: &Tok<'_>, next: &Tok<'_>) -> bool {
     {
         return true;
     }
+    // Two same-quote strings glued can change quoting: `"" "x"` → `"""x` opens
+    // a triple-quoted string (implicit concatenation).
+    if matches!(p, '"' | '\'') && n == p {
+        return true;
+    }
     // An identifier glued onto a quote could form a string prefix (`r"x"`).
     prev.kind == TokenKind::Name && matches!(n, '"' | '\'')
 }
@@ -168,6 +173,21 @@ mod tests {
         assert!(needs_space(
             &tok(TokenKind::Int, "1"),
             &tok(TokenKind::Dot, ".")
+        ));
+    }
+
+    #[test]
+    fn implicit_string_concatenation_keeps_same_quote_strings_apart() {
+        // `"" "x"` glued would open a triple-quoted string.
+        let source = "expected = (\n    \"\"\n    \"Rick: hi\"\n    \" Morty: hello\"\n)\n";
+        let parsed = parser::parse(source).unwrap();
+        let out = render(&parsed.tokens(source), &PythonOptions::default());
+        assert_eq!(out, "expected=(\"\" \"Rick: hi\" \" Morty: hello\")");
+        assert!(parser::parse(&out).is_ok());
+        // Different quote styles cannot merge and stay glued.
+        assert!(!needs_space(
+            &tok(TokenKind::String, "\"a\""),
+            &tok(TokenKind::String, "'b'")
         ));
     }
 

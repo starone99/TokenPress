@@ -62,6 +62,11 @@ fn needs_space(prev: Prev, first: char, prev_is_ident: bool) -> bool {
     if GLUE_PAIRS.contains(&(last, first)) {
         return true;
     }
+    // A literal ending in a quote or raw-string `#` glued onto a word would
+    // lex as a suffixed literal: `extern "system"fn` is one token.
+    if matches!(prev, Prev::Literal(_)) && matches!(last, '"' | '\'' | '#') && is_word(first) {
+        return true;
+    }
     // An identifier glued onto a quote could form a prefixed literal
     // (`b'x'`, `r"x"`) or swallow a lifetime/label (`break'a`).
     prev_is_ident && matches!(first, '"' | '\'')
@@ -323,6 +328,17 @@ mod tests {
         let stripped: syn::File = syn::parse2(strip_doc_attrs(file.to_token_stream())).unwrap();
         let out = render(&stripped);
         assert_eq!(out, "#[doc(hidden)]pub fn f(){}mod m{}");
+    }
+
+    #[test]
+    fn string_literal_before_a_word_keeps_a_space() {
+        // `extern "system"fn` would lex as one suffixed literal token.
+        assert_eq!(
+            render_src("unsafe extern \"system\" fn cb(x: u32) -> u32 { x }"),
+            "unsafe extern \"system\" fn cb(x:u32)->u32{x}"
+        );
+        assert!(needs_space(Prev::Literal('#'), 'f', false));
+        assert!(!needs_space(Prev::Literal('"'), '.', false));
     }
 
     #[test]

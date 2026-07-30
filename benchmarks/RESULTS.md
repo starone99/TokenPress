@@ -39,11 +39,11 @@ plus PY09 import merging only.
 
 | Corpus | Tokenizer | Before | After | Saved |
 |---|---|---|---|---|
-| requests | o200k_base | 86,922 | 79,070 | **-9.0%** |
-| requests | cl100k_base | 86,531 | 78,703 | **-9.0%** |
-| requests | Qwen3.6 | 94,786 | 85,525 | **-9.8%** |
-| requests | GLM-5.2 | 86,791 | 78,961 | **-9.0%** |
-| requests | Kimi K3 | 87,235 | 79,622 | **-8.7%** |
+| requests | o200k_base | 86,922 | 79,093 | **-9.0%** |
+| requests | cl100k_base | 86,531 | 78,726 | **-9.0%** |
+| requests | Qwen3.6 | 94,786 | 85,548 | **-9.7%** |
+| requests | GLM-5.2 | 86,791 | 78,984 | **-9.0%** |
+| requests | Kimi K3 | 87,235 | 79,645 | **-8.7%** |
 | ripgrep | o200k_base | 420,944 | 341,242 | **-18.9%** |
 | ripgrep | cl100k_base | 419,272 | 342,663 | **-18.3%** |
 | ripgrep | Qwen3.6 | 458,041 | 351,962 | **-23.2%** |
@@ -59,11 +59,11 @@ plus PY09 import merging only.
 
 | Corpus | Tokenizer | Before | After | Saved |
 |---|---|---|---|---|
-| requests | o200k_base | 86,922 | 69,012 | **-20.6%** |
-| requests | cl100k_base | 86,531 | 68,619 | **-20.7%** |
-| requests | Qwen3.6 | 94,786 | 74,882 | **-21.0%** |
-| requests | GLM-5.2 | 86,791 | 68,839 | **-20.7%** |
-| requests | Kimi K3 | 87,235 | 69,599 | **-20.2%** |
+| requests | o200k_base | 86,922 | 69,035 | **-20.6%** |
+| requests | cl100k_base | 86,531 | 68,642 | **-20.7%** |
+| requests | Qwen3.6 | 94,786 | 74,905 | **-21.0%** |
+| requests | GLM-5.2 | 86,791 | 68,862 | **-20.7%** |
+| requests | Kimi K3 | 87,235 | 69,622 | **-20.2%** |
 | ripgrep | o200k_base | 420,944 | 260,047 | **-38.2%** |
 | ripgrep | cl100k_base | 419,272 | 259,429 | **-38.1%** |
 | ripgrep | Qwen3.6 | 458,041 | 262,670 | **-42.7%** |
@@ -118,6 +118,16 @@ formatter bugs:
    the comma's Joint/Alone flag, failing the overly strict string
    comparison → switched to structural token comparison (token content and
    structure still must match exactly).
+
+A later exploratory run over Django, FastAPI and tokio (~6.4M tokens total)
+caught two more adjacency bugs, both fixed (the requests numbers above moved
+by +23 tokens as a result):
+
+4. **Python implicit string concatenation**: `"" "x"` glued into `"""x`,
+   opening a triple-quoted string → same-quote string tokens keep a space.
+5. **Rust literal suffixes**: `extern "system" fn` glued into
+   `"system"fn`, which lexes as a single suffixed literal → a literal
+   ending in `"`/`'`/`#` followed by a word keeps a space.
 
 TODO: run the upstream test suites (pytest / cargo test) on formatted
 corpora as public proof of behavior preservation.
