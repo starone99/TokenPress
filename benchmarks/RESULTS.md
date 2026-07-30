@@ -11,9 +11,18 @@ Platform: Windows 11, rustc 1.95.0
 |---|---|---|---|
 | psf/requests | v2.32.3 | `0e322af8` | 36 `.py` (src + tests + docs scripts) |
 | BurntSushi/ripgrep | 14.1.1 | `4649aa97` | 98 `.rs` (all crates) |
+| django/django | main snapshot | `50d706d0` | 2,924 `.py` |
+| fastapi/fastapi | main snapshot | `95f8322e` | 1,136 `.py` |
+| tokio-rs/tokio | main snapshot | `adc2ae7a` | 790 `.rs` |
+| langchain-ai/langchain | main snapshot | `a1a1ad3b` | 2,530 `.py` |
+| huggingface/transformers | main snapshot | `71c6f699` | 4,700 `.py` |
+| astral-sh/uv | main snapshot | `be765050` | 718 `.rs` + `.py` |
 
-**Every file passed verification** (re-parse + token/AST equivalence).
-Zero files were excluded.
+**Every parseable file passed verification** (re-parse + token/AST
+equivalence). The only skipped files across ~13,000 are two intentionally
+broken test fixtures: Django's `tests_syntax_error.py` (invalid Python by
+design) and LangChain's `non-utf8-encoding.py` (invalid UTF-8 by design) —
+both correctly rejected with per-file errors.
 
 ## Which LLM does each number apply to? (tokenizer ↔ model mapping)
 
@@ -49,6 +58,22 @@ plus PY09 import merging only.
 | ripgrep | Qwen3.6 | 458,041 | 351,962 | **-23.2%** |
 | ripgrep | GLM-5.2 | 419,526 | 342,819 | **-18.3%** |
 | ripgrep | Kimi K3 | 420,393 | 343,904 | **-18.2%** |
+
+### Well-known projects (default settings, savings %)
+
+| Project | o200k_base | cl100k_base | Qwen3.6 | GLM-5.2 | Kimi K3 |
+|---|---|---|---|---|---|
+| Django (4.22M tok) | -10.3% | -10.6% | **-12.1%** | -10.6% | -10.3% |
+| FastAPI (738k tok) | -22.2% | -22.7% | **-26.7%** | -22.6% | -22.6% |
+| tokio (1.42M tok) | -20.4% | -19.6% | **-23.1%** | -19.6% | -19.5% |
+| LangChain (2.96M tok) | -12.5% | -12.9% | **-15.6%** | -12.9% | -12.2% |
+| transformers (17.0M tok) | -8.6% | -8.9% | **-10.3%** | -8.9% | -8.5% |
+| uv (4.81M tok) | -13.3% | -13.5% | **-16.9%** | -13.3% | -13.5% |
+
+Token totals in parentheses are the o200k before-counts. Absolute savings at
+o200k: Django 435k, FastAPI 163k, tokio 290k, LangChain 370k, transformers
+1.46M, uv 641k tokens per full-repo prompt. Qwen3.6 consistently benefits
+the most (its tokenizer prices whitespace runs highest).
 
 ### Aggressive settings (accepting context loss)
 
@@ -128,6 +153,18 @@ by +23 tokens as a result):
 5. **Rust literal suffixes**: `extern "system" fn` glued into
    `"system"fn`, which lexes as a single suffixed literal → a literal
    ending in `"`/`'`/`#` followed by a word keeps a space.
+
+The transformers corpus caught one more — a genuine behavior-change bug:
+
+6. **f-string debug specifiers**: minimizing `f"{x = }"` to `f"{x=}"`
+   changes the runtime output string (the whitespace is echoed verbatim).
+   The AST-equivalence check caught it in 12 transformers files. Fix:
+   f-string interiors are now emitted verbatim, matching the design contract
+   that string content is never touched.
+
+Also hardened: a single unreadable file (e.g. LangChain's intentional
+non-UTF-8 fixture) no longer aborts the whole run — it is reported per-file
+like any other error.
 
 TODO: run the upstream test suites (pytest / cargo test) on formatted
 corpora as public proof of behavior preservation.

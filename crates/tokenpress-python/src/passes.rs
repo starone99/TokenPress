@@ -14,7 +14,7 @@
 
 use crate::parser::{ast, AstRanged, Module, TextRange, Tok, TokenKind};
 
-/// PY09 — merge adjacent import statements.
+/// PY09 - merge adjacent import statements.
 ///
 /// Statements merge only when nothing but blank lines separates them, both
 /// are the same flavor (`import` / `from <same module> import`), and neither
@@ -88,7 +88,7 @@ pub fn merge_imports<'a>(tokens: &[Tok<'a>]) -> (Vec<Tok<'a>>, bool) {
     while i < tokens.len() {
         let tok = &tokens[i];
         // Blank lines are transparent for merging (the renderer drops them),
-        // and the token after one is a line start — `import`/`from` are
+        // and the token after one is a line start - `import`/`from` are
         // keywords, so a false positive inside brackets is impossible.
         if tok.kind == TokenKind::NonLogicalNewline {
             out.push(tok.clone());
@@ -146,11 +146,11 @@ pub fn merge_imports<'a>(tokens: &[Tok<'a>]) -> (Vec<Tok<'a>>, bool) {
 /// Spans of annotation syntax collected from the AST.
 #[derive(Default)]
 struct AnnotationSpans {
-    /// `: <expr>` (parameters, annotated assignments with a value) — deleted.
+    /// `: <expr>` (parameters, annotated assignments with a value) - deleted.
     deletes: Vec<TextRange>,
-    /// Return annotations — deleted together with the preceding `->`.
+    /// Return annotations - deleted together with the preceding `->`.
     returns: Vec<TextRange>,
-    /// Bare `target: ann` statements — replaced by `pass`.
+    /// Bare `target: ann` statements - replaced by `pass`.
     replaced_stmts: Vec<TextRange>,
 }
 
@@ -182,7 +182,7 @@ impl ast::visitor::Visitor<'_> for AnnotationSpans {
     }
 }
 
-/// PYO3 — strip type annotations, using AST spans to cut tokens.
+/// PYO3 - strip type annotations, using AST spans to cut tokens.
 pub fn strip_annotations<'a>(tokens: &[Tok<'a>], module: &Module) -> (Vec<Tok<'a>>, bool) {
     use ast::visitor::Visitor;
     let mut spans = AnnotationSpans::default();
@@ -245,7 +245,7 @@ mod tests {
         let parsed = parser::parse(source).unwrap();
         let (tokens, modified) = merge_imports(&parsed.tokens(source));
         (
-            crate::emit::render(&tokens, &crate::PythonOptions::default()),
+            crate::emit::render(&tokens, source, &crate::PythonOptions::default()),
             modified,
         )
     }
@@ -254,7 +254,7 @@ mod tests {
         let parsed = parser::parse(source).unwrap();
         let (tokens, modified) = strip_annotations(&parsed.tokens(source), parsed.ast());
         (
-            crate::emit::render(&tokens, &crate::PythonOptions::default()),
+            crate::emit::render(&tokens, source, &crate::PythonOptions::default()),
             modified,
         )
     }

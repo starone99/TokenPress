@@ -193,7 +193,16 @@ fn execute(common: &CommonOpts, action: Action, out: &mut dyn Write) -> Result<i
     let mut outcomes = Vec::new();
     let mut errored = false;
     for path in files {
-        let source = std::fs::read_to_string(&path)?;
+        // A single unreadable file (e.g. a non-UTF-8 test fixture) must not
+        // abort the run: report it and continue like other per-file errors.
+        let source = match std::fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(err) => {
+                let _ = writeln!(out, "error: {}: {err}", path.display());
+                errored = true;
+                continue;
+            }
+        };
         let formatter = formatters
             .iter()
             .find(|f| f.supports(&path))
@@ -503,6 +512,18 @@ mod tests {
         let (code, text) = run_cli(&["format", txt.to_str().unwrap()]);
         assert_eq!(code, 2);
         assert!(text.contains("unsupported language"));
+    }
+
+    #[test]
+    fn non_utf8_file_is_reported_but_does_not_abort_the_run() {
+        let dir = Scratch::new();
+        let bad = dir.0.join("bad.py");
+        std::fs::write(&bad, [0xFF, 0xFE, 0x00]).unwrap();
+        let good = dir.file("good.py", "x = 1\n");
+        let (code, text) = run_cli(&["format", bad.to_str().unwrap(), good.to_str().unwrap()]);
+        assert_eq!(code, 2);
+        assert!(text.contains("bad.py"));
+        assert_eq!(std::fs::read_to_string(&good).unwrap(), "x=1");
     }
 
     #[test]

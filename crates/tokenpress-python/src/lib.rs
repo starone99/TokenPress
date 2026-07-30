@@ -77,7 +77,7 @@ impl Formatter for PythonFormatter {
             tokens = merged;
             modified |= m;
         }
-        let code = emit::render(&tokens, &self.options);
+        let code = emit::render(&tokens, source, &self.options);
         match options.verify {
             VerifyLevel::Reparse => {
                 verify::reparse(&code)?;
@@ -225,8 +225,15 @@ mod tests {
     }
 
     #[test]
-    fn fstrings_survive_verbatim() {
-        assert_eq!(fmt("y = f\"a{x + 1}b\"\n"), "y=f\"a{x+1}b\"");
+    fn fstring_interiors_are_verbatim() {
+        // Interpolation whitespace can be semantic (`f"{x = }"` echoes it
+        // into the output string), so f-strings are never minimized inside.
+        assert_eq!(fmt("y = f\"a{x + 1}b\"\n"), "y=f\"a{x + 1}b\"");
+        assert_eq!(fmt("msg = f\"{value = }\"\n"), "msg=f\"{value = }\"");
+        assert_eq!(
+            fmt("z = f\"outer {f'inner {a + b}'} end\"\n"),
+            "z=f\"outer {f'inner {a + b}'} end\""
+        );
     }
 
     #[test]

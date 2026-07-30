@@ -53,8 +53,8 @@ fn needs_space(prev: &Tok<'_>, next: &Tok<'_>) -> bool {
     {
         return true;
     }
-    // Two same-quote strings glued can change quoting: `"" "x"` → `"""x` opens
-    // a triple-quoted string (implicit concatenation).
+    // Two same-quote strings glued can change quoting: `"" "x"` becomes
+    // `"""x`, opening a triple-quoted string (implicit concatenation).
     if matches!(p, '"' | '\'') && n == p {
         return true;
     }
@@ -62,7 +62,30 @@ fn needs_space(prev: &Tok<'_>, next: &Tok<'_>) -> bool {
     prev.kind == TokenKind::Name && matches!(n, '"' | '\'')
 }
 
-pub fn render(tokens: &[Tok<'_>], options: &PythonOptions) -> String {
+/// Emits `source[i..j]` covering a whole f-string verbatim, returning the
+/// index of its FStringEnd token. Whitespace inside interpolations can be
+/// semantic (the `f"{x = }"` debug specifier echoes it into the output
+/// string), so f-string interiors are never minimized.
+fn fstring_end(tokens: &[Tok<'_>], start: usize) -> usize {
+    // The parser guarantees balanced f-string delimiters, so the loop always
+    // finds the matching end.
+    let mut nesting = 0usize;
+    let mut end = start;
+    for (offset, tok) in tokens[start..].iter().enumerate() {
+        match tok.kind {
+            TokenKind::FStringStart => nesting += 1,
+            TokenKind::FStringEnd => nesting -= 1,
+            _ => {}
+        }
+        if nesting == 0 {
+            end = start + offset;
+            break;
+        }
+    }
+    end
+}
+
+pub fn render(tokens: &[Tok<'_>], source: &str, options: &PythonOptions) -> String {
     let mut out = String::new();
     let mut depth = 0usize;
     // Last token emitted on the current line; None right after a line break.
@@ -71,14 +94,38 @@ pub fn render(tokens: &[Tok<'_>], options: &PythonOptions) -> String {
     // indented at that token's block level (PYO1 keep mode).
     let mut pending_comments: Vec<&str> = Vec::new();
 
-    for tok in tokens {
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = &tokens[i];
+        if tok.kind == TokenKind::FStringStart {
+            let end = fstring_end(tokens, i);
+            let verbatim =
+                &source[tok.range.start().to_usize()..tokens[end].range.end().to_usize()];
+            for comment in pending_comments.drain(..) {
+                out.push_str(&" ".repeat(depth));
+                out.push_str(comment);
+                out.push('\n');
+            }
+            match prev {
+                None => out.push_str(&" ".repeat(depth)),
+                Some(p) => {
+                    if needs_space(p, tok) {
+                        out.push(' ');
+                    }
+                }
+            }
+            out.push_str(verbatim);
+            prev = Some(&tokens[end]);
+            i = end + 1;
+            continue;
+        }
         match tok.kind {
             TokenKind::Indent => depth += 1,
             TokenKind::Dedent => depth = depth.saturating_sub(1),
             TokenKind::NonLogicalNewline | TokenKind::EndOfFile => {}
             TokenKind::Newline => {
                 // `prev` is None right after an emitted comment, which
-                // already broke the line — avoid a double newline.
+                // already broke the line; avoid a double newline.
                 if prev.is_some() {
                     out.push('\n');
                 }
@@ -119,6 +166,7 @@ pub fn render(tokens: &[Tok<'_>], options: &PythonOptions) -> String {
                 prev = Some(tok);
             }
         }
+        i += 1;
     }
     for comment in pending_comments.drain(..) {
         out.push_str(&" ".repeat(depth));
@@ -181,7 +229,7 @@ mod tests {
         // `"" "x"` glued would open a triple-quoted string.
         let source = "expected = (\n    \"\"\n    \"Rick: hi\"\n    \" Morty: hello\"\n)\n";
         let parsed = parser::parse(source).unwrap();
-        let out = render(&parsed.tokens(source), &PythonOptions::default());
+        let out = render(&parsed.tokens(source), source, &PythonOptions::default());
         assert_eq!(out, "expected=(\"\" \"Rick: hi\" \" Morty: hello\")");
         assert!(parser::parse(&out).is_ok());
         // Different quote styles cannot merge and stay glued.
@@ -212,7 +260,7 @@ mod tests {
     fn inline_comments_inside_brackets_break_the_line() {
         let source = "result = compute(\n    first,  # the first operand\n    second,\n)\n";
         let parsed = parser::parse(source).unwrap();
-        let out = render(&parsed.tokens(source), &PythonOptions::default());
+        let out = render(&parsed.tokens(source), source, &PythonOptions::default());
         assert_eq!(out, "result=compute(first, # the first operand\nsecond,)");
         // The output must still parse (the comment must not swallow `second`).
         assert!(parser::parse(&out).is_ok());
@@ -222,9 +270,28 @@ mod tests {
     fn comment_only_line_inside_brackets_survives() {
         let source = "items = [\n    # leading note\n    1,\n]\n";
         let parsed = parser::parse(source).unwrap();
-        let out = render(&parsed.tokens(source), &PythonOptions::default());
+        let out = render(&parsed.tokens(source), source, &PythonOptions::default());
         assert_eq!(out, "items=[ # leading note\n1,]");
         assert!(parser::parse(&out).is_ok());
+    }
+
+    #[test]
+    fn fstring_at_line_start_flushes_comments_and_indents() {
+        // Pending standalone comment + indentation are handled on the
+        // f-string fast path too.
+        let source = "def g():\n    # note\n    x = 1\n# top\nf\"{a}\"\n";
+        let parsed = parser::parse(source).unwrap();
+        let out = render(&parsed.tokens(source), source, &PythonOptions::default());
+        assert_eq!(out, "def g():\n # note\n x=1\n# top\nf\"{a}\"");
+        assert!(parser::parse(&out).is_ok());
+    }
+
+    #[test]
+    fn fstring_after_a_keyword_keeps_the_separating_space() {
+        let source = "def g():\n    return f\"{x}\"\n";
+        let parsed = parser::parse(source).unwrap();
+        let out = render(&parsed.tokens(source), source, &PythonOptions::default());
+        assert_eq!(out, "def g():\n return f\"{x}\"");
     }
 
     #[test]
@@ -232,6 +299,9 @@ mod tests {
         let source = "# alpha\n# beta\n";
         let parsed = parser::parse(source).unwrap();
         let keep = PythonOptions::default();
-        assert_eq!(render(&parsed.tokens(source), &keep), "# alpha\n# beta");
+        assert_eq!(
+            render(&parsed.tokens(source), source, &keep),
+            "# alpha\n# beta"
+        );
     }
 }
