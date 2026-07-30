@@ -13,14 +13,18 @@ pub struct ParsedModule {
     parsed: Parsed<ModModule>,
 }
 
-/// One lexed token: its kind plus the exact source text it covers.
+/// One lexed token: its kind, the exact source text it covers, and its
+/// position in the original source (used by transform passes).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tok<'a> {
     pub kind: TokenKind,
     pub text: &'a str,
+    pub range: TextRange,
 }
 
 pub use ruff_python_ast::token::TokenKind;
+pub use ruff_python_ast::{self as ast, ModModule as Module};
+pub use ruff_text_size::{Ranged as AstRanged, TextRange};
 
 pub fn parse(source: &str) -> Result<ParsedModule> {
     match parse_module(source) {
@@ -38,8 +42,14 @@ impl ParsedModule {
             .map(|t| Tok {
                 kind: t.kind(),
                 text: &source[t.range()],
+                range: t.range(),
             })
             .collect()
+    }
+
+    /// The parsed module AST (for transform passes).
+    pub fn ast(&self) -> &ModModule {
+        self.parsed.syntax()
     }
 
     /// Location-insensitive comparable form of the AST.

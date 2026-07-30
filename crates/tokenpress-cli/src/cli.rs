@@ -42,9 +42,16 @@ struct CommonOpts {
     /// Verification level applied to every output.
     #[arg(long, value_enum, default_value = "ast")]
     verify: VerifyArg,
-    /// PYO1: keep `#` comments (re-attached near their statements).
+    /// PYO1: strip `#` comments (kept by default).
     #[arg(long)]
-    py_keep_comments: bool,
+    py_strip_comments: bool,
+    /// PYO3: strip type annotations. Changes `__annotations__`; breaks
+    /// dataclass/pydantic-style runtime introspection.
+    #[arg(long)]
+    py_strip_annotations: bool,
+    /// PY09: disable merging of adjacent import statements.
+    #[arg(long)]
+    py_no_merge_imports: bool,
     /// RSO1: strip doc comments (`///`, `//!`).
     #[arg(long)]
     rs_strip_doc_comments: bool,
@@ -129,7 +136,9 @@ struct FileOutcome {
 fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
     vec![
         Box::new(PythonFormatter::new(PythonOptions {
-            strip_comments: !common.py_keep_comments,
+            strip_comments: common.py_strip_comments,
+            strip_annotations: common.py_strip_annotations,
+            merge_imports: !common.py_no_merge_imports,
         })),
         Box::new(RustFormatter::new(RustOptions {
             strip_doc_comments: common.rs_strip_doc_comments,
@@ -525,18 +534,43 @@ mod tests {
     #[test]
     fn language_flags_are_forwarded() {
         let dir = Scratch::new();
-        let py = dir.file("a.py", "# note\nx = 1\n");
+        let py = dir.file("a.py", "# note\nx: int = 1\n");
         let rs = dir.file("b.rs", "/// doc\nfn f() {}\n");
         let (code, _) = run_cli(&[
             "format",
-            "--py-keep-comments",
+            "--py-strip-comments",
+            "--py-strip-annotations",
             "--rs-strip-doc-comments",
             py.to_str().unwrap(),
             rs.to_str().unwrap(),
         ]);
         assert_eq!(code, 0);
-        assert_eq!(std::fs::read_to_string(&py).unwrap(), "# note\nx=1");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x=1");
         assert_eq!(std::fs::read_to_string(&rs).unwrap(), "fn f(){}");
+    }
+
+    #[test]
+    fn comments_and_annotations_are_kept_and_imports_merged_by_default() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "# note\nimport os\nimport sys\nx: int = 1\n");
+        let (code, _) = run_cli(&["format", py.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&py).unwrap(),
+            "# note\nimport os,sys\nx:int=1"
+        );
+    }
+
+    #[test]
+    fn import_merging_can_be_disabled() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "import os\nimport sys\n");
+        let (code, _) = run_cli(&["format", "--py-no-merge-imports", py.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&py).unwrap(),
+            "import os\nimport sys"
+        );
     }
 
     #[test]

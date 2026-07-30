@@ -1,12 +1,13 @@
 //! TokenPress for Python: token-minimizing formatter.
 //!
-//! Pipeline: lex/parse → token-stream re-render with minimal whitespace
-//! (`emit`) → verification (re-parse + token-sequence and AST equivalence,
-//! `verify`) → token accounting. Transform rules are documented in
-//! `docs/transforms/python.md` (PY**/PYO** rule IDs).
+//! Pipeline: lex/parse → transform passes (import merging, optional
+//! annotation stripping) → token-stream re-render with minimal whitespace
+//! (`emit`) → verification (`verify`) → token accounting. Transform rules are
+//! documented in `docs/transforms/python.md` (PY**/PYO** rule IDs).
 
 mod emit;
 mod parser;
+mod passes;
 mod verify;
 
 use std::path::Path;
@@ -16,14 +17,23 @@ use tokenpress_core::{FormatOptions, FormatResult, Formatter, Result, VerifyLeve
 /// Python-specific choices. See `docs/transforms/python.md` §2.
 #[derive(Clone, Debug)]
 pub struct PythonOptions {
-    /// PYO1: drop `#` comments (default). `false` re-attaches them.
+    /// PYO1: drop `#` comments. Default keeps them — comments are context
+    /// for LLMs; stripping is the opt-in.
     pub strip_comments: bool,
+    /// PYO3: drop type annotations (opt-in). This changes `__annotations__`
+    /// and breaks dataclass/pydantic/FastAPI-style runtime introspection.
+    pub strip_annotations: bool,
+    /// PY09: merge adjacent import statements (default on — adjacency keeps
+    /// side-effect order, so behavior is preserved).
+    pub merge_imports: bool,
 }
 
 impl Default for PythonOptions {
     fn default() -> Self {
         Self {
-            strip_comments: true,
+            strip_comments: false,
+            strip_annotations: false,
+            merge_imports: true,
         }
     }
 }
@@ -55,7 +65,19 @@ impl Formatter for PythonFormatter {
 
     fn format(&self, source: &str, options: &FormatOptions) -> Result<FormatResult> {
         let parsed = parser::parse(source)?;
-        let code = emit::render(&parsed.tokens(source), &self.options);
+        let mut tokens = parsed.tokens(source);
+        let mut modified = false;
+        if self.options.strip_annotations {
+            let (stripped, m) = passes::strip_annotations(&tokens, parsed.ast());
+            tokens = stripped;
+            modified |= m;
+        }
+        if self.options.merge_imports {
+            let (merged, m) = passes::merge_imports(&tokens);
+            tokens = merged;
+            modified |= m;
+        }
+        let code = emit::render(&tokens, &self.options);
         match options.verify {
             VerifyLevel::Reparse => {
                 verify::reparse(&code)?;
@@ -63,7 +85,7 @@ impl Formatter for PythonFormatter {
             // External tooling (py_compile) is not wired up yet; both levels
             // run the strongest built-in check.
             VerifyLevel::AstEquiv | VerifyLevel::External => {
-                verify::equivalent(source, &parsed, &code, &self.options)?;
+                verify::full(&parsed, &tokens, &code, &self.options, modified)?;
             }
         }
         let tokenizer = options.tokenizer.load();
@@ -87,13 +109,11 @@ mod tests {
             .code
     }
 
-    fn fmt_keep_comments(source: &str) -> String {
-        PythonFormatter::new(PythonOptions {
-            strip_comments: false,
-        })
-        .format(source, &FormatOptions::default())
-        .unwrap()
-        .code
+    fn fmt_with(source: &str, options: PythonOptions) -> String {
+        PythonFormatter::new(options)
+            .format(source, &FormatOptions::default())
+            .unwrap()
+            .code
     }
 
     #[test]
@@ -125,24 +145,74 @@ mod tests {
     }
 
     #[test]
-    fn pyo1_strips_comments_by_default() {
-        assert_eq!(fmt("# top\nx = 1  # trailing\n"), "x=1");
+    fn py09_merges_adjacent_imports_by_default() {
+        assert_eq!(
+            fmt("import os\nimport sys\n\nfrom a import b\nfrom a import c\nx = 1\n"),
+            "import os,sys\nfrom a import b,c\nx=1"
+        );
     }
 
     #[test]
-    fn pyo1_keeps_standalone_and_trailing_comments_when_asked() {
+    fn py09_can_be_disabled() {
+        let out = fmt_with(
+            "import os\nimport sys\n",
+            PythonOptions {
+                merge_imports: false,
+                ..PythonOptions::default()
+            },
+        );
+        assert_eq!(out, "import os\nimport sys");
+    }
+
+    #[test]
+    fn pyo1_keeps_comments_by_default() {
         assert_eq!(
-            fmt_keep_comments("# top\nx = 1  # trailing\ny = 2\n"),
+            fmt("# top\nx = 1  # trailing\ny = 2\n"),
             "# top\nx=1 # trailing\ny=2"
         );
     }
 
     #[test]
+    fn pyo1_strips_comments_on_request() {
+        let out = fmt_with(
+            "# top\nx = 1  # trailing\n",
+            PythonOptions {
+                strip_comments: true,
+                ..PythonOptions::default()
+            },
+        );
+        assert_eq!(out, "x=1");
+    }
+
+    #[test]
     fn keeps_indented_comment_at_its_block_level() {
         assert_eq!(
-            fmt_keep_comments("def f():\n    # doc\n    return 1\n"),
+            fmt("def f():\n    # doc\n    return 1\n"),
             "def f():\n # doc\n return 1"
         );
+    }
+
+    #[test]
+    fn pyo3_strips_annotations_on_request() {
+        let strip = PythonOptions {
+            strip_annotations: true,
+            ..PythonOptions::default()
+        };
+        assert_eq!(
+            fmt_with("def f(x: int = 1) -> int:\n    return x\n", strip.clone()),
+            "def f(x=1):\n return x"
+        );
+        assert_eq!(fmt_with("total: int = 0\n", strip.clone()), "total=0");
+        assert_eq!(fmt_with("class C:\n    x: int\n", strip), "class C:\n pass");
+    }
+
+    #[test]
+    fn annotations_are_kept_by_default() {
+        assert_eq!(
+            fmt("def f(x: int = 1) -> int:\n    return x\n"),
+            "def f(x:int=1)->int:\n return x"
+        );
+        assert_eq!(fmt("if (n := 10) > 5:\n    pass\n"), "if(n:=10)>5:\n pass");
     }
 
     #[test]
@@ -174,18 +244,9 @@ mod tests {
     }
 
     #[test]
-    fn annotations_and_walrus_are_preserved() {
-        assert_eq!(
-            fmt("def f(x: int = 1) -> int:\n    return x\n"),
-            "def f(x:int=1)->int:\n return x"
-        );
-        assert_eq!(fmt("if (n := 10) > 5:\n    pass\n"), "if(n:=10)>5:\n pass");
-    }
-
-    #[test]
-    fn empty_and_comment_only_sources_format_to_empty() {
+    fn empty_and_comment_only_sources() {
         assert_eq!(fmt(""), "");
-        assert_eq!(fmt("# only a comment\n"), "");
+        assert_eq!(fmt("# only a comment\n"), "# only a comment");
     }
 
     #[test]
@@ -237,11 +298,26 @@ mod tests {
             "def f(x):\n    if x:\n        return 1\n    return 0\n",
             "class A:\n    \"\"\"Doc.\"\"\"\n\n    def m(self):\n        return [\n            1,\n            2,\n        ]\n",
             "x = 1 if flag else 2\n",
+            "import os\nimport sys\nfrom a import b\nfrom a import c\n",
+            "# comment stays\nx = 1  # here too\n",
         ];
         for src in sources {
             let once = fmt(src);
             assert_eq!(fmt(&once), once, "not idempotent for {src:?}");
         }
+    }
+
+    #[test]
+    fn stripping_passes_are_idempotent_too() {
+        let strip = PythonOptions {
+            strip_comments: true,
+            strip_annotations: true,
+            merge_imports: true,
+        };
+        let src = "import os\nimport re\n# gone\ndef f(x: int) -> int:\n    return x\n";
+        let once = fmt_with(src, strip.clone());
+        assert_eq!(fmt_with(&once, strip.clone()), once);
+        assert_eq!(once, "import os,re\ndef f(x):\n return x");
     }
 
     #[test]

@@ -122,7 +122,11 @@ mod tests {
     use crate::parser;
 
     fn tok(kind: TokenKind, text: &str) -> Tok<'_> {
-        Tok { kind, text }
+        Tok {
+            kind,
+            text,
+            range: crate::parser::TextRange::empty(0.into()),
+        }
     }
 
     #[test]
@@ -178,9 +182,7 @@ mod tests {
     fn comment_only_file_flushes_pending_comments_at_eof() {
         let source = "# alpha\n# beta\n";
         let parsed = parser::parse(source).unwrap();
-        let keep = PythonOptions {
-            strip_comments: false,
-        };
+        let keep = PythonOptions::default();
         assert_eq!(render(&parsed.tokens(source), &keep), "# alpha\n# beta");
     }
 }
