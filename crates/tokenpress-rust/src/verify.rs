@@ -1,7 +1,11 @@
-//! Verification for Rust output: re-parse with `syn` and compare canonical
-//! token streams. Canonicalization goes through `syn::File`'s `ToTokens` so
-//! lexing differences like `>>` vs `> >` are normalized on both sides.
+//! Verification for Rust output: re-parse with `syn` and compare token
+//! streams structurally. Canonicalization goes through `syn::File`'s
+//! `ToTokens` so lexing differences like `>>` vs `> >` are normalized for
+//! ordinary code; macro bodies are compared token-by-token ignoring the
+//! Joint/Alone spacing metadata, which whitespace changes legitimately alter
+//! (`vec![1, -2]` vs `vec![1,-2]` carry identical tokens).
 
+use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
 use tokenpress_core::{Error, Result};
 
@@ -10,13 +14,24 @@ pub fn reparse(code: &str) -> Result<syn::File> {
         .map_err(|e| Error::Verification(format!("output failed to re-parse: {e}")))
 }
 
-fn canonical(file: &syn::File) -> String {
-    file.to_token_stream().to_string()
+fn stream_eq(a: TokenStream, b: TokenStream) -> bool {
+    let a: Vec<TokenTree> = a.into_iter().collect();
+    let b: Vec<TokenTree> = b.into_iter().collect();
+    a.len() == b.len()
+        && a.into_iter().zip(b).all(|(x, y)| match (x, y) {
+            (TokenTree::Ident(x), TokenTree::Ident(y)) => x == y,
+            (TokenTree::Literal(x), TokenTree::Literal(y)) => x.to_string() == y.to_string(),
+            (TokenTree::Punct(x), TokenTree::Punct(y)) => x.as_char() == y.as_char(),
+            (TokenTree::Group(x), TokenTree::Group(y)) => {
+                x.delimiter() == y.delimiter() && stream_eq(x.stream(), y.stream())
+            }
+            _ => false,
+        })
 }
 
 pub fn equivalent(original: &syn::File, code: &str) -> Result<()> {
     let reparsed = reparse(code)?;
-    if canonical(original) != canonical(&reparsed) {
+    if !stream_eq(original.to_token_stream(), reparsed.to_token_stream()) {
         return Err(Error::Verification(
             "output token stream differs from input".into(),
         ));
@@ -45,6 +60,26 @@ mod tests {
     fn glued_generics_normalize_to_the_same_stream() {
         let file = syn::parse_file("fn f() { let v: Vec<Vec<u8>> = Vec::new(); }").unwrap();
         assert!(equivalent(&file, "fn f(){let v:Vec<Vec<u8>> =Vec::new();}").is_ok());
+    }
+
+    #[test]
+    fn macro_body_spacing_changes_are_equivalent() {
+        // Removing the space after `,` flips the comma's Joint/Alone spacing
+        // metadata inside the macro body; the tokens themselves are equal.
+        let file = syn::parse_file("fn f() { let v = vec![1, -2, |x| x]; }").unwrap();
+        assert!(equivalent(&file, "fn f(){let v=vec![1,-2,|x|x];}").is_ok());
+    }
+
+    #[test]
+    fn macro_body_token_changes_are_still_rejected() {
+        let file = syn::parse_file("fn f() { m!(1, 2); }").unwrap();
+        let err = equivalent(&file, "fn f(){m!(1,3);}").unwrap_err();
+        assert!(err.to_string().contains("token stream differs"));
+        let err = equivalent(&file, "fn f(){m!(1);}").unwrap_err();
+        assert!(err.to_string().contains("token stream differs"));
+        // Same length but a different kind of token at the same position.
+        let err = equivalent(&file, "fn f(){m!(x,2);}").unwrap_err();
+        assert!(err.to_string().contains("token stream differs"));
     }
 
     #[test]

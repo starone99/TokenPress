@@ -72,15 +72,25 @@ pub fn render(tokens: &[Tok<'_>], options: &PythonOptions) -> String {
             TokenKind::Dedent => depth = depth.saturating_sub(1),
             TokenKind::NonLogicalNewline | TokenKind::EndOfFile => {}
             TokenKind::Newline => {
-                out.push('\n');
+                // `prev` is None right after an emitted comment, which
+                // already broke the line — avoid a double newline.
+                if prev.is_some() {
+                    out.push('\n');
+                }
                 prev = None;
             }
             TokenKind::Comment => {
                 if !options.strip_comments {
                     match prev {
                         Some(_) => {
+                            // An inline comment swallows everything after it
+                            // on the line, so always break the line here.
+                            // Inside brackets the break is a valid
+                            // continuation line.
                             out.push(' ');
                             out.push_str(tok.text);
+                            out.push('\n');
+                            prev = None;
                         }
                         None => pending_comments.push(tok.text),
                     }
@@ -176,6 +186,25 @@ mod tests {
             &tok(TokenKind::FStringMiddle, ""),
             &tok(TokenKind::Lbrace, "{")
         ));
+    }
+
+    #[test]
+    fn inline_comments_inside_brackets_break_the_line() {
+        let source = "result = compute(\n    first,  # the first operand\n    second,\n)\n";
+        let parsed = parser::parse(source).unwrap();
+        let out = render(&parsed.tokens(source), &PythonOptions::default());
+        assert_eq!(out, "result=compute(first, # the first operand\nsecond,)");
+        // The output must still parse (the comment must not swallow `second`).
+        assert!(parser::parse(&out).is_ok());
+    }
+
+    #[test]
+    fn comment_only_line_inside_brackets_survives() {
+        let source = "items = [\n    # leading note\n    1,\n]\n";
+        let parsed = parser::parse(source).unwrap();
+        let out = render(&parsed.tokens(source), &PythonOptions::default());
+        assert_eq!(out, "items=[ # leading note\n1,]");
+        assert!(parser::parse(&out).is_ok());
     }
 
     #[test]

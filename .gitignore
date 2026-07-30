@@ -1,4 +1,5 @@
 /target
 **/*.rs.bk
 /docs/
+/benchmarks/corpus/
 .DS_Store

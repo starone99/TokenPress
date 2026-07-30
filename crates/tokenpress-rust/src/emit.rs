@@ -18,6 +18,8 @@ const GLUE_PAIRS: &[(char, char)] = &[
     ('-', '>'),
     ('<', '<'),
     ('.', '.'),
+    // `128.. =>` glued would lex as `..=` + `>`.
+    ('.', '='),
     ('+', '='),
     ('-', '='),
     ('*', '='),
@@ -264,6 +266,14 @@ mod tests {
         assert_eq!(
             render_src("fn f() { for _ in 0..=3 {} }"),
             "fn f(){for _ in 0..=3{}}"
+        );
+    }
+
+    #[test]
+    fn open_range_pattern_before_fat_arrow_keeps_a_space() {
+        assert_eq!(
+            render_src("fn f(x: u8) -> u8 { match x { 128.. => 1, _ => 2 } }"),
+            "fn f(x:u8)->u8{match x{128.. =>1,_=>2}}"
         );
     }
 
