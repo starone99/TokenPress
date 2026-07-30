@@ -12,3 +12,4 @@ tokenpress-core.workspace = true
 # all parser access isolated behind src/parser.rs.
 ruff_python_parser = "=0.0.6"
 ruff_python_ast = "=0.0.6"
+ruff_text_size = "=0.0.6"
