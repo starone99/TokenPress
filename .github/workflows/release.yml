@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Read-only by default; only the job that publishes the release needs more.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # rustup installs the toolchain pinned in rust-toolchain.toml on first use
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace
+      - name: Test
+        run: cargo test --workspace
+
+  build:
+    name: Build (${{ matrix.target }})
+    # Gate: a tag whose tests fail never produces binaries.
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build --release -p tokenpress-cli --target ${{ matrix.target }}
+
+      - name: Package (tar.gz)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          staging="tokenpress-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "dist/${staging}"
+          cp "target/${{ matrix.target }}/release/tokenpress" "dist/${staging}/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "dist/${staging}/"
+          tar -C dist -czf "dist/${staging}.tar.gz" "${staging}"
+
+      - name: Package (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $staging = "tokenpress-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path "dist/$staging" -Force | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/tokenpress.exe" "dist/$staging/"
+          Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE "dist/$staging/"
+          Compress-Archive -Path "dist/$staging" -DestinationPath "dist/$staging.zip"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokenpress-${{ matrix.target }}
+          path: dist/*.${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    # Creating the release and uploading its assets is the only write needed.
+    permissions:
+      contents: write
+    steps:
+      - name: Download archives
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true
