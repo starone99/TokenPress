@@ -1,6 +1,7 @@
 /target
 **/*.rs.bk
 /docs/
+/LOOPLOG.md
 /benchmarks/corpus/
 /benchmarks/tokenizers/
 .DS_Store
