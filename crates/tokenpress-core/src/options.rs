@@ -11,7 +11,9 @@ pub enum VerifyLevel {
     /// Re-parse and compare normalized ASTs / token streams.
     #[default]
     AstEquiv,
-    /// Additionally run external tooling (`py_compile`, `rustc`).
+    /// Reserved for additionally running external tooling (`py_compile`,
+    /// `rustc`). Not implemented yet: every backend currently treats this
+    /// level exactly like [`VerifyLevel::AstEquiv`].
     External,
 }
 

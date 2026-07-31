@@ -207,6 +207,23 @@ fn warn_rust_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
     }
 }
 
+/// `--verify external` is accepted but not yet backed by external tooling, so
+/// users must not read it as a stronger guarantee than `--verify ast`.
+const EXTERNAL_VERIFY_WARNING: &str = "\
+warning: external-tooling verification is not implemented yet: neither
+  `py_compile` (Python) nor `rustc --emit=metadata` (Rust) is invoked.
+  `--verify external` currently behaves exactly like `--verify ast`, i.e. the
+  output is re-parsed and compared for AST / token-stream equivalence.";
+
+/// Writes the external-verification warning to `err` at most once per run.
+/// Verification runs for every subcommand, so the warning is not restricted to
+/// the rewriting ones.
+fn warn_external_verify(common: &CommonOpts, err: &mut dyn Write) {
+    if matches!(common.verify, VerifyArg::External) {
+        let _ = writeln!(err, "{EXTERNAL_VERIFY_WARNING}");
+    }
+}
+
 fn execute(
     common: &CommonOpts,
     action: Action,
@@ -216,6 +233,7 @@ fn execute(
     let formatters = formatters(common);
     let options = format_options(common)?;
     let files = discover(&common.paths, &formatters)?;
+    warn_external_verify(common, err);
     warn_rust_caveats(&files, action, err);
 
     let mut outcomes = Vec::new();
@@ -688,6 +706,59 @@ mod tests {
         let (code, _, err) = run_cli_err(&["stats", rs.to_str().unwrap()]);
         assert_eq!(code, 0);
         assert_eq!(err, "");
+    }
+
+    #[test]
+    fn external_verify_warning_is_emitted_once_per_run() {
+        let dir = Scratch::new();
+        let a = dir.file("a.py", "x = 1\n");
+        let b = dir.file("b.py", "y = 2\n");
+        let (code, out, err) = run_cli_err(&[
+            "format",
+            "--verify",
+            "external",
+            a.to_str().unwrap(),
+            b.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("py_compile"));
+        assert!(err.contains("rustc"));
+        assert!(err.contains("--verify ast"));
+        // stdout stays clean and pipeable.
+        assert!(!out.contains("warning:"));
+    }
+
+    #[test]
+    fn external_verify_warning_is_absent_for_reparse_and_ast() {
+        let dir = Scratch::new();
+        for level in ["reparse", "ast"] {
+            let py = dir.file(&format!("{level}.py"), "x = 1\n");
+            let (code, _, err) = run_cli_err(&["format", "--verify", level, py.to_str().unwrap()]);
+            assert_eq!(code, 0);
+            assert_eq!(err, "");
+        }
+        // The default level must stay silent too.
+        let py = dir.file("default.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&["format", py.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn external_verify_warning_covers_every_subcommand() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let path = py.to_str().unwrap();
+        for (args, expected) in [
+            (vec!["check", "--verify", "external", path], 1),
+            (vec!["diff", "--verify", "external", path], 0),
+            (vec!["stats", "--verify", "external", path], 0),
+        ] {
+            let (code, _, err) = run_cli_err(&args);
+            assert_eq!(code, expected);
+            assert_eq!(err.matches("warning:").count(), 1);
+        }
     }
 
     #[test]
