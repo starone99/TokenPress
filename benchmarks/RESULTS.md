@@ -173,5 +173,149 @@ Also hardened: a single unreadable file (e.g. LangChain's intentional
 non-UTF-8 fixture) no longer aborts the whole run — it is reported per-file
 like any other error.
 
-TODO: run the upstream test suites (pytest / cargo test) on formatted
-corpora as public proof of behavior preservation.
+## Behavioral verification against upstream test suites
+
+Everything above is a *structural* claim: TokenPress re-parses its own output
+and requires token/AST equivalence, and never writes a file that fails that
+check. Structural equivalence is not the same as behavioral equivalence, so
+`benchmarks/verify-upstream.sh` checks the claim from the outside — it runs
+each corpus's own upstream test suite against a TokenPress-formatted copy and
+compares the result, per test id, against an unformatted baseline copy.
+
+### Methodology
+
+The script (`benchmarks/verify-upstream.sh <requests|ripgrep|all>`) does the
+same thing for both targets:
+
+1. **Pinned corpus, SHA-asserted.** The corpus is cloned at the same tag as
+   `fetch.ps1`/`fetch.sh` and its `HEAD` is asserted against a hard-coded
+   commit SHA, so a retagged upstream cannot silently change what is verified
+   (requests `0e322af8`, ripgrep `4649aa97`).
+2. **Two pristine copies** of that corpus in a private work directory:
+   `*-baseline` (untouched) and `*-formatted`.
+3. **Format at default settings only** — no aggressive flags. Files that fail
+   TokenPress's own verification are reported and left untouched; they still
+   take part in the test run, unformatted. The copy is a git checkout, so
+   `git status --porcelain` reports exactly how many files were rewritten.
+4. **Run the project's real test suite on both copies**, each in its own
+   isolated environment (details below).
+5. **Diff per-test-id outcomes, not summary counts.** Both runs are reduced to
+   a sorted `outcome<TAB>test id` listing and compared with `diff`. Equal
+   pass/fail *totals* with a swapped pass and fail would not slip through.
+
+Exit codes are result-vs-infrastructure separated: **0** = outcomes identical,
+**1** = outcomes diverged (a result), **2** = usage or infrastructure error,
+i.e. the comparison never ran. On a non-zero exit the work directory is kept
+for inspection instead of being deleted.
+
+Isolation, per target:
+
+| Target | Runner | Isolation |
+|---|---|---|
+| requests | `pytest tests -q -p no:cacheprovider --junitxml=…` | one shared venv from `requirements-dev.txt` (byte-identical dependencies), editable install repointed at each copy and asserted via `requests.__file__`; private `TMPDIR` per run; proxy env vars stripped for both runs |
+| ripgrep | `cargo test --workspace --offline --no-fail-fast` | private `CARGO_TARGET_DIR` and `TMPDIR` per run; one shared `cargo fetch` warmed before both runs so `--offline` resolves identical dependencies; `--workspace` without `--features pcre2`, matching ripgrep's own non-pcre2 CI job |
+
+Two normalizations are needed to make the comparison meaningful, and both are
+deliberately narrow:
+
+* **requests**: parametrized test ids can embed the tree path (the suite
+  parametrizes over `__file__`), so the run directory is rewritten to a
+  `<tree>` placeholder.
+* **ripgrep**: doc-test ids embed the line number of their code block
+  (`lib.rs - f (line 42)`). Dropping `//` comments legitimately moves every
+  doc comment below them, so ` (line N)` is stripped and the doc tests stay
+  in the comparison — doc comments themselves survive formatting, so the doc
+  tests must still run and still reach the same outcome. Ids that collide
+  after stripping are kept as duplicate rows and compared as a multiset, so a
+  change in any single code block still shows up.
+
+**Methodology gotcha worth recording**: the first requests attempt reported a
+false divergence. requests' own `extract_zipped_paths()` caches its output
+under `tempfile.gettempdir()` and skips the extraction when that file already
+exists — with a shared temp directory the second run was effectively testing
+against the first run's extracted sources. Hence the private `TMPDIR` per run.
+Similarly, proxy environment variables are dropped for both runs because parts
+of the suite assert on proxy handling and an inherited `HTTPS_PROXY` fails
+tests for reasons that have nothing to do with formatting.
+
+### requests v2.32.3 — IDENTICAL
+
+| | Value |
+|---|---|
+| `.py` files | 36 |
+| Rewritten | 35 |
+| Refused by verification | 0 |
+| Verdict | **IDENTICAL** |
+
+| Outcome | Baseline | Formatted |
+|---|---|---|
+| passed | 585 | 585 |
+| failed | 5 | 5 |
+| skipped | 15 | 15 |
+| xfailed | 1 | 1 |
+
+Every test reached the same outcome on both copies. The 5 failures are
+sandbox network artifacts (no outbound network in the run environment); they
+fail identically on the unformatted copy, which is exactly why the comparison
+is against a baseline rather than against "all green".
+
+### ripgrep 14.1.1 — DIVERGED, then IDENTICAL after a fix
+
+| | Value |
+|---|---|
+| `.rs` files | 98 |
+| Rewritten | 98 |
+| Refused by verification | 0 |
+| Verdict (first run) | **DIVERGED** — 1 of 1109 tests |
+| Verdict (after fix `b1572d3`) | **IDENTICAL** — 1106 ok / 3 ignored, exit 0 |
+
+**The first ripgrep run found a real bug, and this is the most important
+result in this file.** Across 22 test binaries and 1109 tests, exactly one
+test — `grep_cli`'s `patterns_from_reader` doc test — failed on the
+formatted copy and passed on the baseline.
+
+Root cause, in `crates/tokenpress-rust/src/emit.rs`: doc attributes were
+re-emitted line by line, so a doc line whose literal contains `\` or `"` fell
+back to the raw `#[doc = "…"]` form while its neighbours in the *same*
+contiguous doc block stayed sugared (`///`). rustdoc's fragment-unindent step
+treats the two forms differently — it strips the conventional leading space
+from sugared fragments but keeps it on raw ones — so a mixed block
+reconstructs the doc example with a stray leading space on exactly the raw
+lines. In this case that space landed inside a multi-line string literal in
+the example, changing what the example asserts.
+
+Token/AST equivalence is structurally blind to this class of change: `/// x`
+and `#[doc = " x"]` are the same token stream, so format-time verification
+passed and only the upstream suite caught it. Fix (commit `b1572d3`,
+written test-first): a contiguous same-kind doc block is now emitted in one
+consistent form — fully sugared, or fully raw `#[doc = …]` if any line needs
+the escape fallback — so rustdoc unindents the whole block uniformly. The
+re-run after the fix is IDENTICAL.
+
+This is the whole argument for running the upstream suites: a 1-in-1109
+behavioral divergence that the formatter's own verification could not see, in
+a corpus that had already passed every structural check reported earlier in
+this file.
+
+### Scope and caveats
+
+* These runs verify **default settings only**. The aggressive settings above
+  (`--py-strip-comments`, `--py-strip-annotations`, `--rs-strip-doc-comments`)
+  are knowingly lossy and are not covered by this harness — stripping doc
+  comments would delete the doc tests being compared.
+* The Rust comment-loss caveat still stands: `//` and `/* */` comments are
+  dropped, and no test suite can detect that, because comments do not run.
+  Behavioral equivalence is not context equivalence.
+* Only two corpora are covered (requests, ripgrep). The larger corpora in the
+  table above are verified structurally, not behaviorally.
+* The 5 requests failures are environment artifacts, not upstream-green
+  results; the claim is *identical outcomes*, not *all tests pass*.
+
+### Reproduce
+
+```bash
+./benchmarks/verify-upstream.sh requests   # pytest, junit per-test-id diff
+./benchmarks/verify-upstream.sh ripgrep    # cargo test, multiset diff
+./benchmarks/verify-upstream.sh all
+# exit 0 = identical, 1 = diverged, 2 = the comparison never ran
+```
