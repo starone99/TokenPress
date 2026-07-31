@@ -7,7 +7,7 @@
 # settings, and runs the project's real test suite against both. The run only
 # succeeds if every test reaches the same outcome on both copies.
 #
-# Usage: verify-upstream.sh <requests|all>
+# Usage: verify-upstream.sh <requests|ripgrep|all>
 #
 # Exit codes: 0 = outcomes identical, 1 = outcomes diverged, 2 = usage or
 # infrastructure error (the comparison never ran).
@@ -21,6 +21,10 @@ corpus="$script_dir/corpus"
 # retagged upstream cannot silently change what is being verified.
 requests_tag="v2.32.3"
 requests_sha="0e322af87745eff34caffe4df68456ebc20d9068"
+
+# Same pin as fetch.sh (BurntSushi/ripgrep 14.1.1), asserted the same way.
+ripgrep_tag="14.1.1"
+ripgrep_sha="4649aa9700619f94cf9c66876e9549d83420e16c"
 
 work_dir=""
 cleanup() {
@@ -42,8 +46,9 @@ usage: verify-upstream.sh <target>
 targets:
   requests   psf/requests v2.32.3 - format it, run its pytest suite on the
              unformatted and the formatted copy, require identical outcomes
-  all        every implemented target (currently: requests)
-  ripgrep    not implemented yet
+  ripgrep    BurntSushi/ripgrep 14.1.1 - the same comparison against its
+             cargo test suite
+  all        every target (requests, then ripgrep)
 EOF
 }
 
@@ -70,6 +75,22 @@ ensure_requests_corpus() {
         die "corpus $dest is at $head, expected the pinned $requests_sha"
     fi
     echo "corpus: psf/requests $requests_tag ($requests_sha)"
+}
+
+# The same for the pinned ripgrep corpus.
+ensure_ripgrep_corpus() {
+    local dest="$corpus/ripgrep"
+    if [ ! -e "$dest" ]; then
+        mkdir -p "$corpus"
+        git clone --quiet --depth 1 --branch "$ripgrep_tag" \
+            https://github.com/BurntSushi/ripgrep "$dest"
+    fi
+    local head
+    head="$(git -C "$dest" rev-parse HEAD)"
+    if [ "$head" != "$ripgrep_sha" ]; then
+        die "corpus $dest is at $head, expected the pinned $ripgrep_sha"
+    fi
+    echo "corpus: BurntSushi/ripgrep $ripgrep_tag ($ripgrep_sha)"
 }
 
 # --- helpers ----------------------------------------------------------------
@@ -159,8 +180,10 @@ verify_requests() {
 
     local baseline="$work_dir/requests-baseline"
     local formatted="$work_dir/requests-formatted"
-    cp -a "$corpus/requests" "$baseline"
-    cp -a "$corpus/requests" "$formatted"
+    # Explicitly guarded: main() collects a target's exit status, which turns
+    # off errexit for everything the target calls.
+    cp -a "$corpus/requests" "$baseline" || die "cannot copy the requests corpus"
+    cp -a "$corpus/requests" "$formatted" || die "cannot copy the requests corpus"
 
     # Default settings only - no aggressive flags. Files that fail TokenPress's
     # own verification are reported and left untouched; they still take part in
@@ -233,6 +256,179 @@ assert_requests_from() {
     esac
 }
 
+# --- ripgrep ----------------------------------------------------------------
+
+# Runs the upstream cargo suite in $1, console output (stdout and stderr
+# interleaved, which is what carries the per-binary announcements) to $2. $3 is
+# "baseline" or "formatted" and only decides how a build failure is reported.
+#
+# Isolation, mirroring the pytest runner:
+#   * a private CARGO_TARGET_DIR, so neither run can pick up the other's
+#     artifacts or fingerprints;
+#   * a private TMPDIR, because ripgrep's integration tests build their fixture
+#     directories under the temp dir and name them after the test, so a shared
+#     TMPDIR would let the two runs collide;
+#   * --offline, so both runs resolve against the registry cache warmed once
+#     before the first run and no dependency can move in between;
+#   * --workspace, matching what ripgrep's own CI runs (without --features
+#     pcre2, like its non-pcre2 job);
+#   * --no-fail-fast, because a failure in one test binary would otherwise stop
+#     the remaining binaries and truncate the comparison.
+#
+# Both runs happen in sibling directories of the same work directory, so
+# rustup resolves the same toolchain for each.
+#
+# Failing tests are the thing being measured, so a non-zero exit is expected;
+# cargo reports both a failing test and a failing build as 101, so a build
+# failure is detected from the log instead.
+run_cargo_test() {
+    local dir="$1" log="$2" role="$3"
+    local tmp="$log.tmpdir" target="$log.target"
+    mkdir -p "$tmp" "$target" || die "cannot create run directories for $log"
+    local rc=0
+    (
+        cd "$dir"
+        env TMPDIR="$tmp" CARGO_TARGET_DIR="$target" \
+            cargo test --workspace --offline --no-fail-fast
+    ) >"$log" 2>&1 || rc=$?
+    if grep -qE '^error(\[|: could not compile)' "$log"; then
+        tail -n 30 "$log" >&2
+        if [ "$role" = "baseline" ]; then
+            die "the unformatted copy does not build, so nothing can be compared"
+        fi
+        # A formatted copy that no longer compiles is the strongest divergence
+        # there is, but it yields no per-test outcomes to diff, so the verdict
+        # is reported here rather than by the caller.
+        echo "verdict: DIVERGED - the formatted copy no longer compiles"
+        exit 1
+    fi
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 101 ]; then
+        tail -n 30 "$log" >&2
+        die "cargo test exited $rc in $dir (it never produced a comparable result)"
+    fi
+}
+
+# Turns a cargo test console log into a sorted "outcome<TAB>target<TAB>test id"
+# listing. Stable libtest has no machine-readable output, so the human-readable
+# per-test lines are parsed instead.
+#
+# cargo runs the test binaries one after another and announces each one before
+# it starts, which is the only place the target name appears; that name is
+# carried over to the test lines that follow so that same-named tests in
+# different crates stay apart. The hash suffix of the binary is dropped - it is
+# not stable across trees. The label is the test target's name, not the
+# package's, so two packages with a same-named test target share one label;
+# that only makes a label ambiguous, it cannot hide a difference, because the
+# listings are compared as multisets.
+#
+# Doc test ids embed the line number of their code block ("lib.rs - f (line
+# 42)", sometimes followed by a mode such as " - compile"). TokenPress drops
+# `//` comments, which moves every doc comment below them, so those ids shift
+# for reasons that have nothing to do with behaviour. The line number is
+# therefore stripped and doc tests stay in the comparison: doc comments
+# themselves survive formatting, so the doc tests must still run and still
+# reach the same outcome. Ids that collide after stripping (several code blocks
+# in one doc comment) are kept as duplicate rows, so a change in any one of
+# them still shows up as a difference.
+outcomes_from_cargo() {
+    awk '
+        $1 == "Running" {
+            bin = $NF
+            gsub(/[()]/, "", bin)
+            sub(/^.*\//, "", bin)
+            sub(/-[0-9a-f]+$/, "", bin)
+            target = bin
+            next
+        }
+        $1 == "Doc-tests" {
+            target = "doc-tests/" $2
+            next
+        }
+        /^test result:/ { next }
+        /^test .* \.\.\. / {
+            line = substr($0, 6)
+            at = index(line, " ... ")
+            name = substr(line, 1, at - 1)
+            outcome = substr(line, at + 5)
+            if (target ~ /^doc-tests\//) {
+                sub(/ \(line [0-9]+\)/, "", name)
+            }
+            # "ignored" can carry a reason, "ok" nothing else; anything
+            # unexpected is kept verbatim so it cannot be silently equated.
+            if (outcome ~ /^ignored/) { outcome = "ignored" }
+            printf "%s\t%s\t%s\n", outcome, target, name
+        }
+    ' "$1" | sort
+}
+
+verify_ripgrep() {
+    ensure_ripgrep_corpus
+
+    local tokenpress
+    tokenpress="$(build_tokenpress)"
+
+    local baseline="$work_dir/ripgrep-baseline"
+    local formatted="$work_dir/ripgrep-formatted"
+    cp -a "$corpus/ripgrep" "$baseline" || die "cannot copy the ripgrep corpus"
+    cp -a "$corpus/ripgrep" "$formatted" || die "cannot copy the ripgrep corpus"
+
+    # Default settings only. A .rs file makes TokenPress warn on stderr that
+    # `//` comments are dropped - that is by design and not an error; only the
+    # "error: " lines on stdout are refusals, and a refused file is left
+    # untouched and takes part in the test run unformatted.
+    local format_log="$work_dir/ripgrep-format.log"
+    local rc=0
+    "$tokenpress" format "$formatted" >"$format_log" 2>&1 || rc=$?
+    local refused
+    refused="$(grep -c '^error: ' "$format_log" || true)"
+    if [ "$rc" -ne 0 ] && [ "$refused" -eq 0 ]; then
+        tail -n 30 "$format_log" >&2
+        die "tokenpress format exited $rc"
+    fi
+    local changed
+    changed="$(git -C "$formatted" status --porcelain | wc -l)"
+    local total
+    total="$(find "$formatted" -name '*.rs' -not -path '*/.git/*' | wc -l)"
+
+    # Warmed once, from the unformatted copy: formatting never touches
+    # Cargo.toml or Cargo.lock, so both copies resolve to the same crates and
+    # the two --offline runs below share one immutable registry cache.
+    (cd "$baseline" && cargo fetch --quiet) ||
+        die "cargo fetch failed - the dependencies of the pinned corpus are unavailable"
+
+    run_cargo_test "$baseline" "$work_dir/ripgrep-baseline.log" baseline
+    run_cargo_test "$formatted" "$work_dir/ripgrep-formatted.log" formatted
+
+    outcomes_from_cargo "$work_dir/ripgrep-baseline.log" \
+        >"$work_dir/ripgrep-baseline.outcomes"
+    outcomes_from_cargo "$work_dir/ripgrep-formatted.log" \
+        >"$work_dir/ripgrep-formatted.outcomes"
+    if [ ! -s "$work_dir/ripgrep-baseline.outcomes" ]; then
+        die "no test results were parsed from the baseline run"
+    fi
+
+    echo
+    echo "ripgrep $ripgrep_tag"
+    echo "  .rs files          $total"
+    echo "  rewritten          $changed"
+    echo "  refused by verify  $refused"
+    echo "  unchanged          $((total - changed - refused))"
+    echo "baseline outcomes:"
+    tally "$work_dir/ripgrep-baseline.outcomes"
+    echo "formatted outcomes:"
+    tally "$work_dir/ripgrep-formatted.outcomes"
+
+    if diff -u "$work_dir/ripgrep-baseline.outcomes" \
+        "$work_dir/ripgrep-formatted.outcomes" \
+        >"$work_dir/ripgrep-outcomes.diff"; then
+        echo "verdict: IDENTICAL - every test reached the same outcome on both copies"
+        return 0
+    fi
+    echo "verdict: DIVERGED - the formatted copy behaves differently:"
+    sed 's/^/  /' "$work_dir/ripgrep-outcomes.diff"
+    return 1
+}
+
 # --- main -------------------------------------------------------------------
 
 main() {
@@ -245,22 +441,33 @@ main() {
         usage
         exit 0
         ;;
-    ripgrep)
-        die "target 'ripgrep' is not implemented yet: verifying the Rust corpus \
-needs a cargo-test harness, which a later iteration adds"
-        ;;
-    requests | all) ;;
+    requests | ripgrep | all) ;;
     *)
         usage
         exit 2
         ;;
     esac
 
-    command -v python3 >/dev/null || die "python3 is required"
     command -v cargo >/dev/null || die "cargo is required"
+    if [ "$1" != "ripgrep" ]; then
+        command -v python3 >/dev/null || die "python3 is required"
+    fi
     work_dir="$(mktemp -d "${TMPDIR:-/tmp}/tokenpress-verify-XXXXXX")"
 
-    verify_requests
+    # A target returns 1 when the outcomes diverged; that is a result, not an
+    # infrastructure failure, so it is collected instead of aborting the run.
+    # Everything that makes a comparison impossible goes through die() and
+    # leaves immediately.
+    local diverged=0
+    case "$1" in
+    requests) verify_requests || diverged=1 ;;
+    ripgrep) verify_ripgrep || diverged=1 ;;
+    all)
+        verify_requests || diverged=1
+        verify_ripgrep || diverged=1
+        ;;
+    esac
+    return "$diverged"
 }
 
 main "$@"
