@@ -1,4 +1,6 @@
 # Coverage gate: fails unless line coverage is 100%.
-# The binary entry point (main.rs) is a thin uninstrumentable wrapper and is excluded.
-cargo llvm-cov --workspace --fail-under-lines 100 --ignore-filename-regex 'src[/\\]main\.rs' --summary-only @args
+# Sole exclusion: the CLI's thin, uninstrumentable entry point. The regex is
+# anchored on the crate directory so a main.rs in any other crate still counts.
+# The separator class also matches Windows-style reported paths.
+cargo llvm-cov --workspace --fail-under-lines 100 --ignore-filename-regex 'tokenpress-cli[/\\]src[/\\]main\.rs' --summary-only @args
 exit $LASTEXITCODE
