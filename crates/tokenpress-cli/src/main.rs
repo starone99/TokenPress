@@ -5,5 +5,6 @@ fn main() {
     std::process::exit(tokenpress_cli::run(
         std::env::args_os(),
         &mut std::io::stdout(),
+        &mut std::io::stderr(),
     ));
 }

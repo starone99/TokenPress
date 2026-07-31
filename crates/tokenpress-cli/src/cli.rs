@@ -90,7 +90,8 @@ enum Cmd {
 
 /// Runs the CLI and returns the process exit code.
 /// Exit codes: 0 = success, 1 = `check` found changes, 2 = error.
-pub fn run<I, T>(args: I, out: &mut dyn Write) -> i32
+/// `out` receives the primary (pipeable) output, `err` diagnostics.
+pub fn run<I, T>(args: I, out: &mut dyn Write, err: &mut dyn Write) -> i32
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
@@ -111,7 +112,7 @@ where
         Cmd::Diff { common } => (common, Action::Diff),
         Cmd::Stats { common, json } => (common, Action::Stats { json: *json }),
     };
-    match execute(common, action, out) {
+    match execute(common, action, out, err) {
         Ok(code) => code,
         Err(err) => {
             let _ = writeln!(out, "error: {err}");
@@ -185,10 +186,37 @@ fn discover(paths: &[PathBuf], formatters: &[Box<dyn Formatter>]) -> Result<Vec<
     Ok(files)
 }
 
-fn execute(common: &CommonOpts, action: Action, out: &mut dyn Write) -> Result<i32> {
+/// Caveats that apply to every rewritten Rust file. Both stem from re-emitting
+/// the `syn` token stream, so they are reported together as one warning.
+const RUST_CAVEAT_WARNING: &str = "\
+warning: Rust output is not comment-preserving: `//` and `/* */` comments are
+  always dropped; only `///` and `//!` doc comments survive, and only without
+  --rs-strip-doc-comments. Whitespace inside macro bodies is minimized, which
+  can change the runtime output of whitespace-sensitive macros such as
+  `stringify!` — token-canonical verification cannot detect that.";
+
+/// Writes the shared Rust caveat warning to `err` at most once per run: only
+/// for the commands that rewrite code, and only if a `.rs` file is processed.
+fn warn_rust_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
+    let rewrites = matches!(action, Action::Format { .. } | Action::Check | Action::Diff);
+    let any_rust = files
+        .iter()
+        .any(|p| p.extension().is_some_and(|ext| ext == "rs"));
+    if rewrites && any_rust {
+        let _ = writeln!(err, "{RUST_CAVEAT_WARNING}");
+    }
+}
+
+fn execute(
+    common: &CommonOpts,
+    action: Action,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<i32> {
     let formatters = formatters(common);
     let options = format_options(common)?;
     let files = discover(&common.paths, &formatters)?;
+    warn_rust_caveats(&files, action, err);
 
     let mut outcomes = Vec::new();
     let mut errored = false;
@@ -379,12 +407,23 @@ mod tests {
         }
     }
 
-    fn run_cli(args: &[&str]) -> (i32, String) {
+    /// Runs the CLI, returning the exit code together with stdout and stderr.
+    fn run_cli_err(args: &[&str]) -> (i32, String, String) {
         let mut argv = vec!["tokenpress"];
         argv.extend(args);
         let mut out = Vec::new();
-        let code = run(argv, &mut out);
-        (code, String::from_utf8(out).unwrap())
+        let mut err = Vec::new();
+        let code = run(argv, &mut out, &mut err);
+        (
+            code,
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    fn run_cli(args: &[&str]) -> (i32, String) {
+        let (code, out, _) = run_cli_err(args);
+        (code, out)
     }
 
     #[test]
@@ -611,6 +650,44 @@ mod tests {
         let py = dir.file("a.py", "x = 1\n");
         let (code, _) = run_cli(&["stats", "--tokenizer", "cl100k_base", py.to_str().unwrap()]);
         assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn rust_caveat_warning_is_emitted_once_per_run() {
+        let dir = Scratch::new();
+        let a = dir.file("a.rs", "// note\nfn f() {}\n");
+        let b = dir.file("b.rs", "// note\nfn g() {}\n");
+        let (code, out, err) = run_cli_err(&["format", a.to_str().unwrap(), b.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("`//`"));
+        assert!(err.contains("stringify!"));
+        // stdout stays clean and pipeable.
+        assert!(!out.contains("warning:"));
+    }
+
+    #[test]
+    fn rust_caveat_warning_is_absent_for_python_only_runs() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&["format", py.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn rust_caveat_warning_covers_check_and_diff_but_not_stats() {
+        let dir = Scratch::new();
+        let rs = dir.file("a.rs", "fn f() {}\n");
+        let (code, _, err) = run_cli_err(&["check", rs.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        assert_eq!(err.matches("warning:").count(), 1);
+        let (code, _, err) = run_cli_err(&["diff", rs.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        let (code, _, err) = run_cli_err(&["stats", rs.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err, "");
     }
 
     #[test]
