@@ -29,9 +29,17 @@ and all tokenizers.
 
 ¹ `--py-strip-comments --py-strip-annotations` ² `--rs-strip-doc-comments`
 
-The default setting is context-lossless: comments, docstrings, doc comments,
-and type annotations are all kept; only syntactic noise (whitespace, blank
-lines, indentation width) is minimized and adjacent imports are merged.
+The default setting is context-lossless for Python: comments, docstrings and
+type annotations are all kept; only syntactic noise (whitespace, blank lines,
+indentation width) is minimized and adjacent imports are merged.
+
+**Rust is not context-lossless, even at default settings.** The Rust backend
+re-emits from the `syn` token stream, which does not carry regular comments:
+`//` and `/* */` comments are **always** dropped. Only doc comments (`///`,
+`//!`) survive — they are `#[doc = "..."]` attributes — and only unless
+`--rs-strip-doc-comments` is passed. Part of the measured Rust savings above
+therefore comes from discarded comments, not from syntactic noise alone.
+
 Savings differ per tokenizer — the reason this is a token-aware formatter,
 not a character minifier.
 
@@ -49,7 +57,7 @@ tokenpress stats . --tokenizer cl100k_base         # GPT-4 / GPT-3.5
 tokenpress stats . --tokenizer hf:tokenizer.json   # any HF tokenizer (Qwen, GLM, ...)
 tokenpress stats . --tokenizer kimi:tiktoken.model # Kimi K2/K3 ranks format
 
-# context/behavior trade-offs (all opt-in; defaults preserve everything)
+# context/behavior trade-offs (all opt-in; Rust // comments go regardless — see below)
 tokenpress format . --py-strip-comments      # drop # comments
 tokenpress format . --py-strip-annotations   # drop type hints (breaks dataclass/pydantic introspection!)
 tokenpress format . --py-no-merge-imports    # keep adjacent imports separate
@@ -63,8 +71,14 @@ failures are reported per file; nothing corrupt is ever written).
 
 Identifiers, string/number literals, decorators/attributes, macro tokens,
 import order — anything that carries meaning for an LLM or affects behavior.
-Comments, docstrings and annotations are kept by default and only removed by
-explicit opt-in.
+In Python, comments, docstrings and annotations are kept by default and only
+removed by explicit opt-in.
+
+One documented exception, in Rust: regular comments (`//`, `/* */`) are always
+lost, because the `syn` token stream the emitter works from does not preserve
+them. Doc comments (`///`, `//!`) are preserved unless
+`--rs-strip-doc-comments` is passed. If a Rust file's `//` comments matter to
+you, keep the original — TokenPress cannot round-trip them.
 
 ## Layout
 
