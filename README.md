@@ -69,16 +69,28 @@ failures are reported per file; nothing corrupt is ever written).
 
 ## What it never touches
 
-Identifiers, string/number literals, decorators/attributes, macro tokens,
-import order — anything that carries meaning for an LLM or affects behavior.
-In Python, comments, docstrings and annotations are kept by default and only
-removed by explicit opt-in.
+Identifiers, string/number literals, decorators/attributes, the token sequence
+inside macro invocations, import order — anything that carries meaning for an
+LLM or affects behavior. In Python, comments, docstrings and annotations are
+kept by default and only removed by explicit opt-in.
 
-One documented exception, in Rust: regular comments (`//`, `/* */`) are always
-lost, because the `syn` token stream the emitter works from does not preserve
-them. Doc comments (`///`, `//!`) are preserved unless
-`--rs-strip-doc-comments` is passed. If a Rust file's `//` comments matter to
-you, keep the original — TokenPress cannot round-trip them.
+Two documented exceptions, both in Rust — these are the scope limits on the
+"preserving behavior" claim at the top of this page.
+
+**Regular comments are dropped.** `//` and `/* */` comments are always lost,
+because the `syn` token stream the emitter works from does not preserve them.
+Doc comments (`///`, `//!`) are preserved unless `--rs-strip-doc-comments` is
+passed. If a Rust file's `//` comments matter to you, keep the original —
+TokenPress cannot round-trip them.
+
+**Macro body whitespace is minimized.** The *tokens* inside a macro invocation
+are preserved exactly, but the whitespace between them is not. For
+whitespace-sensitive macros — `stringify!` is the common case — this changes
+the string produced at runtime. TokenPress's verification is token-canonical
+(re-parse + token-stream equivalence), and a re-spaced macro body is
+token-identical to the original, so this class of behavior change is **not**
+detected by the verifier. If your code depends on the exact text
+`stringify!` renders, review the diff before accepting it.
 
 ## Layout
 
