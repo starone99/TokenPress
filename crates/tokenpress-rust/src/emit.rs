@@ -102,8 +102,9 @@ fn match_doc_attr(trees: &[TokenTree]) -> Option<(String, bool, usize)> {
     }
 }
 
-/// The `///` form is only emitted when it round-trips exactly: a plain
-/// `"..."` literal with no escapes and no interior quote handling.
+/// A line qualifies for the `///` form only when it round-trips exactly: a
+/// plain `"..."` literal with no escapes and no interior quote handling.
+/// Qualifying is per line, but the choice is made per block (`doc_block`).
 fn doc_comment_line(lit: &str, inner: bool) -> Option<String> {
     let body = lit.strip_prefix('"')?.strip_suffix('"')?;
     if body.contains('\\') || body.contains('"') {
@@ -111,6 +112,30 @@ fn doc_comment_line(lit: &str, inner: bool) -> Option<String> {
     }
     let marker = if inner { "//!" } else { "///" };
     Some(format!("{marker}{body}\n"))
+}
+
+/// The contiguous run of doc attributes of the same kind (all outer or all
+/// inner — an inner/outer boundary ends the run) starting at `trees[0]`:
+/// returns (trees consumed, sugared lines). The lines are `Some` only when
+/// *every* line of the block qualifies for the `///` / `//!` form; one raw
+/// line forces the whole block raw, because rustdoc strips the conventional
+/// leading space from sugared fragments but keeps it on raw ones, so a mixed
+/// block would misindent the doc example it reconstructs.
+fn doc_block(trees: &[TokenTree]) -> Option<(usize, Option<Vec<String>>)> {
+    let (lit, inner, consumed) = match_doc_attr(trees)?;
+    let mut used = consumed;
+    let mut lines = doc_comment_line(&lit, inner).map(|line| vec![line]);
+    while let Some((lit, next_inner, consumed)) = match_doc_attr(&trees[used..]) {
+        if next_inner != inner {
+            break;
+        }
+        used += consumed;
+        match (lines.as_mut(), doc_comment_line(&lit, inner)) {
+            (Some(lines), Some(line)) => lines.push(line),
+            _ => lines = None,
+        }
+    }
+    Some((used, lines))
 }
 
 /// Removes every `#[doc = <lit>]` / `#![doc = <lit>]` attribute (RSO1).
@@ -158,59 +183,73 @@ fn push_text(out: &mut String, prev: &mut Prev, text: &str, kind: fn(char) -> Pr
     *prev = kind(text.chars().next_back().unwrap_or('\0'));
 }
 
+fn render_tree(tree: &TokenTree, out: &mut String, prev: &mut Prev) {
+    match tree {
+        TokenTree::Ident(id) => push_text(out, prev, &id.to_string(), Prev::Ident),
+        TokenTree::Literal(lit) => push_text(out, prev, &lit.to_string(), Prev::Literal),
+        TokenTree::Punct(p) => {
+            let ch = p.as_char();
+            if needs_space(*prev, ch, matches!(prev, Prev::Ident(_))) {
+                out.push(' ');
+            }
+            out.push(ch);
+            *prev = Prev::Punct {
+                ch,
+                joint: p.spacing() == Spacing::Joint,
+            };
+        }
+        TokenTree::Group(g) => {
+            let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+            match g.delimiter() {
+                Delimiter::None => render_seq(&inner, out, prev),
+                d => {
+                    let (open, close) = match d {
+                        Delimiter::Parenthesis => ('(', ')'),
+                        Delimiter::Brace => ('{', '}'),
+                        _ => ('[', ']'),
+                    };
+                    // No spacing rule can require a space before an open
+                    // delimiter: it is neither a word char, a quote, nor
+                    // the second half of any glueable operator pair.
+                    out.push(open);
+                    *prev = Prev::Punct {
+                        ch: open,
+                        joint: false,
+                    };
+                    render_seq(&inner, out, prev);
+                    out.push(close);
+                    *prev = Prev::Close(close);
+                }
+            }
+        }
+    }
+}
+
 fn render_seq(trees: &[TokenTree], out: &mut String, prev: &mut Prev) {
     let mut i = 0;
     while i < trees.len() {
-        if let Some((lit, inner, consumed)) = match_doc_attr(&trees[i..]) {
-            if let Some(line) = doc_comment_line(&lit, inner) {
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push('\n');
+        if let Some((consumed, lines)) = doc_block(&trees[i..]) {
+            match lines {
+                Some(lines) => {
+                    for line in lines {
+                        if !out.is_empty() && !out.ends_with('\n') {
+                            out.push('\n');
+                        }
+                        out.push_str(&line);
+                    }
+                    *prev = Prev::Start;
                 }
-                out.push_str(&line);
-                *prev = Prev::Start;
-                i += consumed;
-                continue;
-            }
-        }
-        match &trees[i] {
-            TokenTree::Ident(id) => push_text(out, prev, &id.to_string(), Prev::Ident),
-            TokenTree::Literal(lit) => push_text(out, prev, &lit.to_string(), Prev::Literal),
-            TokenTree::Punct(p) => {
-                let ch = p.as_char();
-                if needs_space(*prev, ch, matches!(prev, Prev::Ident(_))) {
-                    out.push(' ');
-                }
-                out.push(ch);
-                *prev = Prev::Punct {
-                    ch,
-                    joint: p.spacing() == Spacing::Joint,
-                };
-            }
-            TokenTree::Group(g) => {
-                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
-                match g.delimiter() {
-                    Delimiter::None => render_seq(&inner, out, prev),
-                    d => {
-                        let (open, close) = match d {
-                            Delimiter::Parenthesis => ('(', ')'),
-                            Delimiter::Brace => ('{', '}'),
-                            _ => ('[', ']'),
-                        };
-                        // No spacing rule can require a space before an open
-                        // delimiter: it is neither a word char, a quote, nor
-                        // the second half of any glueable operator pair.
-                        out.push(open);
-                        *prev = Prev::Punct {
-                            ch: open,
-                            joint: false,
-                        };
-                        render_seq(&inner, out, prev);
-                        out.push(close);
-                        *prev = Prev::Close(close);
+                // The whole block keeps its original attribute form.
+                None => {
+                    for tree in &trees[i..i + consumed] {
+                        render_tree(tree, out, prev);
                     }
                 }
             }
+            i += consumed;
+            continue;
         }
+        render_tree(&trees[i], out, prev);
         i += 1;
     }
 }
@@ -318,6 +357,61 @@ mod tests {
     fn escaped_doc_content_falls_back_to_attribute_form() {
         let out = render_src("#[doc = \"say \\\"hi\\\"\"]\nfn f() {}");
         assert!(out.starts_with("#[doc="));
+    }
+
+    #[test]
+    fn a_doc_block_with_one_escaped_line_is_emitted_entirely_raw() {
+        // rustdoc unindents sugared and raw fragments differently, so the
+        // whole contiguous block has to agree on one form.
+        let out = render_src(
+            "/// Read patterns.\n/// ```\n#[doc = \" let s = \\\"a\\\\nb\\\";\"]\n/// ```\nfn f() {}",
+        );
+        assert!(
+            !out.contains("///"),
+            "sugared line inside a raw block: {out}"
+        );
+        assert_eq!(out.matches("#[doc=").count(), 4, "{out}");
+    }
+
+    #[test]
+    fn a_fully_plain_doc_block_stays_sugared() {
+        assert_eq!(
+            render_src("/// One.\n/// Two.\n/// Three.\nfn f() {}"),
+            "/// One.\n/// Two.\n/// Three.\nfn f(){}"
+        );
+    }
+
+    #[test]
+    fn an_inner_doc_block_with_one_escaped_line_is_emitted_entirely_raw() {
+        let out = render_src("//! Module.\n#![doc = \"a \\\"b\\\"\"]\nfn f() {}");
+        assert!(
+            !out.contains("//!"),
+            "sugared line inside a raw block: {out}"
+        );
+        assert_eq!(out.matches("#![doc=").count(), 2, "{out}");
+    }
+
+    #[test]
+    fn inner_and_outer_doc_runs_are_separate_blocks() {
+        // The kind change ends the block: the plain inner line stays sugared
+        // even though the outer run that follows it has to go raw.
+        let out = render_src("//! Module.\n#[doc = \"a \\\"b\\\"\"]\n/// Plain.\nfn f() {}");
+        assert!(out.starts_with("//! Module.\n"), "{out}");
+        assert!(
+            !out.contains("///"),
+            "sugared line inside a raw block: {out}"
+        );
+        assert_eq!(out.matches("#[doc=").count(), 2, "{out}");
+    }
+
+    #[test]
+    fn doc_blocks_inside_groups_are_grouped_too() {
+        let out = render_src("mod m {\n/// Plain.\n#[doc = \"a \\\"b\\\"\"]\nfn f() {}\n}");
+        assert!(
+            !out.contains("///"),
+            "sugared line inside a raw block: {out}"
+        );
+        assert_eq!(out.matches("#[doc=").count(), 2, "{out}");
     }
 
     #[test]
