@@ -41,10 +41,17 @@ revision-pinned by `benchmarks/fetch.ps1`.
 
 ## Results
 
-### Default settings (comments/docstrings/annotations/doc comments kept, adjacent imports merged)
+### Default settings (Python: comments/docstrings/annotations kept; Rust: doc comments kept, regular comments dropped; adjacent imports merged)
 
-Context-lossless configuration — whitespace/blank-line/indent minimization
-plus PY09 import merging only.
+Context-lossless for Python — whitespace/blank-line/indent minimization plus
+PY09 import merging only.
+
+**Rust is not context-lossless, even at default settings.** The Rust backend
+re-emits from the `syn` token stream, which does not carry regular comments:
+`//` and `/* */` comments are always dropped, and only doc comments (`///`,
+`//!`) survive. Part of the default savings for every Rust corpus below —
+ripgrep in this table, tokio and uv in the next — therefore comes from
+discarded comments, not from syntactic noise alone.
 
 | Corpus | Tokenizer | Before | After | Saved |
 |---|---|---|---|---|

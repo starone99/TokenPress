@@ -61,7 +61,7 @@ tokenpress stats . --tokenizer kimi:tiktoken.model # Kimi K2/K3 ranks format
 tokenpress format . --py-strip-comments      # drop # comments
 tokenpress format . --py-strip-annotations   # drop type hints (breaks dataclass/pydantic introspection!)
 tokenpress format . --py-no-merge-imports    # keep adjacent imports separate
-tokenpress format . --rs-strip-doc-comments  # drop /// doc comments (and doctests)
+tokenpress format . --rs-strip-doc-comments  # drop ///+//! doc comments (and doctests)
 ```
 
 Exit codes: `0` ok · `1` check found changes · `2` error (parse/verification
