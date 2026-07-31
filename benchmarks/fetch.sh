@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Fetches the benchmark corpus at pinned versions.
+# The corpus lives in benchmarks/corpus/ and is gitignored (license/size).
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+corpus="$script_dir/corpus"
+mkdir -p "$corpus"
+
+if [ ! -e "$corpus/requests" ]; then
+    git clone --quiet --depth 1 --branch v2.32.3 https://github.com/psf/requests "$corpus/requests"
+fi
+if [ ! -e "$corpus/ripgrep" ]; then
+    git clone --quiet --depth 1 --branch 14.1.1 https://github.com/BurntSushi/ripgrep "$corpus/ripgrep"
+fi
+
+echo "requests: $(git -C "$corpus/requests" rev-parse HEAD)"
+echo "ripgrep:  $(git -C "$corpus/ripgrep" rev-parse HEAD)"
+
+# Well-known projects, pinned to the exact commits measured in RESULTS.md.
+known=(
+    "django|https://github.com/django/django|50d706d0aebcc2d073c8d034b6e22fc98fad49f2"
+    "fastapi|https://github.com/fastapi/fastapi|95f8322ee1dcda7ceace7b1c4f6c9915b36d748f"
+    "tokio|https://github.com/tokio-rs/tokio|adc2ae7af2caaea83985fbdfbc7884c159c486f2"
+    "langchain|https://github.com/langchain-ai/langchain|a1a1ad3bb3eb6cf7680b39ff0fb37f7150393a25"
+    "transformers|https://github.com/huggingface/transformers|71c6f699ac9b3f8fc42a6a3e9dc59034c349a678"
+    "uv|https://github.com/astral-sh/uv|be765050837d81badb20e1f70eec62146c586902"
+)
+for entry in "${known[@]}"; do
+    IFS='|' read -r name url sha <<< "$entry"
+    dest="$corpus/$name"
+    if [ ! -e "$dest" ]; then
+        git init -q "$dest"
+        # No-op outside Windows, but kept so the script behaves identically
+        # when run from Git Bash / WSL on a Windows checkout.
+        git -C "$dest" config core.longpaths true
+        git -C "$dest" remote add origin "$url"
+        git -C "$dest" fetch -q --depth 1 origin "$sha"
+        git -C "$dest" checkout -q FETCH_HEAD
+    fi
+    echo "$name: $(git -C "$dest" rev-parse HEAD)"
+done
+
+# Open-model tokenizer files (revision-pinned), for --tokenizer hf:/kimi:
+toks="$script_dir/tokenizers"
+mkdir -p "$toks"
+downloads=(
+    "qwen3.6.json|https://huggingface.co/Qwen/Qwen3.6-35B-A3B/resolve/995ad96eacd98c81ed38be0c5b274b04031597b0/tokenizer.json"
+    "glm-5.2.json|https://huggingface.co/zai-org/GLM-5.2/resolve/b4734de4facf877f85769a911abafc5283eab3d9/tokenizer.json"
+    "kimi-k3.tiktoken|https://huggingface.co/moonshotai/Kimi-K3/resolve/9f62e4e9fffbd0a83ddd60e1c209d828994b3569/tiktoken.model"
+)
+for entry in "${downloads[@]}"; do
+    IFS='|' read -r name url <<< "$entry"
+    dest="$toks/$name"
+    if [ ! -e "$dest" ]; then
+        # Download to a temporary file and move it into place only on success,
+        # so a failed request never leaves a truncated file behind (which would
+        # then be skipped by the existence check on the next run).
+        tmp="$(mktemp "$dest.XXXXXX")"
+        if curl -fL --silent --show-error --output "$tmp" "$url"; then
+            # mktemp creates 0600; make it world-readable like a normal download.
+            chmod 644 "$tmp"
+            mv "$tmp" "$dest"
+        else
+            rm -f "$tmp"
+            exit 1
+        fi
+    fi
+    echo "$name: $(wc -c < "$dest" | tr -d ' ') bytes"
+done
