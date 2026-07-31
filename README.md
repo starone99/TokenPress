@@ -57,7 +57,7 @@ tokenpress stats . --tokenizer cl100k_base         # GPT-4 / GPT-3.5
 tokenpress stats . --tokenizer hf:tokenizer.json   # any HF tokenizer (Qwen, GLM, ...)
 tokenpress stats . --tokenizer kimi:tiktoken.model # Kimi K2/K3 ranks format
 
-# context/behavior trade-offs (all opt-in; Rust // comments go regardless — see below)
+# context/behavior trade-offs (opt-in flags — except Rust //-comment loss, see below)
 tokenpress format . --py-strip-comments      # drop # comments
 tokenpress format . --py-strip-annotations   # drop type hints (breaks dataclass/pydantic introspection!)
 tokenpress format . --py-no-merge-imports    # keep adjacent imports separate
@@ -105,6 +105,6 @@ Cargo workspace with a single distributed binary:
 
 ## Development
 
-TDD with a hard gate: `scripts/coverage.ps1` fails the build under 100% line
-coverage. CI runs fmt, clippy `-D warnings`, tests (Linux/Windows), and the
-coverage gate. See `CLAUDE.md` for the rules.
+TDD with a hard gate: `scripts/coverage.ps1` (Windows) / `scripts/coverage.sh`
+fails the build under 100% line coverage. CI runs fmt, clippy `-D warnings`,
+tests (Linux/Windows), and the coverage gate. See `CLAUDE.md` for the rules.
