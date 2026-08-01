@@ -106,7 +106,7 @@ Cargo workspace with a single distributed binary:
 | `tokenpress-python` | Python: token-stream re-render + transform passes + verification |
 | `tokenpress-rust` | Rust: syn token-stream re-render + verification |
 | `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
-| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python only, so far) |
+| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python + Rust, per-tokenizer token stats) |
 
 ## Development
 

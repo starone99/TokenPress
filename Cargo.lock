@@ -1306,6 +1306,7 @@ dependencies = [
  "serde_json",
  "tokenpress-core",
  "tokenpress-python",
+ "tokenpress-rust",
  "wasm-bindgen",
 ]
 
