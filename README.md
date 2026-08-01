@@ -68,6 +68,25 @@ tokenpress format . --rs-strip-doc-comments  # drop ///+//! doc comments (and do
 Exit codes: `0` ok · `1` check found changes · `2` error (parse/verification
 failures are reported per file; nothing corrupt is ever written).
 
+## GitHub Action
+
+Add the gate to an existing workflow with one step — the action builds the CLI
+from its own pinned checkout, so nothing has to be installed first:
+
+```yaml
+- uses: starone99/TokenPress@v0.1.0
+  with:
+    paths: src tests          # default `.`; directories are walked, .gitignore-aware
+    mode: check               # default; `format` rewrites in place
+    extra-args: --rs-strip-doc-comments   # optional, passed through verbatim
+```
+
+`check` fails the step when anything would change and writes nothing. `format`
+rewrites files and then *also* fails, so a gate cannot pass silently on
+rewritten files; pair it with `continue-on-error: true` and the step's `changed`
+output to drive a follow-up autocommit. Only `.py` and `.rs` files are
+processed — everything else in the given paths is skipped.
+
 ## What it never touches
 
 Identifiers, string/number literals, decorators/attributes, the token sequence

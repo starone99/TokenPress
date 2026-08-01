@@ -35,6 +35,86 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+  # Exercises `action.yml` end to end through `uses: ./`, which is the only way
+  # to test a composite action: its steps only exist inside a real runner.
+  # It lives in this workflow because the action has to be gated on exactly what
+  # everything else is gated on -- every push to master/main and every PR.
+  action:
+    name: GitHub Action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No rust-cache here on purpose: the action brings its own actions/cache
+      # step, and that step is part of what this job is testing.
+      - name: Create fixtures
+        run: |
+          mkdir -p action-fixtures/pass action-fixtures/fail
+          # `printf`, not a heredoc: normalized output carries no trailing
+          # newline, so a heredoc could not write an already-normalized file.
+          # The pass fixture keeps its comment (comments are kept by default),
+          # and carries two unsupported files to prove the directory walk skips
+          # them instead of failing with exit 2.
+          printf '# keep me\ndef f(a,b):\n return a+b' > action-fixtures/pass/ok.py
+          printf 'fn main(){println!("hi");}' > action-fixtures/pass/ok.rs
+          printf 'notes\n' > action-fixtures/pass/notes.md
+          printf '{"a": 1}\n' > action-fixtures/pass/data.json
+          printf 'def  f( a ,  b ):\n    return   a  +  b\n' > action-fixtures/fail/bad.py
+
+      # Every step below that is expected to succeed asserts by failing the job.
+      - name: Normalized tree passes
+        uses: ./
+        with:
+          paths: action-fixtures/pass
+
+      - name: Explicitly named unsupported files are filtered out
+        uses: ./
+        with:
+          paths: action-fixtures/pass/ok.py action-fixtures/pass/notes.md
+
+      - name: Unformatted tree fails
+        id: check-fail
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: action-fixtures/fail
+
+      # `--py-strip-comments` would remove the comment the pass fixture keeps,
+      # so the only way this step can fail is if extra-args reached the CLI.
+      - name: extra-args are passed through
+        id: extra-args
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: action-fixtures/pass/ok.py
+          extra-args: --py-strip-comments
+
+      - name: format rewrites the unformatted tree and still fails
+        id: format
+        continue-on-error: true
+        uses: ./
+        with:
+          mode: format
+          paths: action-fixtures/fail
+
+      - name: The rewritten tree now passes
+        uses: ./
+        with:
+          paths: action-fixtures/fail
+
+      - name: Assert the failing cases failed
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          [ '${{ steps.check-fail.outcome }}' = failure ] \
+            || fail 'check must fail on an unformatted tree'
+          [ '${{ steps.check-fail.outputs.changed }}' = true ] \
+            || fail 'check must report changed=true on an unformatted tree'
+          [ '${{ steps.extra-args.outcome }}' = failure ] \
+            || fail 'extra-args did not reach the CLI'
+          [ '${{ steps.format.outcome }}' = failure ] \
+            || fail 'format must fail when it rewrote files'
+          [ '${{ steps.format.outputs.changed }}' = true ] \
+            || fail 'format must report changed=true when it rewrote files'
+
   coverage:
     name: Coverage gate (100%)
     runs-on: ubuntu-latest

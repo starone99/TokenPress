@@ -1,0 +1,226 @@
+# GitHub Action wrapping the `tokenpress` CLI, so a consumer can add a
+# TokenPress gate to an existing ruff/clippy-style workflow with one step:
+#
+#     - uses: starone99/TokenPress@v0.1.0
+#       with:
+#         paths: src tests
+#
+# Composite (not Docker, not JavaScript): Docker actions are Linux-only and pay
+# an image pull per run, and there is no JavaScript to run here -- the work is a
+# native binary built from this repository.
+#
+# The action builds the CLI from its own checkout. A composite action's files
+# are already on disk at `${{ github.action_path }}` at the ref the consumer
+# pinned, so nothing extra has to be checked out; the build just has to happen
+# *there* and not in the consumer's workspace.
+name: TokenPress
+description: >-
+  Fail CI when Python or Rust sources are not in TokenPress-normalized,
+  token-minimized form (or rewrite them in place).
+author: TokenPress contributors
+
+branding:
+  icon: minimize-2
+  color: purple
+
+inputs:
+  mode:
+    description: >-
+      `check` (default) reports what would change and fails if anything would,
+      writing nothing. `format` rewrites files in the consumer's workspace and
+      then fails if it had something to rewrite -- the same semantics as the
+      `tokenpress-format` hook in `.pre-commit-hooks.yaml`, so that a job which
+      is meant to be a gate cannot pass silently on rewritten files. Pair it
+      with `continue-on-error: true` and an autocommit step to push the result.
+    required: false
+    default: check
+  paths:
+    description: >-
+      Whitespace-separated files and/or directories to process, relative to the
+      consumer's workspace. Directories are walked recursively by the CLI
+      itself: the walk is `.gitignore`-aware and only picks up `.py` and `.rs`
+      files, so pointing this at a mixed tree is safe. Subject to the shell's
+      word splitting and globbing, so `src/*.py` works.
+    required: false
+    default: .
+  extra-args:
+    description: >-
+      Extra `tokenpress` flags, passed through verbatim (whitespace-separated),
+      e.g. `--rs-strip-doc-comments --py-strip-comments`.
+    required: false
+    default: ''
+
+outputs:
+  changed:
+    description: >-
+      `true` if any file was rewritten (`format`) or would be rewritten
+      (`check`), otherwise `false`. Set even when the step fails, so a
+      `continue-on-error` step can gate a follow-up autocommit on it.
+    value: ${{ steps.tokenpress.outputs.changed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve action paths and cache key
+      id: setup
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        # On Windows runners `github.action_path` is a backslash path; Git bash
+        # is only reliable with forward slashes, so normalize once here and
+        # reuse the result in every later step.
+        action_path="${ACTION_PATH//\\//}"
+
+        ext=''
+        if [ "$RUNNER_OS" = 'Windows' ]; then
+          ext='.exe'
+        fi
+
+        # `hashFiles()` only sees the consumer's workspace, and the action lives
+        # outside it, so the lock hash is computed here instead. `git` is
+        # present on every GitHub-hosted runner and `hash-object` needs no repo.
+        lock_hash="$(git hash-object "$action_path/Cargo.lock")"
+        # The ref is part of the key because this repository's own sources
+        # change without `Cargo.lock` changing. It is empty for a local
+        # `uses: ./`, and sanitized because cache keys must not contain commas.
+        ref="${ACTION_REF//[^A-Za-z0-9._-]/-}"
+
+        {
+          echo "action-path=$action_path"
+          echo "bin=$action_path/target/release/tokenpress$ext"
+          echo "cache-key=tokenpress-action-$RUNNER_OS-$ref-$lock_hash"
+          echo "cache-prefix=tokenpress-action-$RUNNER_OS-"
+        } >>"$GITHUB_OUTPUT"
+
+    - name: Restore the CLI build cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          ${{ steps.setup.outputs.action-path }}/target
+        key: ${{ steps.setup.outputs.cache-key }}
+        restore-keys: ${{ steps.setup.outputs.cache-prefix }}
+
+    - name: Build the TokenPress CLI
+      shell: bash
+      env:
+        ACTION_PATH: ${{ steps.setup.outputs.action-path }}
+      run: |
+        set -euo pipefail
+        # Two things this build depends on, both easy to get wrong:
+        #  * cwd must be inside this checkout -- `rust-toolchain.toml` is
+        #    honored by cwd, not by `--manifest-path`, and it is what makes
+        #    rustup install the pinned compiler.
+        #  * `--target-dir` is explicit so an inherited `CARGO_TARGET_DIR` in
+        #    the consumer's environment cannot move the binary away from where
+        #    the next step executes it.
+        # `-p tokenpress-cli` rather than `cargo install --path .`: the root
+        # manifest is a virtual workspace manifest, which `cargo install`
+        # refuses.
+        cd "$ACTION_PATH"
+        cargo build --release --locked --quiet \
+          -p tokenpress-cli --target-dir "$ACTION_PATH/target"
+
+    - name: Run TokenPress
+      id: tokenpress
+      shell: bash
+      env:
+        BIN: ${{ steps.setup.outputs.bin }}
+        MODE: ${{ inputs.mode }}
+        PATHS: ${{ inputs.paths }}
+        EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: |
+        set -euo pipefail
+
+        if [ "$MODE" != 'check' ] && [ "$MODE" != 'format' ]; then
+          echo "::error::tokenpress: unknown mode '$MODE' (expected 'check' or 'format')"
+          exit 2
+        fi
+
+        # argv is assembled in the positional parameters rather than in an
+        # array: `"$@"` is safe when empty under `set -u` on every bash a
+        # runner might have, `"${arr[@]}"` is not (macOS ships bash 3.2).
+        # Both inputs are deliberately unquoted so they word-split.
+        set --
+        for arg in $EXTRA_ARGS; do
+          set -- "$@" "$arg"
+        done
+        n_flags=$#
+
+        skipped=''
+        for path in $PATHS; do
+          if [ -d "$path" ]; then
+            # Directories are handed over as-is: the CLI's own walk already
+            # filters to the supported extensions.
+            set -- "$@" "$path"
+          elif [ -f "$path" ]; then
+            # An explicitly named file is *not* filtered by the CLI -- an
+            # unsupported one is an error (exit 2). Drop those here so that a
+            # glob over a mixed tree does not abort the run.
+            case "$path" in
+              *.py | *.rs) set -- "$@" "$path" ;;
+              *) skipped="$skipped $path" ;;
+            esac
+          else
+            # Neither a file nor a directory: pass it on and let the CLI report
+            # it, rather than silently swallowing a typo.
+            set -- "$@" "$path"
+          fi
+        done
+
+        if [ -n "$skipped" ]; then
+          echo "tokenpress: skipping unsupported path(s):$skipped"
+        fi
+        if [ "$#" -eq "$n_flags" ]; then
+          echo 'tokenpress: no Python or Rust paths to process'
+          echo 'changed=false' >>"$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # `check` writes nothing and exits 1 exactly when something would
+        # change, so it is also how `format` finds out whether it has work --
+        # `format` itself exits 0 either way.
+        code=0
+        "$BIN" check "$@" || code=$?
+
+        changed=false
+        case "$code" in
+          0) ;;
+          1) changed=true ;;
+          *)
+            echo '::error::tokenpress: failed (parse, verification or unsupported path)'
+            echo 'changed=false' >>"$GITHUB_OUTPUT"
+            exit "$code"
+            ;;
+        esac
+
+        if [ "$MODE" = 'check' ]; then
+          echo "changed=$changed" >>"$GITHUB_OUTPUT"
+          if [ "$changed" = 'true' ]; then
+            echo '::error::tokenpress: files are not in normalized form; run `tokenpress format` (or mode: format)'
+            exit 1
+          fi
+          exit 0
+        fi
+
+        if [ "$changed" = 'false' ]; then
+          echo 'changed=false' >>"$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        code=0
+        "$BIN" format "$@" || code=$?
+        if [ "$code" -ne 0 ]; then
+          echo '::error::tokenpress: format failed; nothing that fails verification is ever written'
+          echo 'changed=false' >>"$GITHUB_OUTPUT"
+          exit "$code"
+        fi
+
+        echo 'changed=true' >>"$GITHUB_OUTPUT"
+        echo '::error::tokenpress: files were rewritten'
+        exit 1
