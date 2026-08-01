@@ -1,0 +1,26 @@
+[package]
+name = "tokenpress-js"
+description = "TokenPress for JavaScript/TypeScript: token-minimizing formatter with parse-format-parse verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["hf-tokenizer"]
+# Forwarded to tokenpress-core; see its manifest.
+hf-tokenizer = ["tokenpress-core/hf-tokenizer"]
+
+[dependencies]
+# Path dependency, not `workspace = true`: `default-features = false` is
+# ignored on an inherited dependency, and the `hf-tokenizer` feature has to be
+# switchable from tokenpress-wasm (which cannot build it for wasm32).
+tokenpress-core = { path = "../tokenpress-core", default-features = false }
+# oxc crates: pre-1.0 with no semver guarantees, so pin exact versions and keep
+# all oxc access isolated behind src/parser.rs. Their declared rust-version is
+# exactly the channel in rust-toolchain.toml, so an oxc bump is a toolchain
+# decision.
+oxc_allocator = "=0.142.0"
+oxc_parser = "=0.142.0"
+oxc_ast = "=0.142.0"
+oxc_span = "=0.142.0"

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/tokenpress-core",
     "crates/tokenpress-python",
+    "crates/tokenpress-js",
     "crates/tokenpress-rust",
     "crates/tokenpress-cli",
     "crates/tokenpress-wasm",
