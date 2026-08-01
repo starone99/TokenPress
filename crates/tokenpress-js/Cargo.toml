@@ -24,3 +24,7 @@ oxc_allocator = "=0.142.0"
 oxc_parser = "=0.142.0"
 oxc_ast = "=0.142.0"
 oxc_span = "=0.142.0"
+# `default-features = false` drops oxc_codegen's `sourcemap` feature (and the
+# oxc_sourcemap dependency): TokenPress rewrites files in place and never
+# emits a source map.
+oxc_codegen = { version = "=0.142.0", default-features = false }
