@@ -59,6 +59,7 @@ tokenpress stats . --tokenizer kimi:tiktoken.model # Kimi K2/K3 ranks format
 
 # context/behavior trade-offs (opt-in flags — except Rust //-comment loss, see below)
 tokenpress format . --py-strip-comments      # drop # comments
+tokenpress format . --py-strip-docstrings    # drop docstrings (empties __doc__: breaks help() and doctests!)
 tokenpress format . --py-strip-annotations   # drop type hints (breaks dataclass/pydantic introspection!)
 tokenpress format . --py-no-merge-imports    # keep adjacent imports separate
 tokenpress format . --rs-strip-doc-comments  # drop ///+//! doc comments (and doctests)
@@ -72,7 +73,10 @@ failures are reported per file; nothing corrupt is ever written).
 Identifiers, string/number literals, decorators/attributes, the token sequence
 inside macro invocations, import order — anything that carries meaning for an
 LLM or affects behavior. In Python, comments, docstrings and annotations are
-kept by default and only removed by explicit opt-in.
+kept by default and only removed by explicit opt-in — and every strip flag
+loses information: `--py-strip-docstrings` removes the leading string literal
+of a module, class or function body (other string expressions are untouched),
+which empties `__doc__`.
 
 Two documented exceptions, both in Rust — these are the scope limits on the
 "preserving behavior" claim at the top of this page.

@@ -3,8 +3,10 @@
 //!
 //! When no transform pass modified the token stream, the output must match
 //! the original AST exactly. When a pass did modify it (import merging,
-//! annotation stripping), the output is compared against the pass-produced
-//! token stream instead, plus an import-preservation check.
+//! docstring or annotation stripping), the output is compared against the
+//! pass-produced token stream instead, plus an import-preservation check.
+//! Docstring removal therefore needs no special case here: the docstring is
+//! already gone from the intended stream, so the comparison stays exact.
 
 use crate::parser::{self, ast, ParsedModule, Tok, TokenKind};
 use crate::PythonOptions;
@@ -193,6 +195,26 @@ mod tests {
         let (merged, modified) = crate::passes::merge_imports(&parsed.tokens(src));
         assert!(modified);
         assert!(full(&parsed, &merged, "import os,sys", &opts(), true).is_ok());
+    }
+
+    #[test]
+    fn docstring_stripping_is_reconciled_without_weakening_the_check() {
+        let strip = PythonOptions {
+            strip_docstrings: true,
+            ..PythonOptions::default()
+        };
+        let src = "\"\"\"Doc.\"\"\"\nx = 1\n";
+        let parsed = parser::parse(src).unwrap();
+        let (stripped, modified) =
+            crate::passes::strip_docstrings(&parsed.tokens(src), parsed.ast());
+        assert!(modified);
+        assert!(full(&parsed, &stripped, "x=1", &strip, true).is_ok());
+        // Genuinely different code is still rejected while stripping.
+        let err = full(&parsed, &stripped, "x=2", &strip, true).unwrap_err();
+        assert!(err.to_string().contains("token stream differs"));
+        // A docstring left in the output is a mismatch against the pass result.
+        let err = full(&parsed, &stripped, "\"\"\"Doc.\"\"\"\nx=1", &strip, true).unwrap_err();
+        assert!(err.to_string().contains("token stream differs"));
     }
 
     #[test]

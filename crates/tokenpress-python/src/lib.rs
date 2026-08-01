@@ -1,7 +1,7 @@
 //! TokenPress for Python: token-minimizing formatter.
 //!
-//! Pipeline: lex/parse → transform passes (import merging, optional
-//! annotation stripping) → token-stream re-render with minimal whitespace
+//! Pipeline: lex/parse → transform passes (import merging, optional docstring
+//! and annotation stripping) → token-stream re-render with minimal whitespace
 //! (`emit`) → verification (`verify`) → token accounting. Transform rules are
 //! documented in `docs/transforms/python.md` (PY**/PYO** rule IDs).
 
@@ -20,6 +20,9 @@ pub struct PythonOptions {
     /// PYO1: drop `#` comments. Default keeps them — comments are context
     /// for LLMs; stripping is the opt-in.
     pub strip_comments: bool,
+    /// PYO2: drop docstrings (opt-in). This empties `__doc__`, so `help()`,
+    /// `doctest` and docstring-driven tooling lose their input.
+    pub strip_docstrings: bool,
     /// PYO3: drop type annotations (opt-in). This changes `__annotations__`
     /// and breaks dataclass/pydantic/FastAPI-style runtime introspection.
     pub strip_annotations: bool,
@@ -32,6 +35,7 @@ impl Default for PythonOptions {
     fn default() -> Self {
         Self {
             strip_comments: false,
+            strip_docstrings: false,
             strip_annotations: false,
             merge_imports: true,
         }
@@ -67,6 +71,13 @@ impl Formatter for PythonFormatter {
         let parsed = parser::parse(source)?;
         let mut tokens = parsed.tokens(source);
         let mut modified = false;
+        // Docstrings first: removing a whole statement can empty a body, which
+        // the annotation pass then sees as already-`pass`-terminated.
+        if self.options.strip_docstrings {
+            let (stripped, m) = passes::strip_docstrings(&tokens, parsed.ast());
+            tokens = stripped;
+            modified |= m;
+        }
         if self.options.strip_annotations {
             let (stripped, m) = passes::strip_annotations(&tokens, parsed.ast());
             tokens = stripped;
@@ -207,6 +218,80 @@ mod tests {
     }
 
     #[test]
+    fn pyo2_strips_docstrings_on_request() {
+        let strip = PythonOptions {
+            strip_docstrings: true,
+            ..PythonOptions::default()
+        };
+        assert_eq!(
+            fmt_with(
+                "\"\"\"Module doc.\"\"\"\ndef f():\n    \"\"\"Doc.\"\"\"\n    return 1\n",
+                strip.clone()
+            ),
+            "def f():\n return 1"
+        );
+        assert_eq!(
+            fmt_with("class C:\n    \"\"\"Doc.\"\"\"\n", strip),
+            "class C:\n pass"
+        );
+    }
+
+    #[test]
+    fn docstrings_with_trailing_comments_still_verify() {
+        // Regression: the surviving comment starts the body, which changes
+        // where the lexer puts the block's Indent. Verification refuses the
+        // output unless the pass produces the same order.
+        let strip = PythonOptions {
+            strip_docstrings: true,
+            ..PythonOptions::default()
+        };
+        assert_eq!(
+            fmt_with(
+                "def f():  # header\n    \"\"\"Doc.\"\"\"  # note\n    return 1\n",
+                strip.clone()
+            ),
+            "def f(): # header\n # note\n return 1"
+        );
+        assert_eq!(
+            fmt_with(
+                "class C:\n    \"\"\"Doc.\"\"\"  # note\n    x = 1\n",
+                strip.clone()
+            ),
+            "class C:\n # note\n x=1"
+        );
+        // Comment lines *after* the docstring start the body just the same.
+        assert_eq!(
+            fmt_with(
+                "class C:\n    \"\"\"Doc.\"\"\"\n\n    # a note\n    # and another\n    x = 1\n",
+                strip
+            ),
+            "class C:\n # a note\n # and another\n x=1"
+        );
+    }
+
+    #[test]
+    fn docstring_stripped_output_passes_verification() {
+        // Removing docstrings changes the AST, so the pass must be reconciled
+        // with verification rather than tripping it.
+        let src = "\"\"\"Module doc.\"\"\"\nimport os\nclass C:\n    \"\"\"Doc.\"\"\"\n    def m(self):\n        \"\"\"Method.\"\"\"\n        return os\n";
+        for verify in [VerifyLevel::AstEquiv, VerifyLevel::External] {
+            let options = FormatOptions {
+                verify,
+                ..FormatOptions::default()
+            };
+            let result = PythonFormatter::new(PythonOptions {
+                strip_docstrings: true,
+                ..PythonOptions::default()
+            })
+            .format(src, &options);
+            assert_eq!(
+                result.unwrap().code,
+                "import os\nclass C:\n def m(self):\n  return os"
+            );
+        }
+    }
+
+    #[test]
     fn annotations_are_kept_by_default() {
         assert_eq!(
             fmt("def f(x: int = 1) -> int:\n    return x\n"),
@@ -318,6 +403,7 @@ mod tests {
     fn stripping_passes_are_idempotent_too() {
         let strip = PythonOptions {
             strip_comments: true,
+            strip_docstrings: false,
             strip_annotations: true,
             merge_imports: true,
         };
@@ -325,6 +411,20 @@ mod tests {
         let once = fmt_with(src, strip.clone());
         assert_eq!(fmt_with(&once, strip.clone()), once);
         assert_eq!(once, "import os,re\ndef f(x):\n return x");
+    }
+
+    #[test]
+    fn all_stripping_passes_together_are_idempotent() {
+        let strip = PythonOptions {
+            strip_comments: true,
+            strip_docstrings: true,
+            strip_annotations: true,
+            merge_imports: true,
+        };
+        let src = "\"\"\"Module doc.\"\"\"\nimport os\nimport re\n# gone\ndef f(x: int) -> int:\n    \"\"\"Doc.\"\"\"\n    return x\nclass C:\n    \"\"\"Doc.\"\"\"\n";
+        let once = fmt_with(src, strip.clone());
+        assert_eq!(once, "import os,re\ndef f(x):\n return x\nclass C:\n pass");
+        assert_eq!(fmt_with(&once, strip.clone()), once);
     }
 
     #[test]

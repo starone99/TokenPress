@@ -4,6 +4,10 @@
 //! - PY09 `merge_imports` (default on): joins *adjacent* `import` /
 //!   `from m import` statements. Adjacency keeps module-init side-effect
 //!   order identical, so this is always behavior-preserving.
+//! - PYO2 `strip_docstrings` (opt-in): removes the leading string literal of a
+//!   module, class or function body. This *does* empty `__doc__`, breaking
+//!   `help()`, doctests and docstring-driven tooling, which is why it is not a
+//!   default.
 //! - PYO3 `strip_annotations` (opt-in): removes type annotations. This *does*
 //!   change `__annotations__` and breaks dataclass/pydantic-style runtime
 //!   introspection, which is why it is not a default.
@@ -143,6 +147,149 @@ pub fn merge_imports<'a>(tokens: &[Tok<'a>]) -> (Vec<Tok<'a>>, bool) {
     (out, modified)
 }
 
+/// Spans of docstring statements collected from the AST.
+#[derive(Default)]
+struct DocstringSpans {
+    /// Docstrings whose body keeps other statements (or is the module body,
+    /// which may legally end up empty) - deleted.
+    deletes: Vec<TextRange>,
+    /// Docstrings that are the only statement of a class/function body -
+    /// replaced by `pass` so the body stays syntactically valid.
+    replaced_stmts: Vec<TextRange>,
+}
+
+impl DocstringSpans {
+    /// Records the docstring of `body`, if it has one. A docstring is a
+    /// string-literal expression statement in *first* position; a later one is
+    /// an ordinary expression statement. `needs_pass` is false for the module
+    /// body, the only body that may legally become empty.
+    ///
+    /// Implicit concatenation (`"a" "b"`) parses as one string literal and
+    /// still sets `__doc__`, so it is a docstring; f-strings and byte strings
+    /// are separate AST nodes that do not set `__doc__`, so they are kept.
+    fn scan(&mut self, body: &[ast::Stmt], needs_pass: bool) {
+        let Some(ast::Stmt::Expr(stmt)) = body.first() else {
+            return;
+        };
+        if !matches!(*stmt.value, ast::Expr::StringLiteral(_)) {
+            return;
+        }
+        if needs_pass && body.len() == 1 {
+            self.replaced_stmts.push(stmt.range());
+        } else {
+            self.deletes.push(stmt.range());
+        }
+    }
+}
+
+impl ast::visitor::Visitor<'_> for DocstringSpans {
+    fn visit_stmt(&mut self, stmt: &ast::Stmt) {
+        match stmt {
+            ast::Stmt::FunctionDef(f) => self.scan(&f.body, true),
+            ast::Stmt::ClassDef(c) => self.scan(&c.body, true),
+            _ => {}
+        }
+        ast::visitor::walk_stmt(self, stmt);
+    }
+}
+
+/// PYO2 - strip docstrings, using AST spans to cut tokens.
+pub fn strip_docstrings<'a>(tokens: &[Tok<'a>], module: &Module) -> (Vec<Tok<'a>>, bool) {
+    use ast::visitor::Visitor;
+    let mut spans = DocstringSpans::default();
+    spans.scan(&module.body, false);
+    for stmt in &module.body {
+        spans.visit_stmt(stmt);
+    }
+    let modified = !(spans.deletes.is_empty() && spans.replaced_stmts.is_empty());
+    if !modified {
+        return (tokens.to_vec(), false);
+    }
+
+    let inside =
+        |t: &Tok<'_>, s: &TextRange| t.range.start() >= s.start() && t.range.end() <= s.end();
+    let mut dropped = vec![false; tokens.len()];
+    for span in &spans.deletes {
+        // The statement separator goes with the statement: a stray `;` is a
+        // syntax error, and a stray Newline makes the emitted stream differ
+        // from the verifier's re-lexed one. It is the first `Newline` / `;`
+        // past the statement; only a trailing comment can sit in between.
+        let cut_end = tokens
+            .iter()
+            .find(|t| {
+                t.range.start() >= span.end()
+                    && matches!(t.kind, TokenKind::Newline | TokenKind::Semi)
+            })
+            .map_or(span.end(), |t| t.range.end());
+        for (i, tok) in tokens.iter().enumerate() {
+            // A comment on the docstring's line is kept: it becomes a
+            // comment-only line (unless PYO1 drops it at render time).
+            if tok.range.start() >= span.start()
+                && tok.range.start() < cut_end
+                && tok.kind != TokenKind::Comment
+            {
+                dropped[i] = true;
+            }
+        }
+    }
+
+    let mut out: Vec<Tok<'a>> = Vec::new();
+    let mut replaced_span: Option<TextRange> = None;
+    for (i, tok) in tokens.iter().enumerate() {
+        let replacement = spans
+            .replaced_stmts
+            .iter()
+            .find(|s| inside(tok, s))
+            .copied();
+        if let Some(span) = replacement {
+            // The first token of a sole docstring becomes `pass`.
+            if replaced_span != Some(span) {
+                replaced_span = Some(span);
+                out.push(Tok {
+                    kind: TokenKind::Pass,
+                    text: "pass",
+                    range: tok.range,
+                });
+            }
+        } else if !dropped[i] {
+            out.push(tok.clone());
+        }
+    }
+    settle_indents(&mut out);
+    (out, true)
+}
+
+/// Moves each `Indent` behind the comment-only lines that now open its block.
+///
+/// A lexer emits `Indent` at the block's first *logical* line, so comments
+/// preceding it come first in the stream. Deleting a docstring can leave
+/// comments in front of that first logical line; the verifier re-lexes the
+/// output, so the pass has to put the `Indent` where the lexer will. Streams
+/// that kept their first statement are untouched: an `Indent` is only ever
+/// followed by comments once something before them was removed.
+fn settle_indents(tokens: &mut [Tok<'_>]) {
+    let mut i = 0;
+    while i < tokens.len() {
+        let mut end = i + 1;
+        let mut comments = false;
+        if tokens[i].kind == TokenKind::Indent {
+            while end < tokens.len()
+                && matches!(
+                    tokens[end].kind,
+                    TokenKind::Comment | TokenKind::NonLogicalNewline
+                )
+            {
+                comments |= tokens[end].kind == TokenKind::Comment;
+                end += 1;
+            }
+        }
+        if comments {
+            tokens[i..end].rotate_left(1);
+        }
+        i = end;
+    }
+}
+
 /// Spans of annotation syntax collected from the AST.
 #[derive(Default)]
 struct AnnotationSpans {
@@ -259,6 +406,22 @@ mod tests {
         )
     }
 
+    /// Kinds of the stripped token stream, for order assertions.
+    fn docstring_kinds(source: &str) -> Vec<TokenKind> {
+        let parsed = parser::parse(source).unwrap();
+        let (tokens, _) = strip_docstrings(&parsed.tokens(source), parsed.ast());
+        tokens.iter().map(|t| t.kind).collect()
+    }
+
+    fn docstrings(source: &str) -> (String, bool) {
+        let parsed = parser::parse(source).unwrap();
+        let (tokens, modified) = strip_docstrings(&parsed.tokens(source), parsed.ast());
+        (
+            crate::emit::render(&tokens, source, &crate::PythonOptions::default()),
+            modified,
+        )
+    }
+
     #[test]
     fn adjacent_plain_imports_merge() {
         let (code, modified) = merge("import os\nimport sys\nimport re\n");
@@ -369,6 +532,155 @@ mod tests {
     fn unannotated_code_is_not_modified() {
         let (code, modified) = strip("def f(x):\n    return x\n");
         assert_eq!(code, "def f(x):\n return x");
+        assert!(!modified);
+    }
+
+    #[test]
+    fn module_docstrings_are_removed() {
+        let (code, modified) = docstrings("\"\"\"Doc.\"\"\"\nx = 1\n");
+        assert_eq!(code, "x=1");
+        assert!(modified);
+    }
+
+    #[test]
+    fn a_module_of_only_a_docstring_becomes_empty() {
+        // An empty module is legal Python, so no `pass` is needed here.
+        assert_eq!(docstrings("\"\"\"Doc.\"\"\"\n").0, "");
+    }
+
+    #[test]
+    fn function_and_class_docstrings_are_removed() {
+        assert_eq!(
+            docstrings("def f():\n    \"\"\"Doc.\"\"\"\n    return 1\n").0,
+            "def f():\n return 1"
+        );
+        assert_eq!(
+            docstrings("async def f():\n    \"\"\"Doc.\"\"\"\n    return 1\n").0,
+            "async def f():\n return 1"
+        );
+        assert_eq!(
+            docstrings(
+                "class C:\n    \"\"\"Doc.\"\"\"\n    def m(self):\n        \"\"\"Method.\"\"\"\n        return 1\n"
+            )
+            .0,
+            "class C:\n def m(self):\n  return 1"
+        );
+    }
+
+    #[test]
+    fn docstrings_of_nested_definitions_are_removed() {
+        let (code, _) =
+            docstrings("if flag:\n    def f():\n        \"\"\"Doc.\"\"\"\n        return 1\n");
+        assert_eq!(code, "if flag:\n def f():\n  return 1");
+    }
+
+    #[test]
+    fn a_sole_docstring_body_becomes_pass() {
+        assert_eq!(
+            docstrings("def f():\n    \"\"\"Doc.\"\"\"\n").0,
+            "def f():\n pass"
+        );
+        assert_eq!(
+            docstrings("class C:\n    \"\"\"Doc.\"\"\"\n").0,
+            "class C:\n pass"
+        );
+        // Same body, written on the header line.
+        assert_eq!(docstrings("def f(): \"\"\"Doc.\"\"\"\n").0, "def f():pass");
+    }
+
+    #[test]
+    fn a_comment_after_a_sole_docstring_survives() {
+        assert_eq!(
+            docstrings("def f():\n    \"\"\"Doc.\"\"\"\n    # note\n").0,
+            "def f():\n pass\n# note"
+        );
+    }
+
+    #[test]
+    fn a_trailing_comment_on_the_docstring_line_survives() {
+        // The docstring statement including its Newline is gone, so the
+        // comment becomes a comment-only line.
+        assert_eq!(
+            docstrings("\"\"\"Doc.\"\"\"  # note\nx = 1\n").0,
+            "# note\nx=1"
+        );
+    }
+
+    #[test]
+    fn comments_starting_a_body_move_ahead_of_the_block_indent() {
+        // With the docstring gone the comments start the body, and comment-only
+        // lines are lexed *before* the block's Indent - the pass must order them
+        // that way too, or the verifier sees a different stream than the output
+        // lexes to.
+        for (source, expected) in [
+            (
+                "def f():\n    \"\"\"Doc.\"\"\"  # note\n    return 1\n",
+                "def f():\n # note\n return 1",
+            ),
+            (
+                "class C:\n    \"\"\"Doc.\"\"\"\n\n    # note\n    x = 1\n",
+                "class C:\n # note\n x=1",
+            ),
+        ] {
+            assert_eq!(docstrings(source).0, expected);
+            let kinds = docstring_kinds(source);
+            let indent = kinds.iter().position(|k| *k == TokenKind::Indent).unwrap();
+            let comment = kinds.iter().position(|k| *k == TokenKind::Comment).unwrap();
+            assert!(
+                comment < indent,
+                "comment must precede Indent in {source:?}"
+            );
+        }
+        // A block whose first surviving token is real keeps its Indent.
+        let kinds = docstring_kinds("class C:\n    \"\"\"Doc.\"\"\"\n    x = 1\n");
+        let indent = kinds.iter().position(|k| *k == TokenKind::Indent).unwrap();
+        assert_eq!(kinds[indent + 1], TokenKind::Name);
+    }
+
+    #[test]
+    fn a_semicolon_terminated_docstring_is_removed_with_its_separator() {
+        assert_eq!(docstrings("\"\"\"Doc.\"\"\";x = 1\n").0, "x=1");
+    }
+
+    #[test]
+    fn implicitly_concatenated_and_parenthesized_docstrings_are_removed() {
+        // CPython sets `__doc__` for both forms, so both are docstrings.
+        assert_eq!(
+            docstrings("def f():\n    \"a\" \"b\"\n    return 1\n").0,
+            "def f():\n return 1"
+        );
+        assert_eq!(
+            docstrings("def f():\n    (\"Doc.\")\n    return 1\n").0,
+            "def f():\n return 1"
+        );
+    }
+
+    #[test]
+    fn fstrings_and_byte_strings_are_not_docstrings() {
+        // Neither sets `__doc__` in CPython, so both are kept.
+        let (code, modified) = docstrings("def f():\n    f\"{x}\"\n    return 1\n");
+        assert_eq!(code, "def f():\n f\"{x}\"\n return 1");
+        assert!(!modified);
+        let (code, modified) = docstrings("def f():\n    b\"doc\"\n    return 1\n");
+        assert_eq!(code, "def f():\n b\"doc\"\n return 1");
+        assert!(!modified);
+    }
+
+    #[test]
+    fn string_statements_that_are_not_first_are_kept() {
+        let (code, modified) = docstrings("def f():\n    x = 1\n    \"note\"\n");
+        assert_eq!(code, "def f():\n x=1\n \"note\"");
+        assert!(!modified);
+        // A block that is not a module/class/function body has no docstring.
+        let (code, modified) = docstrings("if flag:\n    \"note\"\n");
+        assert_eq!(code, "if flag:\n \"note\"");
+        assert!(!modified);
+    }
+
+    #[test]
+    fn sources_without_docstrings_are_not_modified() {
+        let (code, modified) = docstrings("def f():\n    return 1\n");
+        assert_eq!(code, "def f():\n return 1");
         assert!(!modified);
     }
 

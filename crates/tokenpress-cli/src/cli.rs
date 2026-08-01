@@ -46,6 +46,10 @@ struct CommonOpts {
     /// PYO1: strip `#` comments (kept by default).
     #[arg(long)]
     py_strip_comments: bool,
+    /// PYO2: strip docstrings — the leading string literal of a module, class
+    /// or function body. Empties `__doc__`; breaks `help()` and doctests.
+    #[arg(long)]
+    py_strip_docstrings: bool,
     /// PYO3: strip type annotations. Changes `__annotations__`; breaks
     /// dataclass/pydantic-style runtime introspection.
     #[arg(long)]
@@ -139,6 +143,7 @@ fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
     vec![
         Box::new(PythonFormatter::new(PythonOptions {
             strip_comments: common.py_strip_comments,
+            strip_docstrings: common.py_strip_docstrings,
             strip_annotations: common.py_strip_annotations,
             merge_imports: !common.py_no_merge_imports,
         })),
@@ -626,6 +631,24 @@ mod tests {
         assert_eq!(code, 0);
         assert_eq!(std::fs::read_to_string(&py).unwrap(), "x=1");
         assert_eq!(std::fs::read_to_string(&rs).unwrap(), "fn f(){}");
+    }
+
+    #[test]
+    fn docstring_stripping_flag_is_forwarded() {
+        let dir = Scratch::new();
+        let source = "\"\"\"Module doc.\"\"\"\ndef f():\n    \"\"\"Doc.\"\"\"\n    return 1\n";
+        let py = dir.file("a.py", source);
+        let (code, _) = run_cli(&["format", "--py-strip-docstrings", py.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "def f():\n return 1");
+        // Without the flag the docstrings stay.
+        let kept = dir.file("b.py", source);
+        let (code, _) = run_cli(&["format", kept.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&kept).unwrap(),
+            "\"\"\"Module doc.\"\"\"\ndef f():\n \"\"\"Doc.\"\"\"\n return 1"
+        );
     }
 
     #[test]
