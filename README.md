@@ -68,10 +68,77 @@ tokenpress format . --rs-strip-doc-comments  # drop ///+//! doc comments (and do
 Exit codes: `0` ok · `1` check found changes · `2` error (parse/verification
 failures are reported per file; nothing corrupt is ever written).
 
-## GitHub Action
+## Integrations
 
-Add the gate to an existing workflow with one step — the action builds the CLI
-from its own pinned checkout, so nothing has to be installed first:
+Three adoption surfaces, in the shape ruff/clippy/eslint users already expect:
+a pre-commit hook, a GitHub Action, and a project config file. All three drive
+the same CLI and share its exit codes.
+
+### pre-commit
+
+TokenPress ships hook definitions for the [pre-commit](https://pre-commit.com)
+framework (`.pre-commit-hooks.yaml`). Add them to the consuming repository's
+`.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/starone99/TokenPress
+    rev: v0.1.0                  # pin a real tag or a full commit SHA
+    hooks:
+      - id: tokenpress-check
+      # - id: tokenpress-format  # …or rewrite instead of only reporting
+```
+
+`rev: v0.1.0` above is a placeholder: pin an actual released tag or commit SHA,
+never a branch — pre-commit clones the repository at that ref and builds the
+CLI from it.
+
+| Hook | Runs | Result |
+|---|---|---|
+| `tokenpress-check` | `tokenpress check <staged files>` — writes nothing | Fails when any file is not in normalized form (CLI exit 1) |
+| `tokenpress-format` | `tokenpress format <staged files>` — rewrites in place | pre-commit reports the run as failed whenever it had something to rewrite; re-stage and commit again |
+
+Pick one. Enabling both is redundant: `tokenpress-check` fails the run for
+exactly the files `tokenpress-format` then rewrites.
+
+Exit semantics: `check` exits 1 exactly when something would change, which is
+what fails the hook. `format` itself exits 0 either way — the run is reported
+as failed because files changed on disk, the same "a gate cannot pass silently
+on rewritten files" rule as the Action's `mode: format`. Exit 2 (a parse or
+verification failure, or an unsupported path) fails the hook too, and nothing
+that fails verification is ever written.
+
+Both hooks declare `files: \.(py|rs)$` alongside `types_or: [python, rust]`, so
+only `.py` and `.rs` files ever reach the CLI. Extension-less scripts with a
+Python shebang are excluded on purpose: an explicitly named unsupported path
+makes the CLI exit 2. Both are `require_serial: true` — every invocation runs a
+`cargo build` first, and parallel copies would only contend for the same cargo
+lock. `minimum_pre_commit_version` is 2.9.0.
+
+Prerequisites for the consumer:
+
+- **A working `cargo` on `PATH`** — rustup is the easiest route. The hooks are
+  `language: script`; the entry script builds `tokenpress-cli` inside
+  pre-commit's own clone of this repository, with the working directory there
+  so `rust-toolchain.toml` pins the compiler (rustup then installs it on first
+  use). The first hook run therefore pays one release build; later runs reuse
+  that clone's `target/`.
+- **On Windows, `sh` on `PATH`** — the entry point is a `#!/usr/bin/env sh`
+  script. Git for Windows provides one.
+
+pre-commit runs hooks from the root of the consuming repository, so a
+`tokenpress.toml` there is picked up automatically (see below). Try the hooks
+across a whole tree before wiring them into commits:
+
+```bash
+pre-commit run --all-files
+```
+
+### GitHub Action
+
+Add the gate to an existing workflow with one step — the composite action
+builds the CLI from its own pinned checkout and caches it, so nothing has to be
+installed first:
 
 ```yaml
 - uses: starone99/TokenPress@v0.1.0
@@ -81,11 +148,125 @@ from its own pinned checkout, so nothing has to be installed first:
     extra-args: --rs-strip-doc-comments   # optional, passed through verbatim
 ```
 
+As a standalone gate workflow:
+
+```yaml
+name: TokenPress
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tokenpress:
+    name: Token-normalized form
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: starone99/TokenPress@v0.1.0
+        with:
+          paths: src tests
+```
+
 `check` fails the step when anything would change and writes nothing. `format`
 rewrites files and then *also* fails, so a gate cannot pass silently on
-rewritten files; pair it with `continue-on-error: true` and the step's `changed`
-output to drive a follow-up autocommit. Only `.py` and `.rs` files are
-processed — everything else in the given paths is skipped.
+rewritten files. That makes an autocommit flow explicit: run the step with
+`continue-on-error: true` and branch on its `changed` output.
+
+```yaml
+jobs:
+  tokenpress:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: tokenpress
+        uses: starone99/TokenPress@v0.1.0
+        continue-on-error: true
+        with:
+          mode: format
+      - if: steps.tokenpress.outputs.changed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -am 'style: tokenpress format'
+          git push
+```
+
+Inputs:
+
+| Input | Default | Meaning |
+|---|---|---|
+| `mode` | `check` | `check` reports and fails, writing nothing. `format` rewrites in place and then fails if it had something to rewrite. Any other value fails the step with exit 2. |
+| `paths` | `.` | Whitespace-separated files and/or directories, relative to the workspace. Subject to the shell's word splitting and globbing, so `src/*.py` works. |
+| `extra-args` | *(empty)* | Extra `tokenpress` flags, passed through verbatim (whitespace-separated), e.g. `--rs-strip-doc-comments --py-strip-comments`. |
+
+Output:
+
+| Output | Meaning |
+|---|---|
+| `changed` | `'true'` if any file was rewritten (`format`) or would be rewritten (`check`), otherwise `'false'`. Set even when the step fails, so a `continue-on-error` step can gate a follow-up on it. It is `'false'` when the run errored out or had no supported path to process. |
+
+**Directories and explicitly named files are treated differently.** A directory
+is handed to the CLI as-is: its walk is `.gitignore`-aware and picks up only
+`.py` and `.rs` files, so pointing `paths` at a mixed tree is safe. An
+explicitly named file is *not* filtered by the CLI — an unsupported one is an
+error (exit 2) — so the action drops non-`.py`/`.rs` files from the argument
+list itself and logs which ones it skipped. A glob over a mixed tree therefore
+does not abort the run, and if nothing supported is left the step succeeds with
+`changed=false`. A path that is neither a file nor a directory is passed
+through, so a typo is reported rather than silently swallowed.
+
+### Configuration file
+
+Project-wide defaults live in a `tokenpress.toml`. Every key is optional; a
+missing key means "not configured", never an explicit default.
+
+```toml
+# tokenpress.toml
+
+# Tokenizer to optimize for — same spellings as `--tokenizer`:
+# o200k_base | cl100k_base | hf:<tokenizer.json> | kimi:<tiktoken.model>
+tokenizer = "o200k_base"      # built-in default: o200k_base
+
+# Verification level applied to every output: "reparse" | "ast" | "external"
+verify = "ast"                # built-in default: ast
+
+[python]
+strip_comments    = false     # --py-strip-comments
+strip_docstrings  = false     # --py-strip-docstrings
+strip_annotations = false     # --py-strip-annotations
+merge_imports     = true      # `false` is the config spelling of --py-no-merge-imports
+
+[rust]
+strip_doc_comments = false    # --rs-strip-doc-comments
+```
+
+That is the complete schema — there are no other keys. `verify = "external"` is
+accepted but not yet backed by external tooling: it currently behaves exactly
+like `"ast"` and says so on stderr.
+
+**Discovery.** Without `--config`, the nearest `tokenpress.toml` found walking
+up from the current directory is used; the first one found wins, and having
+none at all is not an error. Discovery starts from the working directory, not
+from the paths given on the command line. `--config <path>` is accepted by
+`format`, `check`, `diff` and `stats`; passing it disables discovery entirely
+and the file must exist — a missing one is a hard error.
+
+**Precedence: explicit CLI flag > config file > built-in default.**
+`--tokenizer` and `--verify` override their config counterparts. The strip
+flags are presence-only booleans, so the command line can only turn them *on*:
+the config file is the project baseline, and `strip_comments = false` there
+cannot cancel a `--py-strip-comments` passed on the command line (nor can the
+command line re-enable import merging that `merge_imports = false` turned off).
+
+**Config problems fail loudly**, like every other linter-style tool: an unknown
+key, a wrong value type, malformed TOML, or an unknown `tokenizer`/`verify`
+value is an error naming the offending key, reported before any file is read —
+exit 2, nothing written. A discovered config that does not parse fails exactly
+as hard as an explicit one.
 
 ## What it never touches
 

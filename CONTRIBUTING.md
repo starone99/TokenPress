@@ -64,6 +64,15 @@ CI runs the build and test suite on both `ubuntu-latest` and `windows-latest`,
 so keep changes platform-neutral — in particular path handling and any
 path-string assertions in tests.
 
+## Integration surfaces
+
+`.pre-commit-hooks.yaml` (with `scripts/pre-commit-hook.sh`), `action.yml` and
+the `tokenpress.toml` schema in `crates/tokenpress-cli/src/config.rs` are
+consumer-facing contracts: hook ids, action inputs/outputs, config keys and
+exit codes are what other repositories pin against. They are documented in the
+README's **Integrations** section — change one and update that section in the
+same commit.
+
 ## Code style
 
 CI enforces exactly two things, and they must both pass locally:
