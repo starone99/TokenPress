@@ -6,10 +6,19 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["hf-tokenizer"]
+# The HuggingFace `tokenizer.json` backend. On by default; switching it off
+# drops the `tokenizers` dependency, whose `getrandom` transitive requires a
+# JS backend and therefore does not build for wasm32-unknown-unknown.
+hf-tokenizer = ["dep:tokenizers"]
+
 [dependencies]
 thiserror.workspace = true
 tiktoken-rs.workspace = true
 # fancy-regex backend avoids the C onig build; training-only features unused.
-tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
+tokenizers = { version = "0.22", default-features = false, features = [
+    "fancy-regex",
+], optional = true }
 base64 = "0.22"
 rustc-hash = "2"

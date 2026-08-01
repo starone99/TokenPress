@@ -6,8 +6,16 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["hf-tokenizer"]
+# Forwarded to tokenpress-core; see its manifest.
+hf-tokenizer = ["tokenpress-core/hf-tokenizer"]
+
 [dependencies]
-tokenpress-core.workspace = true
+# Path dependency, not `workspace = true`: `default-features = false` is
+# ignored on an inherited dependency, and the `hf-tokenizer` feature has to be
+# switchable from tokenpress-wasm (which cannot build it for wasm32).
+tokenpress-core = { path = "../tokenpress-core", default-features = false }
 # Internal ruff crates: no semver guarantees, so pin exact versions and keep
 # all parser access isolated behind src/parser.rs.
 ruff_python_parser = "=0.0.6"

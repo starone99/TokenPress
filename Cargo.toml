@@ -5,6 +5,7 @@ members = [
     "crates/tokenpress-python",
     "crates/tokenpress-rust",
     "crates/tokenpress-cli",
+    "crates/tokenpress-wasm",
 ]
 
 [workspace.package]
@@ -19,3 +20,6 @@ tokenpress-python = { path = "crates/tokenpress-python" }
 tokenpress-rust = { path = "crates/tokenpress-rust" }
 thiserror = "2"
 tiktoken-rs = "0.12"
+wasm-bindgen = "0.2"
+serde = "1"
+serde_json = "1"

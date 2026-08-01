@@ -29,6 +29,8 @@ pub enum TokenizerKind {
     /// tiktoken `cl100k_base` (GPT-4 / GPT-3.5), embedded.
     Cl100kBase,
     /// A HuggingFace `tokenizer.json` file (Qwen, GLM, Gemma, Llama, ...).
+    /// Requires the default `hf-tokenizer` feature.
+    #[cfg(feature = "hf-tokenizer")]
     HuggingFaceFile(PathBuf),
     /// A tiktoken BPE ranks file (`tiktoken.model`) split with the Kimi
     /// pattern (Kimi K2/K3 publish this format instead of tokenizer.json).
@@ -56,8 +58,10 @@ const KIMI_PATTERN: &str = concat!(
 
 impl TokenizerKind {
     /// Resolves a CLI-facing name: `"o200k_base"`, `"cl100k_base"`,
-    /// `"hf:<tokenizer.json>"`, or `"kimi:<tiktoken.model>"`.
+    /// `"hf:<tokenizer.json>"` (only with the `hf-tokenizer` feature), or
+    /// `"kimi:<tiktoken.model>"`.
     pub fn from_name(name: &str) -> Result<Self> {
+        #[cfg(feature = "hf-tokenizer")]
         if let Some(path) = name.strip_prefix("hf:") {
             return Ok(Self::HuggingFaceFile(PathBuf::from(path)));
         }
@@ -96,6 +100,7 @@ impl TokenizerKind {
                     })
                     .clone())
             }
+            #[cfg(feature = "hf-tokenizer")]
             Self::HuggingFaceFile(path) => load_cached(path, |p| {
                 let tk = tokenizers::Tokenizer::from_file(p)
                     .map_err(|e| Error::UnknownTokenizer(format!("hf:{}: {e}", p.display())))?;
@@ -175,11 +180,13 @@ impl Tokenizer for Tiktoken {
     }
 }
 
+#[cfg(feature = "hf-tokenizer")]
 struct HfTokenizer {
     name: String,
     tokenizer: tokenizers::Tokenizer,
 }
 
+#[cfg(feature = "hf-tokenizer")]
 impl Tokenizer for HfTokenizer {
     fn name(&self) -> &str {
         &self.name
@@ -214,12 +221,17 @@ mod tests {
             TokenizerKind::Cl100kBase
         );
         assert_eq!(
-            TokenizerKind::from_name("hf:some/tokenizer.json").unwrap(),
-            TokenizerKind::HuggingFaceFile(PathBuf::from("some/tokenizer.json"))
-        );
-        assert_eq!(
             TokenizerKind::from_name("kimi:some/tiktoken.model").unwrap(),
             TokenizerKind::KimiTiktokenFile(PathBuf::from("some/tiktoken.model"))
+        );
+    }
+
+    #[cfg(feature = "hf-tokenizer")]
+    #[test]
+    fn from_name_resolves_hf_tokenizers() {
+        assert_eq!(
+            TokenizerKind::from_name("hf:some/tokenizer.json").unwrap(),
+            TokenizerKind::HuggingFaceFile(PathBuf::from("some/tokenizer.json"))
         );
     }
 
@@ -254,6 +266,7 @@ mod tests {
         assert!(Arc::ptr_eq(&a, &b));
     }
 
+    #[cfg(feature = "hf-tokenizer")]
     #[test]
     fn hf_tokenizer_loads_counts_and_caches() {
         let kind = TokenizerKind::HuggingFaceFile(testdata("mini_tokenizer.json"));
@@ -264,6 +277,7 @@ mod tests {
         assert!(Arc::ptr_eq(&tok, &kind.load().unwrap()));
     }
 
+    #[cfg(feature = "hf-tokenizer")]
     #[test]
     fn hf_tokenizer_errors_are_reported() {
         let missing = TokenizerKind::HuggingFaceFile(testdata("nope.json"));

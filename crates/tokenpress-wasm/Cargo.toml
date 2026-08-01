@@ -1,0 +1,25 @@
+[package]
+name = "tokenpress-wasm"
+description = "WebAssembly bindings for TokenPress: the Python formatter behind a thin wasm-bindgen boundary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# cdylib for the wasm artifact, rlib so host tests (and the coverage gate)
+# can link the crate like any other library.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Path dependencies rather than the usual `workspace = true`: `default-features
+# = false` is ignored on an inherited dependency unless the workspace entry
+# spells it out, and every other crate wants the defaults. The HuggingFace
+# tokenizer backend does not build for wasm32-unknown-unknown (its `getrandom`
+# transitive needs a JS backend) and this crate does not expose tokenizer
+# selection, so it is switched off here.
+tokenpress-core = { path = "../tokenpress-core", default-features = false }
+tokenpress-python = { path = "../tokenpress-python", default-features = false }
+wasm-bindgen.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
