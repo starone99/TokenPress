@@ -30,11 +30,29 @@ pub fn emit(program: &Program<'_>, strip_comments: bool) -> String {
     } else {
         CommentOptions::default()
     };
-    let options = CodegenOptions {
-        minify: true,
-        comments,
-        ..CodegenOptions::default()
-    };
+    render(
+        program,
+        CodegenOptions {
+            minify: true,
+            comments,
+            ..CodegenOptions::default()
+        },
+    )
+}
+
+/// Renders `program` in the canonical full-minify form used by
+/// [`crate::verify`] to compare two programs for equivalence.
+///
+/// Deliberately built from [`CodegenOptions::minify()`] rather than from
+/// [`emit`]: the canonical form must stay a fixed, comment-free normal form
+/// even if the comment policy of [`emit`] changes. Comments are erased by
+/// construction here, which is exactly why the verifier cannot see comment
+/// loss — see the note in [`crate::verify`].
+pub(crate) fn canonical(program: &Program<'_>) -> String {
+    render(program, CodegenOptions::minify())
+}
+
+fn render(program: &Program<'_>, options: CodegenOptions) -> String {
     Codegen::new().with_options(options).build(program).code
 }
 
