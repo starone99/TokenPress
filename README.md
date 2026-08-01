@@ -14,6 +14,15 @@ s.t.      the transformed code parses, compiles, and behaves identically
 Output that fails verification (re-parse + AST/token equivalence) is never
 written — that is the project's core invariant.
 
+**The intended reader of TokenPress output is a model, not a person.** The use
+case is the machine-consumed copy of a codebase: the repo or file you paste
+into a prompt, hand to an agent's context window, or feed into a RAG index. For
+a human reader, formatting and comments are value; in a machine-only copy they
+are billed tokens. Run TokenPress on the copy bound for the model and keep the
+original for humans — and note that TokenPress never renames an identifier
+(variable, function, type) and never edits the contents of a string; only
+whitespace, newlines, comments, docstrings and annotations are ever touched.
+
 ## Measured savings
 
 Full corpora, every file passing verification. See
@@ -67,6 +76,13 @@ tokenpress format . --rs-strip-doc-comments  # drop ///+//! doc comments (and do
 
 Exit codes: `0` ok · `1` check found changes · `2` error (parse/verification
 failures are reported per file; nothing corrupt is ever written).
+
+**Stripped prose is context the model no longer sees.** Comments, docstrings
+and annotations are information an LLM could have used to answer questions
+about the code, and every strip flag deletes some of it. Whether — and how
+much — that degrades the quality of a model's answers has **not been measured
+yet**. Until it is, treat the aggressive flags as a cost/quality trade-off you
+are choosing, not as free savings.
 
 ## Integrations
 

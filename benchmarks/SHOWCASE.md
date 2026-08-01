@@ -156,6 +156,13 @@ each removes information from the source:
 | `--py-strip-annotations` | Python type hints — breaks `__annotations__`-based introspection (dataclass, pydantic) |
 | `--rs-strip-doc-comments` | Rust `///` and `//!` doc comments, and with them rustdoc and doctests |
 
+**Token savings are not free context.** Every comment and docstring stripped
+above is prose the model can no longer read. Whether that degrades the quality
+of a model's answers on real code tasks — and by how much — is **unmeasured**;
+no experiment on this project has tested it. The numbers on this page quantify
+the cost saving only. They say nothing about the quality trade-off on the other
+side of it.
+
 **Rust loses regular comments even at default settings.** The Rust backend
 re-emits from the `syn` token stream, which does not carry `//` or `/* */`
 comments; they are always dropped. Only doc comments survive, and only without
