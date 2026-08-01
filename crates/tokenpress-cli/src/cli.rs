@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use config::{ConfigError, ConfigVerify, FileConfig};
 use tokenpress_core::{
     Error, FormatOptions, FormatResult, Formatter, Result, TokenizerKind, VerifyLevel,
 };
@@ -38,13 +39,19 @@ struct CommonOpts {
     /// Files or directories to process (`.py` / `.rs`).
     #[arg(required = true)]
     paths: Vec<PathBuf>,
+    /// Config file to read. Without it the nearest `tokenpress.toml` found
+    /// walking up from the current directory is used, if there is one.
+    #[arg(long)]
+    config: Option<PathBuf>,
     /// Tokenizer to optimize for: o200k_base | cl100k_base |
-    /// hf:<tokenizer.json> | kimi:<tiktoken.model>.
-    #[arg(long, default_value = "o200k_base")]
-    tokenizer: String,
-    /// Verification level applied to every output.
-    #[arg(long, value_enum, default_value = "ast")]
-    verify: VerifyArg,
+    /// hf:<tokenizer.json> | kimi:<tiktoken.model>. [default: o200k_base]
+    // No clap default: an unset value must stay distinguishable from an
+    // explicit one so the config file is not shadowed by the default.
+    #[arg(long)]
+    tokenizer: Option<String>,
+    /// Verification level applied to every output. [default: ast]
+    #[arg(long, value_enum)]
+    verify: Option<VerifyArg>,
     /// PYO1: strip `#` comments (kept by default).
     #[arg(long)]
     py_strip_comments: bool,
@@ -94,6 +101,66 @@ enum Cmd {
     },
 }
 
+/// Name of the project config file looked for during auto-discovery.
+const CONFIG_FILE_NAME: &str = "tokenpress.toml";
+
+/// Default tokenizer, applied when neither the command line nor the config
+/// file names one.
+const DEFAULT_TOKENIZER: &str = "o200k_base";
+
+/// Returns the nearest `tokenpress.toml` at or above `start`, if any.
+fn discover_config(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .map(|dir| dir.join(CONFIG_FILE_NAME))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Loads the config file to apply. An explicit `--config` disables discovery
+/// and must point at a readable file; without one the nearest `tokenpress.toml`
+/// above `start` is used, and having none at all is not an error. A file that
+/// exists but does not parse always fails, discovered or not.
+// `Result` here is the core alias, so the config result is spelled in full.
+fn load_config(
+    explicit: Option<&Path>,
+    start: &Path,
+) -> std::result::Result<Option<FileConfig>, ConfigError> {
+    let path = match explicit {
+        Some(path) => Some(path.to_path_buf()),
+        None => discover_config(start),
+    };
+    path.map(|path| FileConfig::load(&path)).transpose()
+}
+
+/// Verification level as spelled in the config file, mapped onto the
+/// command line's own value.
+fn verify_arg(verify: ConfigVerify) -> VerifyArg {
+    match verify {
+        ConfigVerify::Reparse => VerifyArg::Reparse,
+        ConfigVerify::Ast => VerifyArg::Ast,
+        ConfigVerify::External => VerifyArg::External,
+    }
+}
+
+/// Merges `cfg` into the parsed command line: the config file only fills in
+/// what the command line left unsaid. The strip flags are presence-only, so
+/// the command line can turn them on but never off — the config provides the
+/// project baseline.
+fn apply_config(common: &mut CommonOpts, cfg: FileConfig) {
+    common.tokenizer = common.tokenizer.take().or(cfg.tokenizer);
+    common.verify = common.verify.or(cfg.verify.map(verify_arg));
+    if let Some(python) = cfg.python {
+        common.py_strip_comments |= python.strip_comments.unwrap_or(false);
+        common.py_strip_docstrings |= python.strip_docstrings.unwrap_or(false);
+        common.py_strip_annotations |= python.strip_annotations.unwrap_or(false);
+        // `merge_imports = false` is the config spelling of the negative flag.
+        common.py_no_merge_imports |= !python.merge_imports.unwrap_or(true);
+    }
+    if let Some(rust) = cfg.rust {
+        common.rs_strip_doc_comments |= rust.strip_doc_comments.unwrap_or(false);
+    }
+}
+
 /// Runs the CLI and returns the process exit code.
 /// Exit codes: 0 = success, 1 = `check` found changes, 2 = error.
 /// `out` receives the primary (pipeable) output, `err` diagnostics.
@@ -102,7 +169,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let cli = match Cli::try_parse_from(args) {
+    let mut cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(err) => {
             let _ = write!(out, "{err}");
@@ -112,12 +179,24 @@ where
             };
         }
     };
-    let (common, action) = match &cli.cmd {
+    let (common, action) = match &mut cli.cmd {
         Cmd::Format { common, stdout } => (common, Action::Format { to_stdout: *stdout }),
         Cmd::Check { common } => (common, Action::Check),
         Cmd::Diff { common } => (common, Action::Diff),
         Cmd::Stats { common, json } => (common, Action::Stats { json: *json }),
     };
+    // An inaccessible current directory simply leaves nothing to discover.
+    let cwd = std::env::current_dir().unwrap_or_default();
+    match load_config(common.config.as_deref(), &cwd) {
+        Ok(Some(cfg)) => apply_config(common, cfg),
+        Ok(None) => {}
+        // Config problems are usage errors: report them before any file is
+        // read, and do not leave the run half-configured.
+        Err(cfg_err) => {
+            let _ = writeln!(err, "error: {cfg_err}");
+            return 2;
+        }
+    }
     match execute(common, action, out, err) {
         Ok(code) => code,
         Err(err) => {
@@ -157,8 +236,10 @@ fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
 
 fn format_options(common: &CommonOpts) -> Result<FormatOptions> {
     Ok(FormatOptions {
-        tokenizer: TokenizerKind::from_name(&common.tokenizer)?,
-        verify: match common.verify {
+        tokenizer: TokenizerKind::from_name(
+            common.tokenizer.as_deref().unwrap_or(DEFAULT_TOKENIZER),
+        )?,
+        verify: match common.verify.unwrap_or(VerifyArg::Ast) {
             VerifyArg::Reparse => VerifyLevel::Reparse,
             VerifyArg::Ast => VerifyLevel::AstEquiv,
             VerifyArg::External => VerifyLevel::External,
@@ -226,7 +307,7 @@ warning: external-tooling verification is not implemented yet: neither
 /// Verification runs for every subcommand, so the warning is not restricted to
 /// the rewriting ones.
 fn warn_external_verify(common: &CommonOpts, err: &mut dyn Write) {
-    if matches!(common.verify, VerifyArg::External) {
+    if matches!(common.verify, Some(VerifyArg::External)) {
         let _ = writeln!(err, "{EXTERNAL_VERIFY_WARNING}");
     }
 }
@@ -804,5 +885,222 @@ mod tests {
     #[test]
     fn json_escape_handles_quotes_and_backslashes() {
         assert_eq!(json_escape("a\\b\"c"), "a\\\\b\\\"c");
+    }
+
+    #[test]
+    fn discovery_finds_the_config_file_in_a_parent_directory() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "verify = \"ast\"\n");
+        let deep = dir.0.join("a").join("b");
+        std::fs::create_dir_all(&deep).unwrap();
+        assert_eq!(discover_config(&deep), Some(cfg));
+    }
+
+    #[test]
+    fn discovery_returns_nothing_when_no_config_file_exists() {
+        let dir = Scratch::new();
+        assert_eq!(discover_config(&dir.0), None);
+    }
+
+    #[test]
+    fn discovery_prefers_the_nearest_config_file() {
+        let dir = Scratch::new();
+        dir.file("tokenpress.toml", "verify = \"ast\"\n");
+        let sub = dir.0.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let near = sub.join("tokenpress.toml");
+        std::fs::write(&near, "verify = \"reparse\"\n").unwrap();
+        assert_eq!(discover_config(&sub), Some(near));
+    }
+
+    #[test]
+    fn an_explicit_config_disables_discovery() {
+        let dir = Scratch::new();
+        // A `tokenpress.toml` next to the explicit file must be ignored.
+        dir.file("tokenpress.toml", "nonsense = true\n");
+        let cfg = dir.file("other.toml", "verify = \"ast\"\n");
+        let loaded = load_config(Some(&cfg), &dir.0).unwrap().unwrap();
+        assert_eq!(loaded.verify, Some(ConfigVerify::Ast));
+    }
+
+    #[test]
+    fn a_discovered_config_file_is_loaded() {
+        let dir = Scratch::new();
+        dir.file("tokenpress.toml", "tokenizer = \"cl100k_base\"\n");
+        let loaded = load_config(None, &dir.0).unwrap().unwrap();
+        assert_eq!(loaded.tokenizer.as_deref(), Some("cl100k_base"));
+    }
+
+    #[test]
+    fn a_discovered_config_file_that_does_not_parse_is_an_error() {
+        let dir = Scratch::new();
+        dir.file("tokenpress.toml", "verify = \"strict\"\n");
+        let err = load_config(None, &dir.0).unwrap_err();
+        assert!(err.to_string().contains("invalid config file"), "{err}");
+    }
+
+    #[test]
+    fn config_file_supplies_language_tokenizer_and_verify_settings() {
+        let dir = Scratch::new();
+        let cfg = dir.file(
+            "tokenpress.toml",
+            "tokenizer = \"cl100k_base\"\n\
+             verify = \"reparse\"\n\
+             [python]\n\
+             strip_comments = true\n\
+             strip_docstrings = true\n\
+             strip_annotations = true\n\
+             [rust]\n\
+             strip_doc_comments = true\n",
+        );
+        let py = dir.file("a.py", "# note\n\"\"\"Doc.\"\"\"\nx: int = 1\n");
+        let rs = dir.file("b.rs", "/// doc\nfn f() {}\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            py.to_str().unwrap(),
+            rs.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x=1");
+        assert_eq!(std::fs::read_to_string(&rs).unwrap(), "fn f(){}");
+        // `verify = "reparse"` must not trigger the external-verify warning.
+        assert!(!err.contains("py_compile"), "{err}");
+    }
+
+    #[test]
+    fn explicit_cli_flags_win_over_the_config_file() {
+        let dir = Scratch::new();
+        let cfg = dir.file(
+            "tokenpress.toml",
+            "tokenizer = \"nope\"\n\
+             verify = \"external\"\n\
+             [python]\n\
+             strip_comments = false\n\
+             merge_imports = true\n",
+        );
+        let py = dir.file("a.py", "# note\nimport os\nimport sys\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            "--tokenizer",
+            "cl100k_base",
+            "--verify",
+            "ast",
+            "--py-strip-comments",
+            "--py-no-merge-imports",
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&py).unwrap(),
+            "import os\nimport sys"
+        );
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn config_can_disable_import_merging() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[python]\nmerge_imports = false\n");
+        let py = dir.file("a.py", "import os\nimport sys\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&py).unwrap(),
+            "import os\nimport sys"
+        );
+    }
+
+    #[test]
+    fn config_without_language_tables_keeps_the_built_in_defaults() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "tokenizer = \"cl100k_base\"\n");
+        let py = dir.file("a.py", "# note\nimport os\nimport sys\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&py).unwrap(),
+            "# note\nimport os,sys"
+        );
+    }
+
+    #[test]
+    fn every_config_verify_level_is_applied() {
+        let dir = Scratch::new();
+        for (level, warns) in [("reparse", false), ("ast", false), ("external", true)] {
+            let cfg = dir.file(&format!("{level}.toml"), &format!("verify = \"{level}\"\n"));
+            let py = dir.file(&format!("{level}.py"), "x = 1\n");
+            let (code, _, err) = run_cli_err(&[
+                "format",
+                "--config",
+                cfg.to_str().unwrap(),
+                py.to_str().unwrap(),
+            ]);
+            assert_eq!(code, 0);
+            assert_eq!(err.contains("py_compile"), warns, "{level}: {err}");
+        }
+    }
+
+    #[test]
+    fn missing_explicit_config_file_is_an_error() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let missing = dir.0.join("nope.toml");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            missing.to_str().unwrap(),
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("cannot read config file"), "{err}");
+        assert!(err.contains("nope.toml"), "{err}");
+        // The run stops before any file is touched.
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[test]
+    fn malformed_config_file_is_an_error() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[python]\nstrip_comment = true\n");
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("invalid config file"), "{err}");
+        assert!(err.contains("strip_comment"), "{err}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[test]
+    fn unknown_config_tokenizer_is_an_error() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "tokenizer = \"nope\"\n");
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, text) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(text.contains("unknown tokenizer: nope"), "{text}");
     }
 }
