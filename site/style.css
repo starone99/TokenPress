@@ -1,0 +1,363 @@
+/* Dependency-free styling for the TokenPress demo page: no fonts, images or
+   stylesheets are fetched, so the page works fully offline once built. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --ink: #1c2024;
+  --muted: #5c6670;
+  --border: #d8dde2;
+  --accent: #1f6feb;
+  --accent-ink: #ffffff;
+  --code-bg: #f0f2f5;
+  --good: #1a7f37;
+  --warn-bg: #fff8e6;
+  --warn-border: #e0b64a;
+  --error-bg: #fdf0ee;
+  --error-border: #c8422a;
+  --error-ink: #9b2f1c;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a;
+    --panel: #1c2024;
+    --ink: #e6e9ec;
+    --muted: #9aa4ae;
+    --border: #2f353b;
+    --accent: #4c8dff;
+    --accent-ink: #0b1016;
+    --code-bg: #23282e;
+    --good: #4ac26b;
+    --warn-bg: #2b2413;
+    --warn-border: #8a6d1f;
+    --error-bg: #2c1815;
+    --error-border: #a8442b;
+    --error-ink: #ff9d85;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0 1rem 3rem;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  line-height: 1.55;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: var(--code-bg);
+  padding: 0.1em 0.32em;
+  border-radius: 4px;
+}
+
+a {
+  color: var(--accent);
+}
+
+.site-header,
+main,
+.site-footer {
+  max-width: 68rem;
+  margin: 0 auto;
+}
+
+.site-header {
+  padding: 2.5rem 0 1.5rem;
+}
+
+.site-header h1 {
+  margin: 0;
+  font-size: 2rem;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  margin: 0.5rem 0 0;
+  max-width: 52rem;
+  color: var(--muted);
+}
+
+.invariant {
+  margin: 0.75rem 0 0;
+  max-width: 52rem;
+  font-size: 0.92rem;
+  border-left: 3px solid var(--accent);
+  padding-left: 0.75rem;
+}
+
+main {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 62rem) {
+  main {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+
+.panel h2 {
+  margin: 0 0 1rem;
+  font-size: 1.15rem;
+}
+
+.panel h3 {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem 1rem;
+}
+
+legend {
+  padding: 0 0.4rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.languages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+}
+
+.lang-option,
+.options label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  cursor: pointer;
+}
+
+.options label {
+  margin: 0.35rem 0;
+  flex-wrap: wrap;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.note {
+  margin: 0.85rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.caveats {
+  margin-top: 1rem;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  font-size: 0.88rem;
+}
+
+.caveats h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.caveats ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.caveats li + li {
+  margin-top: 0.5rem;
+}
+
+.source-label {
+  display: block;
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.35rem;
+}
+
+textarea {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--code-bg);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.5rem 1.1rem;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--border);
+  font-weight: 500;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.status {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.output-header h3 {
+  margin-bottom: 0;
+}
+
+pre {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 26rem;
+}
+
+.changed {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--good);
+  font-weight: 600;
+}
+
+.changed.unchanged {
+  color: var(--muted);
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9rem;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.45rem 0.6rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+th:first-child,
+td:first-child {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 0.86rem;
+}
+
+thead th {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+td.saving {
+  font-weight: 700;
+  color: var(--good);
+}
+
+.error {
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+}
+
+.error h3 {
+  margin: 0 0 0.5rem;
+  color: var(--error-ink);
+  font-size: 1rem;
+}
+
+.error-kind {
+  margin: 0 0 0.35rem;
+  font-size: 0.88rem;
+}
+
+.error-message {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.placeholder {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.site-footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.85rem;
+}

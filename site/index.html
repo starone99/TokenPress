@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TokenPress — interactive demo</title>
+<meta name="description" content="Paste Python or Rust source and see how many LLM tokens TokenPress saves.">
+<!-- Inline data URI: the page must not fetch anything at runtime. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231f6feb'/%3E%3Cpath d='M4 5h8M8 5v7' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+  <h1>TokenPress</h1>
+  <p class="tagline">
+    A token-aware formatter for Python and Rust that minimizes LLM token usage
+    while preserving behavior. Paste code below, pick the flags, and see what
+    the output costs.
+  </p>
+  <p class="invariant">
+    Output that fails verification (re-parse + equivalence) is never shown —
+    a refusal reports the error and no code at all.
+  </p>
+</header>
+
+<main>
+  <section class="panel" aria-labelledby="input-heading">
+    <h2 id="input-heading">Input</h2>
+
+    <fieldset class="languages">
+      <legend>Language</legend>
+      <label class="lang-option">
+        <input type="radio" name="language" value="python" checked>
+        <span>Python</span>
+      </label>
+      <label class="lang-option">
+        <input type="radio" name="language" value="rust">
+        <span>Rust</span>
+      </label>
+    </fieldset>
+
+    <fieldset class="options" id="python-options">
+      <legend>Python options</legend>
+      <label><input type="checkbox" id="py-strip-comments"> Strip <code>#</code> comments</label>
+      <label><input type="checkbox" id="py-strip-docstrings"> Strip docstrings <span class="hint">(empties <code>__doc__</code>: breaks <code>help()</code> and doctests)</span></label>
+      <label><input type="checkbox" id="py-strip-annotations"> Strip type annotations <span class="hint">(breaks dataclass/pydantic introspection)</span></label>
+      <label><input type="checkbox" id="py-merge-imports" checked> Merge adjacent imports</label>
+      <p class="note">
+        With every strip flag off, Python formatting is context-lossless:
+        comments, docstrings and annotations are kept, and only syntactic
+        noise (whitespace, blank lines, indentation width) is minimized.
+      </p>
+    </fieldset>
+
+    <fieldset class="options" id="rust-options" hidden>
+      <legend>Rust options</legend>
+      <label><input type="checkbox" id="rs-strip-doc-comments"> Strip doc comments <span class="hint">(<code>///</code> and <code>//!</code> — also removes doctests)</span></label>
+      <div class="caveats" id="rust-caveats">
+        <h3>Rust is not context-lossless, even with no flags</h3>
+        <ul>
+          <li>
+            <strong>Regular comments are always dropped.</strong>
+            <code>//</code> and <code>/* */</code> comments are lost with no
+            flag set, because the <code>syn</code> token stream the emitter
+            works from does not preserve them. If a file's <code>//</code>
+            comments matter to you, keep the original — TokenPress cannot
+            round-trip them.
+          </li>
+          <li>
+            <strong>Macro body whitespace is minimized.</strong> The tokens
+            inside a macro invocation are preserved exactly, but the
+            whitespace between them is not. For whitespace-sensitive macros
+            — <code>stringify!</code> is the common case — this changes the
+            string produced at runtime. Verification is token-canonical, so
+            a re-spaced macro body is token-identical to the original and
+            this class of change is <em>not</em> caught by the verifier.
+          </li>
+          <li>
+            Doc comments (<code>///</code>, <code>//!</code>) are
+            <em>kept</em> by default — they are <code>#[doc = "..."]</code>
+            attributes — and are only removed by the strip option above.
+          </li>
+        </ul>
+      </div>
+    </fieldset>
+
+    <label class="source-label" for="source">Source code</label>
+    <textarea id="source" spellcheck="false" rows="16"
+      placeholder="Paste Python or Rust source here…"></textarea>
+
+    <div class="actions">
+      <button type="button" id="format" disabled>Loading…</button>
+      <button type="button" id="load-sample" class="secondary">Load sample</button>
+      <button type="button" id="clear" class="secondary">Clear</button>
+      <span class="status" id="status" role="status"></span>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="result-heading">
+    <h2 id="result-heading">Result</h2>
+
+    <div class="error" id="error" hidden role="alert">
+      <h3>Refused — nothing was formatted</h3>
+      <p class="error-kind">kind: <code id="error-kind"></code></p>
+      <p class="error-message" id="error-message"></p>
+      <p class="note">
+        TokenPress never emits output that fails to parse or fails
+        verification, so no code is shown for this input.
+      </p>
+    </div>
+
+    <div id="result" hidden>
+      <p class="changed" id="changed"></p>
+      <div class="output-header">
+        <h3>Formatted output</h3>
+        <button type="button" id="copy" class="secondary">Copy</button>
+      </div>
+      <pre id="output" tabindex="0"></pre>
+
+      <h3>Token savings</h3>
+      <div class="table-scroll">
+        <table id="stats">
+          <thead>
+            <tr>
+              <th scope="col">Tokenizer</th>
+              <th scope="col">Original</th>
+              <th scope="col">Formatted</th>
+              <th scope="col">Saved</th>
+              <th scope="col">Saving</th>
+            </tr>
+          </thead>
+          <tbody id="stats-body"></tbody>
+        </table>
+      </div>
+      <p class="note">
+        Token counts come from the two public tokenizers embedded in the
+        WebAssembly bundle: <code>o200k_base</code> (GPT-4o / o-series) and
+        <code>cl100k_base</code> (GPT-4 / GPT-3.5). Savings differ per
+        tokenizer — that is why this is a token-aware formatter and not a
+        character minifier. The command-line tool additionally supports any
+        HuggingFace tokenizer and the Kimi ranks format.
+      </p>
+    </div>
+
+    <p class="placeholder" id="placeholder">
+      Nothing formatted yet. Paste some code and press <strong>Format</strong>.
+    </p>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <p>
+    <a href="https://github.com/starone99/TokenPress">github.com/starone99/TokenPress</a>
+    · Licensed under MIT OR Apache-2.0
+    · Everything runs locally in your browser; no code leaves this page.
+  </p>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

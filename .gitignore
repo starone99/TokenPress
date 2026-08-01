@@ -4,4 +4,6 @@
 /LOOPLOG.md
 /benchmarks/corpus/
 /benchmarks/tokenizers/
+/site/pkg/
+/site/.tools/
 .DS_Store
