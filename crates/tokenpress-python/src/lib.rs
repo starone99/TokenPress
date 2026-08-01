@@ -67,7 +67,7 @@ impl Formatter for PythonFormatter {
         path.extension().is_some_and(|e| e == "py")
     }
 
-    fn format(&self, source: &str, options: &FormatOptions) -> Result<FormatResult> {
+    fn format(&self, _path: &Path, source: &str, options: &FormatOptions) -> Result<FormatResult> {
         let parsed = parser::parse(source)?;
         let mut tokens = parsed.tokens(source);
         let mut modified = false;
@@ -113,16 +113,21 @@ mod tests {
     use super::*;
     use tokenpress_core::TokenizerKind;
 
+    /// The formatter ignores the path; a fixed one keeps the tests readable.
+    fn py() -> &'static Path {
+        Path::new("a.py")
+    }
+
     fn fmt(source: &str) -> String {
         PythonFormatter::default()
-            .format(source, &FormatOptions::default())
+            .format(py(), source, &FormatOptions::default())
             .unwrap()
             .code
     }
 
     fn fmt_with(source: &str, options: PythonOptions) -> String {
         PythonFormatter::new(options)
-            .format(source, &FormatOptions::default())
+            .format(py(), source, &FormatOptions::default())
             .unwrap()
             .code
     }
@@ -317,7 +322,7 @@ mod tests {
                 strip_docstrings: true,
                 ..PythonOptions::default()
             })
-            .format(src, &options);
+            .format(py(), src, &options);
             assert_eq!(
                 result.unwrap().code,
                 "import os\nclass C:\n def m(self):\n  return os"
@@ -383,7 +388,7 @@ mod tests {
     #[test]
     fn parse_errors_are_reported() {
         let err = PythonFormatter::default()
-            .format("def f(:\n", &FormatOptions::default())
+            .format(py(), "def f(:\n", &FormatOptions::default())
             .unwrap_err();
         assert!(err.to_string().starts_with("parse error:"));
     }
@@ -394,7 +399,9 @@ mod tests {
             verify: VerifyLevel::Reparse,
             ..FormatOptions::default()
         };
-        let r = PythonFormatter::default().format("x = 1\n", &opts).unwrap();
+        let r = PythonFormatter::default()
+            .format(py(), "x = 1\n", &opts)
+            .unwrap();
         assert_eq!(r.code, "x=1");
     }
 
@@ -404,7 +411,9 @@ mod tests {
             verify: VerifyLevel::External,
             ..FormatOptions::default()
         };
-        let r = PythonFormatter::default().format("x = 1\n", &opts).unwrap();
+        let r = PythonFormatter::default()
+            .format(py(), "x = 1\n", &opts)
+            .unwrap();
         assert_eq!(r.code, "x=1");
     }
 
@@ -412,7 +421,7 @@ mod tests {
     fn formatting_reduces_token_count() {
         let src = "def add(a, b):\n    result = a + b\n    return result\n";
         let r = PythonFormatter::default()
-            .format(src, &FormatOptions::default())
+            .format(py(), src, &FormatOptions::default())
             .unwrap();
         assert!(r.formatted_tokens < r.original_tokens);
         assert!(r.tokens_saved() > 0);
@@ -476,7 +485,9 @@ mod tests {
             tokenizer: TokenizerKind::Cl100kBase,
             ..FormatOptions::default()
         };
-        let r = PythonFormatter::default().format("x = 1\n", &opts).unwrap();
+        let r = PythonFormatter::default()
+            .format(py(), "x = 1\n", &opts)
+            .unwrap();
         assert!(r.original_tokens > 0);
     }
 }

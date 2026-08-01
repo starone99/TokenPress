@@ -45,7 +45,7 @@ impl Formatter for RustFormatter {
         path.extension().is_some_and(|e| e == "rs")
     }
 
-    fn format(&self, source: &str, options: &FormatOptions) -> Result<FormatResult> {
+    fn format(&self, _path: &Path, source: &str, options: &FormatOptions) -> Result<FormatResult> {
         let mut file = syn::parse_file(source).map_err(|e| Error::Parse(e.to_string()))?;
         if self.options.strip_doc_comments {
             file = syn::parse2(emit::strip_doc_attrs(file.to_token_stream()))
@@ -74,9 +74,14 @@ impl Formatter for RustFormatter {
 mod tests {
     use super::*;
 
+    /// The formatter ignores the path; a fixed one keeps the tests readable.
+    fn rs() -> &'static Path {
+        Path::new("a.rs")
+    }
+
     fn fmt(source: &str) -> String {
         RustFormatter::default()
-            .format(source, &FormatOptions::default())
+            .format(rs(), source, &FormatOptions::default())
             .unwrap()
             .code
     }
@@ -103,7 +108,11 @@ mod tests {
             strip_doc_comments: true,
         });
         let r = formatter
-            .format("/// Adds.\npub fn f() {}\n", &FormatOptions::default())
+            .format(
+                rs(),
+                "/// Adds.\npub fn f() {}\n",
+                &FormatOptions::default(),
+            )
             .unwrap();
         assert_eq!(r.code, "pub fn f(){}");
     }
@@ -120,7 +129,7 @@ mod tests {
     #[test]
     fn parse_errors_are_reported() {
         let err = RustFormatter::default()
-            .format("fn f( {", &FormatOptions::default())
+            .format(rs(), "fn f( {", &FormatOptions::default())
             .unwrap_err();
         assert!(err.to_string().starts_with("parse error:"));
     }
@@ -132,7 +141,7 @@ mod tests {
             ..FormatOptions::default()
         };
         let r = RustFormatter::default()
-            .format("fn f() {}\n", &opts)
+            .format(rs(), "fn f() {}\n", &opts)
             .unwrap();
         assert_eq!(r.code, "fn f(){}");
     }
@@ -144,7 +153,7 @@ mod tests {
             ..FormatOptions::default()
         };
         let r = RustFormatter::default()
-            .format("fn f() {}\n", &opts)
+            .format(rs(), "fn f() {}\n", &opts)
             .unwrap();
         assert_eq!(r.code, "fn f(){}");
     }
@@ -153,7 +162,7 @@ mod tests {
     fn formatting_reduces_token_count() {
         let src = "fn add(a: i32, b: i32) -> i32 {\n    let sum = a + b;\n    sum\n}\n";
         let r = RustFormatter::default()
-            .format(src, &FormatOptions::default())
+            .format(rs(), src, &FormatOptions::default())
             .unwrap();
         assert!(r.formatted_tokens < r.original_tokens);
     }

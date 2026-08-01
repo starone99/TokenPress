@@ -36,7 +36,10 @@ pub trait Formatter: Send + Sync {
 
     /// Formats `source`, returning token-minimized code that passed the
     /// verification level in `options`.
-    fn format(&self, source: &str, options: &FormatOptions) -> Result<FormatResult>;
+    ///
+    /// `path` selects the language dialect/behavior to apply (e.g. JS vs TS);
+    /// it is never read from disk — `source` is the whole input.
+    fn format(&self, path: &Path, source: &str, options: &FormatOptions) -> Result<FormatResult>;
 }
 
 #[cfg(test)]
@@ -81,7 +84,7 @@ mod tests {
             fn supports(&self, path: &Path) -> bool {
                 path.extension().is_some_and(|e| e == "fx")
             }
-            fn format(&self, source: &str, _: &FormatOptions) -> Result<FormatResult> {
+            fn format(&self, _: &Path, source: &str, _: &FormatOptions) -> Result<FormatResult> {
                 Ok(FormatResult {
                     code: source.to_string(),
                     original_tokens: 1,
@@ -93,7 +96,9 @@ mod tests {
         assert_eq!(f.language(), "fixed");
         assert!(f.supports(Path::new("a.fx")));
         assert!(!f.supports(Path::new("a.py")));
-        let r = f.format("src", &FormatOptions::default()).unwrap();
+        let r = f
+            .format(Path::new("a.fx"), "src", &FormatOptions::default())
+            .unwrap();
         assert_eq!(r.code, "src");
         assert_eq!(r, r.clone());
     }

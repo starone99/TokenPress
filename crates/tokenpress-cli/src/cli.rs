@@ -341,7 +341,7 @@ fn execute(
             .iter()
             .find(|f| f.supports(&path))
             .expect("discover only returns supported files");
-        match formatter.format(&source, &options) {
+        match formatter.format(&path, &source, &options) {
             Ok(result) => outcomes.push(FileOutcome {
                 path,
                 original: source,

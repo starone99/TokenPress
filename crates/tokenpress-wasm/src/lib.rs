@@ -15,6 +15,8 @@
 //! The library reports no warnings, so neither does this boundary; callers
 //! state the caveats themselves.
 
+use std::path::Path;
+
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -217,10 +219,18 @@ fn parse_options<T: DeserializeOwned>(options_json: &str) -> Result<T, WasmError
 
 /// Runs one formatter and prices the result against every reported tokenizer.
 ///
+/// `path` is synthetic — there is no file system behind this boundary. It only
+/// tells the formatter which dialect to apply, so each caller passes it right
+/// where it picks the formatter and the two cannot disagree.
+///
 /// Returns [`WasmError`] — and no code — whenever the formatter refuses the
 /// result, so unverified output cannot reach the caller.
-fn run(formatter: &dyn Formatter, source: &str) -> Result<WasmFormatOutput, WasmError> {
-    let result = formatter.format(source, &FormatOptions::default())?;
+fn run(
+    formatter: &dyn Formatter,
+    path: &Path,
+    source: &str,
+) -> Result<WasmFormatOutput, WasmError> {
+    let result = formatter.format(path, source, &FormatOptions::default())?;
     let tokens = REPORTED_TOKENIZERS
         .iter()
         .map(|(name, kind)| WasmTokenStats::measure(name, kind, source, &result.code))
@@ -237,12 +247,20 @@ pub fn format_python(
     source: &str,
     options: &WasmPythonOptions,
 ) -> Result<WasmFormatOutput, WasmError> {
-    run(&PythonFormatter::new(options.into()), source)
+    run(
+        &PythonFormatter::new(options.into()),
+        Path::new("input.py"),
+        source,
+    )
 }
 
 /// Formats Rust source with the given flags.
 pub fn format_rust(source: &str, options: &WasmRustOptions) -> Result<WasmFormatOutput, WasmError> {
-    run(&RustFormatter::new(options.into()), source)
+    run(
+        &RustFormatter::new(options.into()),
+        Path::new("input.rs"),
+        source,
+    )
 }
 
 /// Renders either outcome as the JSON the JavaScript side sees.
