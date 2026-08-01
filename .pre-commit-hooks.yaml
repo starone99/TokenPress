@@ -1,0 +1,45 @@
+# Hook definitions for the pre-commit framework (https://pre-commit.com).
+#
+# Consumers add TokenPress to their own `.pre-commit-config.yaml`:
+#
+#     repos:
+#       - repo: https://github.com/starone99/TokenPress
+#         rev: v0.1.0
+#         hooks:
+#           - id: tokenpress-check
+#
+# `language: script` (not `language: rust`): pre-commit's rust language runs
+# `cargo install --bins --path .` at the repository root, which cannot work
+# here because the root manifest is a virtual workspace manifest. The entry
+# script below builds the CLI from pre-commit's clone of this repository
+# instead, so a working `cargo` is the only prerequisite.
+#
+# Only `.py` and `.rs` are matched: any other path makes the CLI exit 2 with
+# "unsupported language for path".
+
+- id: tokenpress-check
+  name: tokenpress check
+  description: >-
+    Fail if any Python or Rust file is not in TokenPress-normalized form.
+    Writes nothing.
+  entry: scripts/pre-commit-hook.sh check
+  language: script
+  files: \.(py|rs)$
+  types_or: [python, rust]
+  # One process at a time: every invocation runs `cargo build` first, and
+  # parallel builds would only contend for the same cargo lock.
+  require_serial: true
+  minimum_pre_commit_version: '2.9.0'
+
+- id: tokenpress-format
+  name: tokenpress format
+  description: >-
+    Rewrite Python and Rust files in place with token-minimized formatting.
+    Modifies files, so pre-commit reports the run as failed whenever it had
+    something to rewrite.
+  entry: scripts/pre-commit-hook.sh format
+  language: script
+  files: \.(py|rs)$
+  types_or: [python, rust]
+  require_serial: true
+  minimum_pre_commit_version: '2.9.0'
