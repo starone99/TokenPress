@@ -84,6 +84,13 @@ the most (its tokenizer prices whitespace runs highest).
 
 ### Aggressive settings (accepting context loss)
 
+#### Historical run — predates `--py-strip-docstrings`
+
+**This table was measured on 2026-07-31, before the `--py-strip-docstrings`
+flag existed**, so its Python numbers still keep every docstring. It is
+retained unchanged as the historical record; the full-aggressive numbers are
+in the next subsection.
+
 * Python: `--py-strip-comments --py-strip-annotations`
   (warning: breaks `__annotations__`-based introspection — treat these
   numbers as an upper bound)
@@ -101,6 +108,182 @@ the most (its tokenizer prices whitespace runs highest).
 | ripgrep | Qwen3.6 | 458,041 | 262,670 | **-42.7%** |
 | ripgrep | GLM-5.2 | 419,526 | 259,578 | **-38.1%** |
 | ripgrep | Kimi K3 | 420,393 | 261,072 | **-37.9%** |
+
+#### Aggressive + strip_docstrings (full aggressive, added 2026-08-01)
+
+Measured: 2026-08-01, Linux, rustc 1.95.0, same commit-pinned corpus
+(`benchmarks/fetch.sh`). **Only the two embedded tokenizers were measured**
+— the measurement environment cannot reach huggingface.co, so the Qwen3.6 /
+GLM-5.2 / Kimi K3 columns are absent here and are to be filled in from an
+environment that can fetch those revision-pinned tokenizer files.
+
+Exact flags:
+
+* Python corpora (requests, django, fastapi, langchain, transformers):
+  `--py-strip-comments --py-strip-annotations --py-strip-docstrings`
+* Rust corpora (ripgrep, tokio): `--rs-strip-doc-comments`
+* Mixed corpus (uv, 624 `.rs` + 94 `.py`): all four flags. Per-language
+  flags are language-scoped — passing the Rust flag to a pure-Python tree
+  (or vice versa) is a verified no-op, so a mixed tree can safely take all
+  four at once.
+
+**Line-ending caveat — read before comparing against the tables above.**
+The earlier tables were measured on Windows, where git checks the corpus out
+with CRLF; this run is a Linux LF checkout of the *same* pinned commits. LF
+before-counts are therefore slightly lower (requests: 86,331 vs 86,922 at
+o200k, -0.7%). This was confirmed, not assumed: converting the LF checkout to
+CRLF reproduces the historical numbers exactly (86,922 → 79,093 at default
+settings, byte-identical to the default-settings table). **Differences
+between this subsection and the tables above are a platform artifact, not a
+formatter change.**
+
+| Corpus | Tokenizer | Files | Before | After | Saved |
+|---|---|---|---|---|---|
+| requests | o200k_base | 36 | 86,331 | 55,265 | **-36.0%** |
+| requests | cl100k_base | 36 | 86,014 | 54,827 | **-36.3%** |
+| ripgrep | o200k_base | 98 | 415,590 | 259,984 | **-37.4%** |
+| ripgrep | cl100k_base | 98 | 415,698 | 259,335 | **-37.6%** |
+| django | o200k_base | 2,924 | 4,191,951 | 3,221,811 | **-23.1%** |
+| django | cl100k_base | 2,924 | 4,122,515 | 3,141,905 | **-23.8%** |
+| fastapi | o200k_base | 1,136 | 731,846 | 466,724 | **-36.2%** |
+| fastapi | cl100k_base | 1,136 | 728,430 | 459,582 | **-36.9%** |
+| tokio | o200k_base | 790 | 1,394,248 | 690,397 | **-50.5%** |
+| tokio | cl100k_base | 790 | 1,394,142 | 684,818 | **-50.9%** |
+| langchain | o200k_base | 2,512 | 2,770,336 | 1,704,605 | **-38.5%** |
+| langchain | cl100k_base | 2,512 | 2,756,693 | 1,682,839 | **-39.0%** |
+| transformers | o200k_base | 4,699 | 17,028,062 | 11,085,118 | **-34.9%** |
+| transformers | cl100k_base | 4,699 | 16,953,869 | 10,926,249 | **-35.6%** |
+| uv | o200k_base | 718 | 4,806,817 | 3,773,907 | **-21.5%** |
+| uv | cl100k_base | 718 | 4,779,673 | 3,739,347 | **-21.8%** |
+
+`Files` counts files that were successfully formatted; refused files (next
+subsection) are excluded from both the file count and the token totals.
+
+##### What `--py-strip-docstrings` adds
+
+Same corpus, same LF checkout, same tokenizer (o200k_base) — the only
+difference is the added flag, so these deltas are apples-to-apples:
+
+| Corpus | Without docstring stripping | With `--py-strip-docstrings` | Delta |
+|---|---|---|---|
+| requests | -20.1% | **-36.0%** | +15.9pp |
+| django | -17.1% | **-23.1%** | +6.0pp |
+| fastapi | -34.5% | **-36.2%** | +1.7pp |
+| langchain | -22.4% | **-38.5%** | +16.1pp |
+| transformers | -21.6% | **-34.9%** | +13.3pp |
+| uv | -21.4% | **-21.5%** | +0.1pp |
+
+Docstring stripping is the single largest aggressive lever for
+documentation-heavy Python (langchain +16.1pp, requests +15.9pp). It barely
+moves uv (+0.1pp), which is 87% Rust by file count, or FastAPI (+1.7pp),
+whose bulk is annotations and inline comments rather than prose docstrings.
+
+##### Verification refusals under `--py-strip-annotations` (new finding)
+
+This is the first time the aggressive settings were run over the six large
+corpora, and it surfaced **19 files that TokenPress refuses to format** —
+beyond the two intentionally-broken fixtures documented above. No file was
+written; the formatter reported per-file errors and excluded them, which is
+the core invariant working as designed.
+
+| Corpus | Refusals | Breakdown |
+|---|---|---|
+| django | 1 | known fixture `tests_syntax_error.py` (invalid input, not a refusal) |
+| langchain | 19 | 1 known fixture `non-utf8-encoding.py` + **18 new** |
+| transformers | 1 | **1 new** (`models/esm/openfold_utils/protein.py`) |
+| requests, ripgrep, fastapi, tokio, uv | 0 | — |
+
+Error classes across the 19 new refusals: 11 × `output token stream differs
+from input`, 6 × `output failed to re-parse: Expected a statement`, 1 ×
+`output failed to re-parse: Expected ':', found '='`, plus 1 × the known
+non-UTF-8 fixture.
+
+**The cause is `--py-strip-annotations` (PYO3), not the new
+`--py-strip-docstrings` flag.** Isolated by re-running each flag alone on
+langchain at o200k: `--py-strip-annotations` alone reproduces all 19;
+`--py-strip-docstrings` alone and `--py-strip-comments` alone each produce
+only the 1 known non-UTF-8 fixture error, as does the default setting. The
+same holds for transformers (annotations 1, docstrings 0, comments 0). These
+refusals are therefore pre-existing behavior of a flag that shipped earlier
+— newly *discovered* here, not newly *introduced*.
+
+Minimal reproducer (delta-debugged from langchain's
+`output_parsers/regex.py`) — a value-less annotated declaration that both
+follows a nested block and is the last statement of its suite:
+
+```python
+class C:
+    def m(self):
+        return True
+    output_keys: list[str]
+```
+
+`tokenpress stats <file> --py-strip-annotations` →
+`verification failed: output token stream differs from input`. Giving the
+declaration a value (`output_keys: list[str] = []`) or removing the
+preceding nested block makes it pass. The same shape reproduces inside a
+function body, so it is not class-specific.
+
+A second, independent trigger found while reducing: a file whose final
+statement is a value-less annotated declaration **and** which lacks a
+trailing newline fails the same way even without a preceding block.
+
+Both are refusals, not corruptions — nothing was written. Worth a
+test-first fix in `tokenpress-python`; the aggressive numbers for langchain
+and transformers above are computed over the surviving files and will shift
+slightly once these files format successfully.
+
+#### Showcase candidates (≥40% aggressive reduction)
+
+Recorded for the ROADMAP P3 task ("hunt for well-known projects per
+supported language where the aggressive setting clears ≥40% token
+reduction"). Measured 2026-08-01 on the embedded tokenizers only.
+
+**Clears ≥40% — 1 of 8 corpora:**
+
+| Project | Language | Commit | o200k_base | cl100k_base | Absolute saving (o200k) |
+|---|---|---|---|---|---|
+| tokio-rs/tokio | Rust | `adc2ae7a` | **-50.5%** | **-50.9%** | 703,851 tokens |
+
+```bash
+target/release/tokenpress stats benchmarks/corpus/tokio \
+    --tokenizer o200k_base --rs-strip-doc-comments
+```
+
+tokio is the strongest showcase in the corpus: it is doc-comment-dense, and
+Rust additionally loses all `//` / `/* */` comments through the `syn` token
+stream, so more than half of a full-repo prompt disappears.
+
+**Near misses (35–40% on o200k_base):**
+
+| Project | Language | Commit | o200k_base | cl100k_base |
+|---|---|---|---|---|
+| langchain-ai/langchain | Python | `a1a1ad3b` | -38.5% | -39.0% |
+| BurntSushi/ripgrep | Rust | `4649aa97` | -37.4% | -37.6% |
+| fastapi/fastapi | Python | `95f8322e` | -36.2% | -36.9% |
+| psf/requests | Python | `0e322af8` | -36.0% | -36.3% |
+| huggingface/transformers | Python | `71c6f699` | -34.9% | -35.6% |
+
+Flags: Python projects `--py-strip-comments --py-strip-annotations
+--py-strip-docstrings`; ripgrep `--rs-strip-doc-comments`.
+
+**Well under 40%:** django/django `50d706d0` (-23.1% / -23.8%) and
+astral-sh/uv `be765050` (-21.5% / -21.8%, all four flags). Django's bulk is
+test fixtures and data tables rather than prose; uv is dominated by Rust
+source whose doc comments are a small fraction of the tree.
+
+Two caveats on this list:
+
+* **ripgrep's number is not directly comparable to the historical aggressive
+  table** (-37.4% here vs -38.2% there). The Rust flag set did not change —
+  `--rs-strip-doc-comments` is the same single flag in both runs — and the
+  difference is entirely the CRLF→LF checkout described above.
+* **The open-model tokenizers would likely add candidates.** In the
+  historical table Qwen3.6 beat o200k by +4.5pp on ripgrep aggressive
+  (-42.7% vs -38.2%), i.e. ripgrep already cleared 40% on Qwen and did not
+  on o200k. Several of the near misses above may clear ≥40% on Qwen3.6 once
+  those tokenizer files can be fetched. Re-run this section in an
+  environment with huggingface access before treating the list as final.
 
 ## Interpretation
 
@@ -133,6 +316,39 @@ cargo build --release -p tokenpress-cli
 # aggressive settings
 .\target\release\tokenpress.exe stats benchmarks\corpus\requests --tokenizer o200k_base --py-strip-comments --py-strip-annotations
 .\target\release\tokenpress.exe stats benchmarks\corpus\ripgrep --tokenizer o200k_base --rs-strip-doc-comments
+```
+
+Bash equivalent, including the full-aggressive runs added 2026-08-01. Note
+that `fetch.sh` exits non-zero at the tokenizer-download step when
+huggingface.co is unreachable; the corpus clones above it have already
+completed at that point, and the two embedded tokenizers need no download.
+
+```bash
+./benchmarks/fetch.sh     # corpus + tokenizer files (revision-pinned)
+cargo build --release -p tokenpress-cli
+
+# default settings
+target/release/tokenpress stats benchmarks/corpus/requests --tokenizer o200k_base
+target/release/tokenpress stats benchmarks/corpus/ripgrep --tokenizer o200k_base
+
+# full aggressive — Python corpora
+for c in requests django fastapi langchain transformers; do
+    target/release/tokenpress stats "benchmarks/corpus/$c" --tokenizer o200k_base \
+        --py-strip-comments --py-strip-annotations --py-strip-docstrings
+done
+
+# full aggressive — Rust corpora
+for c in ripgrep tokio; do
+    target/release/tokenpress stats "benchmarks/corpus/$c" --tokenizer o200k_base \
+        --rs-strip-doc-comments
+done
+
+# full aggressive — mixed tree (per-language flags are language-scoped)
+target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
+    --py-strip-comments --py-strip-annotations --py-strip-docstrings \
+    --rs-strip-doc-comments
+
+# repeat any of the above with --tokenizer cl100k_base for the second column
 ```
 
 ## Bugs this measurement caught (all fixed)
