@@ -218,6 +218,40 @@ mod tests {
     }
 
     #[test]
+    fn bare_annotations_on_block_boundaries_still_verify() {
+        // Regression: the lexer places `Dedent` and the final `Newline` at
+        // zero width on a statement boundary, which puts them inside the AST
+        // span of the `x: T` declaration they abut. Consuming them into the
+        // replacement `pass` made verification refuse the file.
+        let strip = PythonOptions {
+            strip_annotations: true,
+            ..PythonOptions::default()
+        };
+        // A declaration that follows a nested block and ends its suite.
+        assert_eq!(
+            fmt_with(
+                "class C:\n    def m(self):\n        return True\n    output_keys: list[str]\n",
+                strip.clone()
+            ),
+            "class C:\n def m(self):\n  return True\n pass"
+        );
+        // The same shape inside a function body, with two blocks to close.
+        assert_eq!(
+            fmt_with(
+                "def f():\n    if flag:\n        for i in xs:\n            pass\n    total: int\n    return total\n",
+                strip.clone()
+            ),
+            "def f():\n if flag:\n  for i in xs:\n   pass\n pass\n return total"
+        );
+        // A file ending in a declaration with no trailing newline.
+        assert_eq!(
+            fmt_with("class C:\n    x: int", strip.clone()),
+            "class C:\n pass"
+        );
+        assert_eq!(fmt_with("x: int", strip), "pass");
+    }
+
+    #[test]
     fn pyo2_strips_docstrings_on_request() {
         let strip = PythonOptions {
             strip_docstrings: true,

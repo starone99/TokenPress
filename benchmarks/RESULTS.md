@@ -149,15 +149,21 @@ formatter change.**
 | fastapi | cl100k_base | 1,136 | 728,430 | 459,582 | **-36.9%** |
 | tokio | o200k_base | 790 | 1,394,248 | 690,397 | **-50.5%** |
 | tokio | cl100k_base | 790 | 1,394,142 | 684,818 | **-50.9%** |
-| langchain | o200k_base | 2,512 | 2,770,336 | 1,704,605 | **-38.5%** |
-| langchain | cl100k_base | 2,512 | 2,756,693 | 1,682,839 | **-39.0%** |
-| transformers | o200k_base | 4,699 | 17,028,062 | 11,085,118 | **-34.9%** |
-| transformers | cl100k_base | 4,699 | 16,953,869 | 10,926,249 | **-35.6%** |
+| langchain | o200k_base | 2,530 | 2,956,442 | 1,810,164 | **-38.8%** |
+| langchain | cl100k_base | 2,530 | 2,942,240 | 1,787,452 | **-39.2%** |
+| transformers | o200k_base | 4,700 | 17,030,922 | 11,086,759 | **-34.9%** |
+| transformers | cl100k_base | 4,700 | 16,956,696 | 10,927,850 | **-35.6%** |
 | uv | o200k_base | 718 | 4,806,817 | 3,773,907 | **-21.5%** |
 | uv | cl100k_base | 718 | 4,779,673 | 3,739,347 | **-21.8%** |
 
 `Files` counts files that were successfully formatted; refused files (next
-subsection) are excluded from both the file count and the token totals.
+subsection) are excluded from both the file count and the token totals. The
+langchain and transformers rows were re-measured on 2026-08-01 after the
+PYO3 refusals below were fixed, so they now cover the previously-excluded 19
+files (langchain 2,512 → 2,530, transformers 4,699 → 4,700); every other row
+is the original measurement. Only langchain's percentages moved (-38.5% →
+-38.8% at o200k, -39.0% → -39.2% at cl100k); transformers' are unchanged to
+one decimal, the recovered file being one of 4,700.
 
 ##### What `--py-strip-docstrings` adds
 
@@ -169,19 +175,26 @@ difference is the added flag, so these deltas are apples-to-apples:
 | requests | -20.1% | **-36.0%** | +15.9pp |
 | django | -17.1% | **-23.1%** | +6.0pp |
 | fastapi | -34.5% | **-36.2%** | +1.7pp |
-| langchain | -22.4% | **-38.5%** | +16.1pp |
+| langchain | -22.4% | **-38.8%** | +16.4pp |
 | transformers | -21.6% | **-34.9%** | +13.3pp |
 | uv | -21.4% | **-21.5%** | +0.1pp |
 
 Docstring stripping is the single largest aggressive lever for
-documentation-heavy Python (langchain +16.1pp, requests +15.9pp). It barely
+documentation-heavy Python (langchain +16.4pp, requests +15.9pp). It barely
 moves uv (+0.1pp), which is 87% Rust by file count, or FastAPI (+1.7pp),
 whose bulk is annotations and inline comments rather than prose docstrings.
 
-##### Verification refusals under `--py-strip-annotations` (new finding)
+##### Verification refusals under `--py-strip-annotations` (FIXED 2026-08-01)
 
-This is the first time the aggressive settings were run over the six large
-corpora, and it surfaced **19 files that TokenPress refuses to format** —
+> **Resolved.** All 19 refusals below are fixed; langchain and transformers
+> now format with **0 verification refusals** (langchain still reports the
+> one known non-UTF-8 fixture, which is unreadable input rather than a
+> refusal). The full-aggressive table above has been re-measured with the
+> recovered files included. The triage that follows is kept as the
+> historical record of how the bug was found and what it was.
+
+This was the first time the aggressive settings were run over the six large
+corpora, and it surfaced **19 files that TokenPress refused to format** —
 beyond the two intentionally-broken fixtures documented above. No file was
 written; the formatter reported per-file errors and excluded them, which is
 the core invariant working as designed.
@@ -228,10 +241,34 @@ A second, independent trigger found while reducing: a file whose final
 statement is a value-less annotated declaration **and** which lacks a
 trailing newline fails the same way even without a preceding block.
 
-Both are refusals, not corruptions — nothing was written. Worth a
-test-first fix in `tokenpress-python`; the aggressive numbers for langchain
-and transformers above are computed over the surviving files and will shift
-slightly once these files format successfully.
+Both are refusals, not corruptions — nothing was written.
+
+**Root cause and fix (2026-08-01).** Two independent defects in PYO3's
+AST-span-to-token mapping, both fixed test-first in
+`crates/tokenpress-python/src/passes.rs`:
+
+1. *Zero-width block markers inside a statement span.* The lexer emits
+   `Dedent` — and, for a file with no trailing newline, the closing
+   `Newline` — at zero width positioned exactly on a statement boundary, so
+   they fall inside the AST span of the `x: T` declaration they abut.
+   Replacing that declaration with `pass` swallowed them: eating a `Dedent`
+   left the `pass` inside the block that had just closed, and eating the
+   final `Newline` dropped the statement terminator. This is the same class
+   of shape problem `strip_docstrings` hit with statement separators and
+   `settle_indents`. Fixed by stepping the whole-statement replacement over
+   block markers. Accounts for the 11 × `output token stream differs from
+   input`.
+2. *Parenthesized annotations.* Ruff's expression ranges exclude enclosing
+   parentheses, so `x: (int) = 1` reports a span covering only `int` and the
+   `)` was left behind with no opener — `x)=1`. Fixed by anchoring each
+   annotation's span on the `:` / `->` that introduces it and extending it
+   forward until brackets balance, which also handles a range that starts or
+   ends inside a bracket (`(a) | b`, `a | (b)`) and leaves a parenthesized
+   *target* (`(x): int = 1` → `(x)=1`) alone. Accounts for the 6 ×
+   `Expected a statement` and the 1 × `Expected ':', found '='`.
+
+Re-measured after the fix: langchain 2,530 files and transformers 4,700
+files, **0 verification refusals** in both, at both embedded tokenizers.
 
 #### Showcase candidates (≥40% aggressive reduction)
 
@@ -258,7 +295,7 @@ stream, so more than half of a full-repo prompt disappears.
 
 | Project | Language | Commit | o200k_base | cl100k_base |
 |---|---|---|---|---|
-| langchain-ai/langchain | Python | `a1a1ad3b` | -38.5% | -39.0% |
+| langchain-ai/langchain | Python | `a1a1ad3b` | -38.8% | -39.2% |
 | BurntSushi/ripgrep | Rust | `4649aa97` | -37.4% | -37.6% |
 | fastapi/fastapi | Python | `95f8322e` | -36.2% | -36.9% |
 | psf/requests | Python | `0e322af8` | -36.0% | -36.3% |

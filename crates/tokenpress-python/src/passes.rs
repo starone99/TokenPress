@@ -293,10 +293,10 @@ fn settle_indents(tokens: &mut [Tok<'_>]) {
 /// Spans of annotation syntax collected from the AST.
 #[derive(Default)]
 struct AnnotationSpans {
-    /// `: <expr>` (parameters, annotated assignments with a value) - deleted.
-    deletes: Vec<TextRange>,
-    /// Return annotations - deleted together with the preceding `->`.
-    returns: Vec<TextRange>,
+    /// Annotation expressions: parameter annotations, the `ann` of an
+    /// `x: ann = value`, and return annotations alike. Each is widened to a
+    /// token span by `annotation_span` before anything is cut.
+    annotations: Vec<TextRange>,
     /// Bare `target: ann` statements - replaced by `pass`.
     replaced_stmts: Vec<TextRange>,
 }
@@ -306,8 +306,7 @@ impl ast::visitor::Visitor<'_> for AnnotationSpans {
         match stmt {
             ast::Stmt::AnnAssign(a) => {
                 if a.value.is_some() {
-                    self.deletes
-                        .push(TextRange::new(a.target.end(), a.annotation.end()));
+                    self.annotations.push(a.annotation.range());
                 } else {
                     self.replaced_stmts.push(a.range());
                 }
@@ -315,18 +314,87 @@ impl ast::visitor::Visitor<'_> for AnnotationSpans {
             ast::Stmt::FunctionDef(f) => {
                 for p in f.parameters.iter() {
                     if let Some(annotation) = p.annotation() {
-                        self.deletes
-                            .push(TextRange::new(p.name().end(), annotation.end()));
+                        self.annotations.push(annotation.range());
                     }
                 }
                 if let Some(returns) = &f.returns {
-                    self.returns.push(returns.range());
+                    self.annotations.push(returns.range());
                 }
             }
             _ => {}
         }
         ast::visitor::walk_stmt(self, stmt);
     }
+}
+
+/// Widens an annotation's AST range to everything that has to be cut with it:
+/// the `:` / `->` introducing it, and the parentheses wrapping it.
+///
+/// Ruff's expression ranges exclude enclosing parentheses, so `x: (int) = 1`
+/// reports only `int` and would leave `x) = 1` behind. Anchoring the span on
+/// the separator token picks up the opening parentheses (everything between
+/// the separator and the annotation is `(`), and the closers are then whatever
+/// it takes to bring the span back into bracket balance. Balancing rather than
+/// counting the leading parentheses matters because the AST range can itself
+/// start or end inside a bracket: in `x: (a | (b))` the `| (b)` half opens a
+/// pair the range covers, and in `x: ((a) | b)` it closes one it does not.
+fn annotation_span(annotation: TextRange, tokens: &[Tok<'_>]) -> TextRange {
+    // Trivia can sit anywhere inside a bracketed annotation, so skip it when
+    // looking for the annotation's own first and last tokens.
+    let trivia = |kind| matches!(kind, TokenKind::NonLogicalNewline | TokenKind::Comment);
+    let first = tokens
+        .iter()
+        .position(|t| t.range.start() >= annotation.start() && !trivia(t.kind))
+        .expect("annotation has tokens");
+    // Walk back over the parentheses wrapping the annotation; the separator
+    // (`:` or `->`) that necessarily precedes them stops the walk.
+    let mut start = first;
+    while matches!(tokens[start - 1].kind, TokenKind::Lpar) || trivia(tokens[start - 1].kind) {
+        start -= 1;
+    }
+    let sep = start - 1;
+    let last = tokens
+        .iter()
+        .rposition(|t| t.range.end() <= annotation.end() && !trivia(t.kind))
+        .expect("annotation has tokens");
+    let mut depth = 0i32;
+    for tok in &tokens[sep..=last] {
+        depth += bracket_delta(tok.kind);
+    }
+    // Close whatever the span left open - those brackets opened around the
+    // annotation, so they go with it.
+    let mut end = tokens[last].range.end();
+    for tok in &tokens[last + 1..] {
+        if depth == 0 {
+            break;
+        }
+        depth += bracket_delta(tok.kind);
+        end = tok.range.end();
+    }
+    TextRange::new(tokens[sep].range.start(), end)
+}
+
+/// How a token changes bracket nesting depth.
+fn bracket_delta(kind: TokenKind) -> i32 {
+    match kind {
+        TokenKind::Lpar | TokenKind::Lsqb | TokenKind::Lbrace => 1,
+        TokenKind::Rpar | TokenKind::Rsqb | TokenKind::Rbrace => -1,
+        _ => 0,
+    }
+}
+
+/// Block-structure markers the lexer emits at zero width, positioned *on* a
+/// statement boundary rather than between statements: the `Dedent`s closing
+/// preceding blocks carry the start offset of the statement that follows them,
+/// and a file without a trailing newline gets its final `Newline` (plus the
+/// `Dedent`s closing the file) at the end offset of its last statement. Either
+/// way they fall within the span of the abutting statement while belonging to
+/// the block structure around it, so a whole-statement replacement has to step
+/// over them: swallowing a `Dedent` leaves the replacement inside the block
+/// that just closed, and swallowing the final `Newline` drops the statement's
+/// terminator.
+fn is_block_marker(kind: TokenKind) -> bool {
+    matches!(kind, TokenKind::Dedent | TokenKind::Newline)
 }
 
 /// PYO3 - strip type annotations, using AST spans to cut tokens.
@@ -337,17 +405,11 @@ pub fn strip_annotations<'a>(tokens: &[Tok<'a>], module: &Module) -> (Vec<Tok<'a
         spans.visit_stmt(stmt);
     }
 
-    // Extend each return-annotation span backwards over the `->` token.
-    let mut deletes = spans.deletes;
-    for ret in spans.returns {
-        let first = tokens
-            .iter()
-            .position(|t| t.range.start() >= ret.start() && t.kind != TokenKind::NonLogicalNewline)
-            .expect("return annotation has tokens");
-        if first > 0 && tokens[first - 1].kind == TokenKind::Rarrow {
-            deletes.push(TextRange::new(tokens[first - 1].range.start(), ret.end()));
-        }
-    }
+    let deletes: Vec<TextRange> = spans
+        .annotations
+        .iter()
+        .map(|a| annotation_span(*a, tokens))
+        .collect();
 
     let modified = !(deletes.is_empty() && spans.replaced_stmts.is_empty());
     if !modified {
@@ -364,7 +426,11 @@ pub fn strip_annotations<'a>(tokens: &[Tok<'a>], module: &Module) -> (Vec<Tok<'a
         let replacement = spans
             .replaced_stmts
             .iter()
-            .find(|s| tok.range.start() >= s.start() && tok.range.end() <= s.end())
+            .find(|s| {
+                !is_block_marker(tok.kind)
+                    && tok.range.start() >= s.start()
+                    && tok.range.end() <= s.end()
+            })
             .copied();
         if let Some(span) = replacement {
             // The first token of each bare `x: ann` statement becomes `pass`.
@@ -522,10 +588,83 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_annotation_after_a_nested_block_keeps_the_dedents_before_it() {
+        // The lexer emits the `Dedent`s closing the method body at zero width
+        // on the declaration's own start offset, so they sit *inside* its AST
+        // span. Swallowing them into the `pass` would leave it one level too
+        // deep, inside the block that just closed.
+        let source =
+            "class C:\n    def m(self):\n        return True\n    output_keys: list[str]\n";
+        assert_eq!(
+            strip(source).0,
+            "class C:\n def m(self):\n  return True\n pass"
+        );
+        let parsed = parser::parse(source).unwrap();
+        let (tokens, _) = strip_annotations(&parsed.tokens(source), parsed.ast());
+        let kinds: Vec<TokenKind> = tokens.iter().map(|t| t.kind).collect();
+        let pass = kinds.iter().position(|k| *k == TokenKind::Pass).unwrap();
+        assert_eq!(kinds[pass - 1], TokenKind::Dedent);
+    }
+
+    #[test]
+    fn a_bare_annotation_ending_a_file_keeps_its_terminating_newline() {
+        // Without a trailing newline the lexer synthesizes the closing
+        // `Newline` (and `Dedent`) at zero width on the declaration's end
+        // offset, again inside its span. Dropping them loses the statement
+        // terminator the re-lexed output still has.
+        let source = "class C:\n    x: int";
+        assert_eq!(strip(source).0, "class C:\n pass");
+        let parsed = parser::parse(source).unwrap();
+        let (tokens, _) = strip_annotations(&parsed.tokens(source), parsed.ast());
+        let kinds: Vec<TokenKind> = tokens.iter().map(|t| t.kind).collect();
+        let pass = kinds.iter().position(|k| *k == TokenKind::Pass).unwrap();
+        assert_eq!(kinds[pass + 1..], [TokenKind::Newline, TokenKind::Dedent]);
+    }
+
+    #[test]
     fn multiline_return_annotations_are_removed() {
         let (code, _) =
             strip("def f(\n    x,\n) -> dict[\n    str,\n    int,\n]:\n    return {}\n");
         assert_eq!(code, "def f(x,):\n return{}");
+    }
+
+    #[test]
+    fn parenthesized_annotations_lose_their_parentheses_too() {
+        // Ruff's expression ranges exclude enclosing parentheses, so `(int)`
+        // reports the range of `int` alone. The wrapping parentheses have to
+        // be recovered from the token stream, or the closing one is left
+        // behind with nothing to match it.
+        assert_eq!(strip("x: (int) = 1\n").0, "x=1");
+        assert_eq!(strip("x: ((int)) = 1\n").0, "x=1");
+        assert_eq!(
+            strip("def f(x: (int) = 1) -> (None):\n    return x\n").0,
+            "def f(x=1):\n return x"
+        );
+        // A parameter annotation wrapped over several lines.
+        assert_eq!(
+            strip("def f(\n    x: (\n        int\n    ) = 1,\n):\n    return x\n").0,
+            "def f(x=1,):\n return x"
+        );
+    }
+
+    #[test]
+    fn parentheses_inside_an_annotation_do_not_shorten_the_span() {
+        // The AST range of `(a) | b` starts at `a`, inside the inner
+        // parentheses - counting only the parentheses in front of it would
+        // mis-count how many closers belong to the annotation.
+        assert_eq!(strip("x: ((a) | b) = 1\n").0, "x=1");
+        assert_eq!(strip("x: (a | (b)) = 1\n").0, "x=1");
+        assert_eq!(
+            strip("def f(y: (a | (b))) -> ((c) | d):\n    return y\n").0,
+            "def f(y):\n return y"
+        );
+    }
+
+    #[test]
+    fn a_parenthesized_target_keeps_its_own_parentheses() {
+        // `(x)` is the assignment target, not part of the annotation, so only
+        // the `: int` goes.
+        assert_eq!(strip("(x): int = 1\n").0, "(x)=1");
     }
 
     #[test]
