@@ -13,7 +13,9 @@ embedded in the binary and were measured locally.
 
 ## Headline: tokio, -50.5%
 
-The only corpus of the eight that clears a 40% reduction.
+The only corpus of the eight that clears a 40% reduction *on the two embedded
+OpenAI tokenizers measured here*. Per-model candidate lists are still pending
+(see caveats).
 
 | | |
 |---|---|
@@ -176,6 +178,15 @@ open-model tokenizers (Qwen3.6, GLM-5.2, Kimi K3) for the default and
 historical-aggressive runs; those columns are absent from the full-aggressive
 run above because the measurement environment could not fetch the
 revision-pinned tokenizer files.
+
+**Which projects clear 40% depends on the tokenizer.** Candidate selection on
+this page used `o200k_base` and `cl100k_base` only, so the ≥40% claim is a
+proxy — judge savings, and ≥40% membership, on the tokenizer of the model you
+actually use. The gap is not cosmetic: ripgrep aggressive is -38.2% on
+`o200k_base` but -42.7% on Qwen3.6 in `RESULTS.md`'s historical table, so it
+already clears 40% on Qwen while missing it here. Separate candidate lists for
+Qwen3.6, GLM-5.2, Kimi K3 and Gemma are pending an environment with
+huggingface.co access; Gemma is not in the benchmark tokenizer set yet.
 
 **Line endings shift the baseline slightly.** These runs are a Linux LF
 checkout; the earlier tables in `RESULTS.md` were measured on Windows with

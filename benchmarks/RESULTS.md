@@ -315,12 +315,17 @@ Two caveats on this list:
   table** (-37.4% here vs -38.2% there). The Rust flag set did not change —
   `--rs-strip-doc-comments` is the same single flag in both runs — and the
   difference is entirely the CRLF→LF checkout described above.
-* **The open-model tokenizers would likely add candidates.** In the
-  historical table Qwen3.6 beat o200k by +4.5pp on ripgrep aggressive
-  (-42.7% vs -38.2%), i.e. ripgrep already cleared 40% on Qwen and did not
-  on o200k. Several of the near misses above may clear ≥40% on Qwen3.6 once
-  those tokenizer files can be fetched. Re-run this section in an
-  environment with huggingface access before treating the list as final.
+* **This list is defined on `o200k_base` only, and is therefore a proxy
+  list — valid for OpenAI-tokenizer models and nothing else.** Savings differ
+  materially by tokenizer: in the historical table Qwen3.6 beat o200k by
+  +4.5pp on ripgrep aggressive (-42.7% vs -38.2%), i.e. ripgrep already
+  cleared 40% on Qwen while missing it on o200k. Membership of the ≥40% set
+  must be decided **per real target-model tokenizer**, so Qwen3.6, GLM-5.2,
+  Kimi K3 and Gemma each need their own candidate list before any of this is
+  final. Gemma is not in the benchmark tokenizer set yet at all — its
+  `tokenizer.json` still has to be revision-pinned and added to `fetch.ps1`
+  and `fetch.sh`. Re-run this section in an environment with huggingface
+  access; until then, treat the list above as provisional.
 
 ## Interpretation
 
