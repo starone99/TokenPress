@@ -1688,6 +1688,7 @@ dependencies = [
  "similar",
  "thiserror",
  "tokenpress-core",
+ "tokenpress-js",
  "tokenpress-python",
  "tokenpress-rust",
  "toml",

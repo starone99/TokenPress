@@ -13,6 +13,7 @@ use config::{ConfigError, ConfigVerify, FileConfig};
 use tokenpress_core::{
     Error, FormatOptions, FormatResult, Formatter, Result, TokenizerKind, VerifyLevel,
 };
+use tokenpress_js::{JsFormatter, JsOptions};
 use tokenpress_python::{PythonFormatter, PythonOptions};
 use tokenpress_rust::{RustFormatter, RustOptions};
 
@@ -20,7 +21,7 @@ use tokenpress_rust::{RustFormatter, RustOptions};
 #[command(
     name = "tokenpress",
     version,
-    about = "Token-aware formatter for Python and Rust"
+    about = "Token-aware formatter for Python, Rust and (experimental) JavaScript/TypeScript"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -36,7 +37,9 @@ enum VerifyArg {
 
 #[derive(Args)]
 struct CommonOpts {
-    /// Files or directories to process (`.py` / `.rs`).
+    /// Files or directories to process: `.py`, `.rs`, and the experimental
+    /// JavaScript/TypeScript set `.js` `.mjs` `.cjs` `.ts` `.mts` `.cts`
+    /// (JSX/TSX are not accepted yet).
     #[arg(required = true)]
     paths: Vec<PathBuf>,
     /// Config file to read. Without it the nearest `tokenpress.toml` found
@@ -69,6 +72,11 @@ struct CommonOpts {
     /// RSO1: strip doc comments (`///`, `//!`).
     #[arg(long)]
     rs_strip_doc_comments: bool,
+    /// JSO1: strip JS/TS comments (kept by default — but see the caveat
+    /// warning: trailing and expression-position comments are dropped either
+    /// way).
+    #[arg(long)]
+    js_strip_comments: bool,
 }
 
 #[derive(Subcommand)]
@@ -159,6 +167,9 @@ fn apply_config(common: &mut CommonOpts, cfg: FileConfig) {
     if let Some(rust) = cfg.rust {
         common.rs_strip_doc_comments |= rust.strip_doc_comments.unwrap_or(false);
     }
+    if let Some(javascript) = cfg.javascript {
+        common.js_strip_comments |= javascript.strip_comments.unwrap_or(false);
+    }
 }
 
 /// Runs the CLI and returns the process exit code.
@@ -231,6 +242,9 @@ fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
         Box::new(RustFormatter::new(RustOptions {
             strip_doc_comments: common.rs_strip_doc_comments,
         })),
+        Box::new(JsFormatter::new(JsOptions {
+            strip_comments: common.js_strip_comments,
+        })),
     ]
 }
 
@@ -295,13 +309,44 @@ fn warn_rust_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
     }
 }
 
+/// Extensions the JS/TS backend claims. Kept next to the caveat warning
+/// because that is the only place the CLI has to recognize them by name;
+/// `JsFormatter::supports` remains the authority for dispatch.
+const JS_EXTENSIONS: [&str; 6] = ["js", "mjs", "cjs", "ts", "mts", "cts"];
+
+/// Caveat that applies to every rewritten JS/TS file. It is a property of the
+/// code generator, so no option can switch it off — hence a warning rather
+/// than a note attached to `--js-strip-comments`.
+const JS_CAVEAT_WARNING: &str = "\
+warning: JavaScript/TypeScript support is experimental, and its output is not
+  comment-preserving: trailing comments and comments in expression position
+  are always dropped when re-emitting, even without --js-strip-comments. Only
+  leading statement-level comments, jsdoc (`/** */`), annotation comments
+  (such as `#__PURE__`) and legal comments (`//!`, `/*!`, `@license`,
+  `@preserve`) survive. Verification cannot detect this: its canonical form is
+  comment-free by construction.";
+
+/// Writes the shared JS/TS caveat warning to `err` at most once per run: only
+/// for the commands that rewrite code, and only if a JS/TS file is processed.
+fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
+    let rewrites = matches!(action, Action::Format { .. } | Action::Check | Action::Diff);
+    let any_js = files.iter().any(|p| {
+        p.extension()
+            .is_some_and(|ext| JS_EXTENSIONS.iter().any(|js| ext == *js))
+    });
+    if rewrites && any_js {
+        let _ = writeln!(err, "{JS_CAVEAT_WARNING}");
+    }
+}
+
 /// `--verify external` is accepted but not yet backed by external tooling, so
 /// users must not read it as a stronger guarantee than `--verify ast`.
 const EXTERNAL_VERIFY_WARNING: &str = "\
-warning: external-tooling verification is not implemented yet: neither
-  `py_compile` (Python) nor `rustc --emit=metadata` (Rust) is invoked.
-  `--verify external` currently behaves exactly like `--verify ast`, i.e. the
-  output is re-parsed and compared for AST / token-stream equivalence.";
+warning: external-tooling verification is not implemented yet: none of
+  `py_compile` (Python), `rustc --emit=metadata` (Rust) and `tsc --noEmit` /
+  `node --check` (JavaScript/TypeScript) is invoked. `--verify external`
+  currently behaves exactly like `--verify ast`, i.e. the output is re-parsed
+  and compared for AST / token-stream equivalence.";
 
 /// Writes the external-verification warning to `err` at most once per run.
 /// Verification runs for every subcommand, so the warning is not restricted to
@@ -323,6 +368,7 @@ fn execute(
     let files = discover(&common.paths, &formatters)?;
     warn_external_verify(common, err);
     warn_rust_caveats(&files, action, err);
+    warn_js_caveats(&files, action, err);
 
     let mut outcomes = Vec::new();
     let mut errored = false;
@@ -539,6 +585,19 @@ mod tests {
         assert!(text.contains("format"));
         let (code, _) = run_cli(&["--version"]);
         assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn help_lists_every_supported_extension_and_no_unsupported_one() {
+        let (code, text) = run_cli(&["format", "--help"]);
+        assert_eq!(code, 0);
+        for ext in [".py", ".rs", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"] {
+            assert!(text.contains(ext), "{ext} missing from help:\n{text}");
+        }
+        assert!(text.contains("--js-strip-comments"), "{text}");
+        // JSX/TSX are not accepted yet and must not be advertised.
+        assert!(!text.contains(".jsx"), "{text}");
+        assert!(!text.contains(".tsx"), "{text}");
     }
 
     #[test]
@@ -815,6 +874,112 @@ mod tests {
     }
 
     #[test]
+    fn format_rewrites_javascript_and_typescript_files() {
+        let dir = Scratch::new();
+        let js = dir.file("a.js", "function add( a , b ) {\n    return a + b;\n}\n");
+        let ts = dir.file("b.ts", "interface Shape {\n    name : string ;\n}\n");
+        let (code, text) = run_cli(&["format", js.to_str().unwrap(), ts.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&js).unwrap(),
+            "function add(a,b){return a+b}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&ts).unwrap(),
+            "interface Shape{name:string;}"
+        );
+        assert!(text.contains("tokens"));
+        assert!(text.contains("2 files"));
+    }
+
+    #[test]
+    fn every_javascript_extension_is_discovered_but_jsx_and_tsx_are_not() {
+        let dir = Scratch::new();
+        for name in ["a.js", "a.mjs", "a.cjs", "a.ts", "a.mts", "a.cts"] {
+            dir.file(name, "const a = 1;\n");
+        }
+        // Not accepted yet: the emitter is not validated for JSX.
+        dir.file("a.jsx", "const a = 1;\n");
+        dir.file("a.tsx", "const a = 1;\n");
+        let (code, text) = run_cli(&["stats", dir.0.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(text.contains("6 files"), "{text}");
+        assert!(!text.contains(".jsx"), "{text}");
+        assert!(!text.contains(".tsx"), "{text}");
+        // …and naming one explicitly is still an error.
+        let jsx = dir.0.join("a.jsx");
+        let (code, text) = run_cli(&["format", jsx.to_str().unwrap()]);
+        assert_eq!(code, 2);
+        assert!(text.contains("unsupported language"), "{text}");
+    }
+
+    #[test]
+    fn js_strip_comments_flag_is_forwarded() {
+        let dir = Scratch::new();
+        let js = dir.file("a.js", "// note\nconst a = 1;\n");
+        let (code, _) = run_cli(&["format", "--js-strip-comments", js.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&js).unwrap(), "const a=1;");
+        // Without the flag the leading comment stays.
+        let kept = dir.file("b.js", "// note\nconst a = 1;\n");
+        let (code, _) = run_cli(&["format", kept.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&kept).unwrap(),
+            "// note\nconst a=1;"
+        );
+    }
+
+    #[test]
+    fn js_caveat_warning_is_emitted_once_per_run() {
+        let dir = Scratch::new();
+        let a = dir.file("a.js", "// note\nconst a = 1;\n");
+        let b = dir.file("b.ts", "const b: number = 2;\n");
+        let (code, out, err) = run_cli_err(&["format", a.to_str().unwrap(), b.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("trailing"), "{err}");
+        assert!(err.contains("--js-strip-comments"), "{err}");
+        assert!(err.contains("@license"), "{err}");
+        // stdout stays clean and pipeable.
+        assert!(!out.contains("warning:"));
+    }
+
+    #[test]
+    fn js_caveat_warning_is_absent_for_python_only_runs() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&["format", py.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn js_caveat_warning_covers_check_and_diff_but_not_stats() {
+        let dir = Scratch::new();
+        let js = dir.file("a.js", "const a = 1;\n");
+        let (code, _, err) = run_cli_err(&["check", js.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        assert_eq!(err.matches("warning:").count(), 1);
+        let (code, _, err) = run_cli_err(&["diff", js.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        let (code, _, err) = run_cli_err(&["stats", js.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn the_rust_and_js_caveats_are_reported_independently() {
+        let dir = Scratch::new();
+        let rs = dir.file("a.rs", "fn f() {}\n");
+        let js = dir.file("b.js", "const a = 1;\n");
+        let (code, _, err) = run_cli_err(&["format", rs.to_str().unwrap(), js.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 2);
+    }
+
+    #[test]
     fn external_verify_warning_is_emitted_once_per_run() {
         let dir = Scratch::new();
         let a = dir.file("a.py", "x = 1\n");
@@ -999,6 +1164,83 @@ mod tests {
             "import os\nimport sys"
         );
         assert_eq!(err, "");
+    }
+
+    #[test]
+    fn config_file_supplies_javascript_settings() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[javascript]\nstrip_comments = true\n");
+        let js = dir.file("a.js", "// note\nconst a = 1;\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            js.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&js).unwrap(), "const a=1;");
+    }
+
+    #[test]
+    fn the_js_strip_flag_ors_with_the_config_file() {
+        let dir = Scratch::new();
+        // Presence-only flags: `false` in the config cannot cancel the flag,
+        // and the flag cannot cancel a `true` in the config.
+        let off = dir.file("off.toml", "[javascript]\nstrip_comments = false\n");
+        let a = dir.file("a.js", "// note\nconst a = 1;\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            off.to_str().unwrap(),
+            "--js-strip-comments",
+            a.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "const a=1;");
+
+        let on = dir.file("on.toml", "[javascript]\nstrip_comments = true\n");
+        let b = dir.file("b.js", "// note\nconst a = 1;\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            on.to_str().unwrap(),
+            "--js-strip-comments",
+            b.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "const a=1;");
+    }
+
+    #[test]
+    fn a_javascript_config_table_without_keys_keeps_the_built_in_defaults() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[javascript]\n");
+        let js = dir.file("a.js", "// note\nconst a = 1;\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            js.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&js).unwrap(), "// note\nconst a=1;");
+    }
+
+    #[test]
+    fn unknown_javascript_config_key_is_an_error() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[javascript]\nstrip_comment = true\n");
+        let js = dir.file("a.js", "const a = 1;\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            js.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("invalid config file"), "{err}");
+        assert!(err.contains("strip_comment"), "{err}");
+        assert_eq!(std::fs::read_to_string(&js).unwrap(), "const a = 1;\n");
     }
 
     #[test]

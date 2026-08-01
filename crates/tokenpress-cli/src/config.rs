@@ -19,6 +19,7 @@ pub struct FileConfig {
     pub verify: Option<ConfigVerify>,
     pub python: Option<PythonConfig>,
     pub rust: Option<RustConfig>,
+    pub javascript: Option<JavaScriptConfig>,
 }
 
 /// `[python]` table.
@@ -38,6 +39,15 @@ pub struct PythonConfig {
 #[serde(deny_unknown_fields)]
 pub struct RustConfig {
     pub strip_doc_comments: Option<bool>,
+}
+
+/// `[javascript]` table. Named after `JsFormatter::language()`, and it covers
+/// TypeScript too — the JS and TS dialects share one backend and one option
+/// set.
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct JavaScriptConfig {
+    pub strip_comments: Option<bool>,
 }
 
 /// Verification level as spelled in the config file. The variants carry the
@@ -130,6 +140,7 @@ mod tests {
         assert_eq!(cfg.verify, None);
         assert_eq!(cfg.python, None);
         assert_eq!(cfg.rust, None);
+        assert_eq!(cfg.javascript, None);
     }
 
     #[test]
@@ -143,7 +154,9 @@ mod tests {
              strip_annotations = false\n\
              merge_imports = false\n\
              [rust]\n\
-             strip_doc_comments = true\n",
+             strip_doc_comments = true\n\
+             [javascript]\n\
+             strip_comments = true\n",
         );
         assert_eq!(cfg.tokenizer.as_deref(), Some("cl100k_base"));
         assert_eq!(cfg.verify, Some(ConfigVerify::Reparse));
@@ -162,6 +175,12 @@ mod tests {
                 strip_doc_comments: Some(true)
             })
         );
+        assert_eq!(
+            cfg.javascript,
+            Some(JavaScriptConfig {
+                strip_comments: Some(true)
+            })
+        );
     }
 
     #[test]
@@ -170,6 +189,7 @@ mod tests {
         assert_eq!(cfg.tokenizer.as_deref(), Some("o200k_base"));
         assert_eq!(cfg.verify, None);
         assert_eq!(cfg.rust, None);
+        assert_eq!(cfg.javascript, None);
         let python = cfg.python.unwrap();
         assert_eq!(python.strip_comments, Some(true));
         assert_eq!(python.strip_docstrings, None);
@@ -181,6 +201,7 @@ mod tests {
     fn python_table_alone_parses() {
         let cfg = parse("[python]\nstrip_annotations = true\nmerge_imports = true\n");
         assert_eq!(cfg.rust, None);
+        assert_eq!(cfg.javascript, None);
         let python = cfg.python.unwrap();
         assert_eq!(python.strip_annotations, Some(true));
         assert_eq!(python.merge_imports, Some(true));
@@ -190,6 +211,7 @@ mod tests {
     fn rust_table_alone_parses() {
         let cfg = parse("[rust]\nstrip_doc_comments = false\n");
         assert_eq!(cfg.python, None);
+        assert_eq!(cfg.javascript, None);
         assert_eq!(
             cfg.rust,
             Some(RustConfig {
@@ -199,8 +221,21 @@ mod tests {
     }
 
     #[test]
+    fn javascript_table_alone_parses() {
+        let cfg = parse("[javascript]\nstrip_comments = true\n");
+        assert_eq!(cfg.python, None);
+        assert_eq!(cfg.rust, None);
+        assert_eq!(
+            cfg.javascript,
+            Some(JavaScriptConfig {
+                strip_comments: Some(true)
+            })
+        );
+    }
+
+    #[test]
     fn empty_tables_are_valid_and_leave_their_keys_unset() {
-        let cfg = parse("[python]\n[rust]\n");
+        let cfg = parse("[python]\n[rust]\n[javascript]\n");
         assert_eq!(
             cfg.python,
             Some(PythonConfig {
@@ -214,6 +249,12 @@ mod tests {
             cfg.rust,
             Some(RustConfig {
                 strip_doc_comments: None
+            })
+        );
+        assert_eq!(
+            cfg.javascript,
+            Some(JavaScriptConfig {
+                strip_comments: None
             })
         );
     }
@@ -255,6 +296,20 @@ mod tests {
     fn unknown_rust_key_is_an_error() {
         let msg = parse_err("[rust]\nstrip_docs = true\n");
         assert!(msg.contains("strip_docs"), "{msg}");
+    }
+
+    #[test]
+    fn unknown_javascript_key_is_an_error() {
+        let msg = parse_err("[javascript]\nstrip_jsdoc = true\n");
+        assert!(msg.contains("strip_jsdoc"), "{msg}");
+    }
+
+    #[test]
+    fn the_javascript_table_is_not_spelled_js() {
+        // The table name follows `JsFormatter::language()`, so a `[js]` typo
+        // must fail rather than being silently ignored.
+        let msg = parse_err("[js]\nstrip_comments = true\n");
+        assert!(msg.contains("js"), "{msg}");
     }
 
     #[test]

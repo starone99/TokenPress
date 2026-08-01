@@ -14,18 +14,23 @@
 # script below builds the CLI from pre-commit's clone of this repository
 # instead, so a working `cargo` is the only prerequisite.
 #
-# Only `.py` and `.rs` are matched: any other path makes the CLI exit 2 with
-# "unsupported language for path".
+# Only the extensions the CLI accepts are matched: any other path makes the
+# CLI exit 2 with "unsupported language for path". `.jsx`/`.tsx` are therefore
+# absent -- the JS/TS backend does not accept them yet.
+#
+# The `files` regex is the authority; `types_or` is only a coarse pre-filter
+# (an identify release that does not yet tag `.mts`/`.cts` as `ts` skips those
+# files, which is a conservative miss, never a wrong rewrite).
 
 - id: tokenpress-check
   name: tokenpress check
   description: >-
-    Fail if any Python or Rust file is not in TokenPress-normalized form.
-    Writes nothing.
+    Fail if any Python, Rust or JavaScript/TypeScript file is not in
+    TokenPress-normalized form. Writes nothing.
   entry: scripts/pre-commit-hook.sh check
   language: script
-  files: \.(py|rs)$
-  types_or: [python, rust]
+  files: \.(py|rs|js|mjs|cjs|ts|mts|cts)$
+  types_or: [python, rust, javascript, ts]
   # One process at a time: every invocation runs `cargo build` first, and
   # parallel builds would only contend for the same cargo lock.
   require_serial: true
@@ -34,12 +39,12 @@
 - id: tokenpress-format
   name: tokenpress format
   description: >-
-    Rewrite Python and Rust files in place with token-minimized formatting.
-    Modifies files, so pre-commit reports the run as failed whenever it had
-    something to rewrite.
+    Rewrite Python, Rust and JavaScript/TypeScript files in place with
+    token-minimized formatting. Modifies files, so pre-commit reports the run
+    as failed whenever it had something to rewrite.
   entry: scripts/pre-commit-hook.sh format
   language: script
-  files: \.(py|rs)$
-  types_or: [python, rust]
+  files: \.(py|rs|js|mjs|cjs|ts|mts|cts)$
+  types_or: [python, rust, javascript, ts]
   require_serial: true
   minimum_pre_commit_version: '2.9.0'

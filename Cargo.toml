@@ -19,6 +19,7 @@ repository = "https://github.com/starone99/TokenPress"
 tokenpress-core = { path = "crates/tokenpress-core" }
 tokenpress-python = { path = "crates/tokenpress-python" }
 tokenpress-rust = { path = "crates/tokenpress-rust" }
+tokenpress-js = { path = "crates/tokenpress-js" }
 thiserror = "2"
 tiktoken-rs = "0.12"
 wasm-bindgen = "0.2"

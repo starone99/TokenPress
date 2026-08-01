@@ -15,8 +15,8 @@
 # *there* and not in the consumer's workspace.
 name: TokenPress
 description: >-
-  Fail CI when Python or Rust sources are not in TokenPress-normalized,
-  token-minimized form (or rewrite them in place).
+  Fail CI when Python, Rust or JavaScript/TypeScript sources are not in
+  TokenPress-normalized, token-minimized form (or rewrite them in place).
 author: TokenPress contributors
 
 branding:
@@ -38,15 +38,17 @@ inputs:
     description: >-
       Whitespace-separated files and/or directories to process, relative to the
       consumer's workspace. Directories are walked recursively by the CLI
-      itself: the walk is `.gitignore`-aware and only picks up `.py` and `.rs`
-      files, so pointing this at a mixed tree is safe. Subject to the shell's
-      word splitting and globbing, so `src/*.py` works.
+      itself: the walk is `.gitignore`-aware and only picks up `.py`, `.rs` and
+      the experimental JavaScript/TypeScript set (`.js`, `.mjs`, `.cjs`, `.ts`,
+      `.mts`, `.cts` -- not `.jsx`/`.tsx`), so pointing this at a mixed tree is
+      safe. Subject to the shell's word splitting and globbing, so `src/*.py`
+      works.
     required: false
     default: .
   extra-args:
     description: >-
       Extra `tokenpress` flags, passed through verbatim (whitespace-separated),
-      e.g. `--rs-strip-doc-comments --py-strip-comments`.
+      e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments`.
     required: false
     default: ''
 
@@ -162,8 +164,12 @@ runs:
             # An explicitly named file is *not* filtered by the CLI -- an
             # unsupported one is an error (exit 2). Drop those here so that a
             # glob over a mixed tree does not abort the run.
+            # Mirrors the CLI's supported extensions exactly; `.jsx`/`.tsx`
+            # are absent because the JS/TS backend does not accept them yet.
             case "$path" in
-              *.py | *.rs) set -- "$@" "$path" ;;
+              *.py | *.rs | *.js | *.mjs | *.cjs | *.ts | *.mts | *.cts)
+                set -- "$@" "$path"
+                ;;
               *) skipped="$skipped $path" ;;
             esac
           else
@@ -177,7 +183,7 @@ runs:
           echo "tokenpress: skipping unsupported path(s):$skipped"
         fi
         if [ "$#" -eq "$n_flags" ]; then
-          echo 'tokenpress: no Python or Rust paths to process'
+          echo 'tokenpress: no supported paths to process'
           echo 'changed=false' >>"$GITHUB_OUTPUT"
           exit 0
         fi

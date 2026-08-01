@@ -1,6 +1,8 @@
 # TokenPress
 
-> A token-aware formatter for Python and Rust that minimizes LLM token usage while preserving behavior.
+> A token-aware formatter for Python and Rust — plus experimental
+> JavaScript/TypeScript — that minimizes LLM token usage while preserving
+> behavior.
 
 TokenPress is a token-aware source code formatter for LLMs. Unlike a minifier that
 shrinks characters, TokenPress optimizes against an actual LLM tokenizer —
@@ -52,6 +54,37 @@ therefore comes from discarded comments, not from syntactic noise alone.
 Savings differ per tokenizer — the reason this is a token-aware formatter,
 not a character minifier.
 
+## Language support
+
+| Language | Extensions | Status |
+|---|---|---|
+| Python | `.py` | Supported |
+| Rust | `.rs` | Supported (with the comment/macro caveats below) |
+| JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.ts` `.mts` `.cts` | **Experimental** |
+
+**JavaScript/TypeScript is experimental, not supported.** "Supported" here is
+a claim gated on an external-verification step (running the language's own
+toolchain over the output) that does not exist for JS/TS yet: `--verify
+external` currently falls back to the built-in AST-equivalence check, exactly
+as it does for Python and Rust. Until that step exists, treat JS/TS output as
+something to review rather than to trust, and do not point the CI gate at a
+JS/TS tree you cannot re-check by hand.
+
+`.jsx` and `.tsx` are **not accepted**: the parser handles them, but the
+emitter is not validated for JSX, so naming one explicitly is an
+"unsupported language for path" error (exit 2) and a directory walk skips it.
+`.d.ts` is covered by `.ts`.
+
+**JS/TS output is not comment-preserving, even at default settings** — the
+same honesty class as the Rust `//` comment loss above. Trailing comments and
+comments in expression position are **always** dropped when re-emitting, with
+or without `--js-strip-comments`. Only leading statement-level comments, jsdoc
+(`/** */`), annotation comments (such as `#__PURE__`) and legal comments
+(`//!`, `/*!`, `@license`, `@preserve`) survive. That is a property of the code
+generator, not an option, and verification cannot detect it because its
+canonical form is comment-free by construction. The CLI prints this caveat on
+stderr once per run that touches a JS/TS file.
+
 ## Usage
 
 ```bash
@@ -66,12 +99,14 @@ tokenpress stats . --tokenizer cl100k_base         # GPT-4 / GPT-3.5
 tokenpress stats . --tokenizer hf:tokenizer.json   # any HF tokenizer (Qwen, GLM, ...)
 tokenpress stats . --tokenizer kimi:tiktoken.model # Kimi K2/K3 ranks format
 
-# context/behavior trade-offs (opt-in flags — except Rust //-comment loss, see below)
+# context/behavior trade-offs (opt-in flags — except the Rust and JS/TS
+# comment loss, which is unconditional; see below)
 tokenpress format . --py-strip-comments      # drop # comments
 tokenpress format . --py-strip-docstrings    # drop docstrings (empties __doc__: breaks help() and doctests!)
 tokenpress format . --py-strip-annotations   # drop type hints (breaks dataclass/pydantic introspection!)
 tokenpress format . --py-no-merge-imports    # keep adjacent imports separate
 tokenpress format . --rs-strip-doc-comments  # drop ///+//! doc comments (and doctests)
+tokenpress format . --js-strip-comments      # drop the JS/TS comments that survive at all
 ```
 
 Exit codes: `0` ok · `1` check found changes · `2` error (parse/verification
@@ -124,12 +159,15 @@ on rewritten files" rule as the Action's `mode: format`. Exit 2 (a parse or
 verification failure, or an unsupported path) fails the hook too, and nothing
 that fails verification is ever written.
 
-Both hooks declare `files: \.(py|rs)$` alongside `types_or: [python, rust]`, so
-only `.py` and `.rs` files ever reach the CLI. Extension-less scripts with a
-Python shebang are excluded on purpose: an explicitly named unsupported path
-makes the CLI exit 2. Both are `require_serial: true` — every invocation runs a
-`cargo build` first, and parallel copies would only contend for the same cargo
-lock. `minimum_pre_commit_version` is 2.9.0.
+Both hooks declare `files: \.(py|rs|js|mjs|cjs|ts|mts|cts)$` alongside
+`types_or: [python, rust, javascript, ts]`, so only files the CLI accepts ever
+reach it — `.jsx`/`.tsx` are excluded, since the JS/TS backend does not accept
+them yet. The regex is the authority; `types_or` is a coarse pre-filter.
+Extension-less scripts with a Python shebang are excluded on purpose: an
+explicitly named unsupported path makes the CLI exit 2. Both are
+`require_serial: true` — every invocation runs a `cargo build` first, and
+parallel copies would only contend for the same cargo lock.
+`minimum_pre_commit_version` is 2.9.0.
 
 Prerequisites for the consumer:
 
@@ -217,7 +255,7 @@ Inputs:
 |---|---|---|
 | `mode` | `check` | `check` reports and fails, writing nothing. `format` rewrites in place and then fails if it had something to rewrite. Any other value fails the step with exit 2. |
 | `paths` | `.` | Whitespace-separated files and/or directories, relative to the workspace. Subject to the shell's word splitting and globbing, so `src/*.py` works. |
-| `extra-args` | *(empty)* | Extra `tokenpress` flags, passed through verbatim (whitespace-separated), e.g. `--rs-strip-doc-comments --py-strip-comments`. |
+| `extra-args` | *(empty)* | Extra `tokenpress` flags, passed through verbatim (whitespace-separated), e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments`. |
 
 Output:
 
@@ -227,11 +265,12 @@ Output:
 
 **Directories and explicitly named files are treated differently.** A directory
 is handed to the CLI as-is: its walk is `.gitignore`-aware and picks up only
-`.py` and `.rs` files, so pointing `paths` at a mixed tree is safe. An
-explicitly named file is *not* filtered by the CLI — an unsupported one is an
-error (exit 2) — so the action drops non-`.py`/`.rs` files from the argument
-list itself and logs which ones it skipped. A glob over a mixed tree therefore
-does not abort the run, and if nothing supported is left the step succeeds with
+the supported extensions (`.py`, `.rs`, `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`,
+`.cts`), so pointing `paths` at a mixed tree is safe. An explicitly named file
+is *not* filtered by the CLI — an unsupported one is an error (exit 2) — so the
+action drops files with any other extension from the argument list itself and
+logs which ones it skipped. A glob over a mixed tree therefore does not abort
+the run, and if nothing supported is left the step succeeds with
 `changed=false`. A path that is neither a file nor a directory is passed
 through, so a typo is reported rather than silently swallowed.
 
@@ -258,6 +297,10 @@ merge_imports     = true      # `false` is the config spelling of --py-no-merge-
 
 [rust]
 strip_doc_comments = false    # --rs-strip-doc-comments
+
+# Experimental. Covers TypeScript too — one backend, one option set.
+[javascript]
+strip_comments = false        # --js-strip-comments
 ```
 
 That is the complete schema — there are no other keys. `verify = "external"` is
@@ -277,6 +320,7 @@ flags are presence-only booleans, so the command line can only turn them *on*:
 the config file is the project baseline, and `strip_comments = false` there
 cannot cancel a `--py-strip-comments` passed on the command line (nor can the
 command line re-enable import merging that `merge_imports = false` turned off).
+The same holds for `[javascript] strip_comments` and `--js-strip-comments`.
 
 **Config problems fail loudly**, like every other linter-style tool: an unknown
 key, a wrong value type, malformed TOML, or an unknown `tokenizer`/`verify`
@@ -294,8 +338,9 @@ loses information: `--py-strip-docstrings` removes the leading string literal
 of a module, class or function body (other string expressions are untouched),
 which empties `__doc__`.
 
-Two documented exceptions, both in Rust — these are the scope limits on the
-"preserving behavior" claim at the top of this page.
+Three documented exceptions — two in Rust, one in JavaScript/TypeScript. These
+are the scope limits on the "preserving behavior" claim at the top of this
+page.
 
 **Regular comments are dropped.** `//` and `/* */` comments are always lost,
 because the `syn` token stream the emitter works from does not preserve them.
@@ -312,6 +357,14 @@ token-identical to the original, so this class of behavior change is **not**
 detected by the verifier. If your code depends on the exact text
 `stringify!` renders, review the diff before accepting it.
 
+**Trailing and expression-position JS/TS comments are dropped.** Regardless of
+`--js-strip-comments`, the JS/TS emitter keeps only leading statement-level
+comments plus jsdoc, annotation (`#__PURE__`) and legal (`//!`, `/*!`,
+`@license`, `@preserve`) comments. Everything else — a `// tail` after a
+statement, a comment between arguments — is lost, and the verifier cannot see
+it because its canonical form is comment-free. If a JS/TS file's inline
+comments matter to you, keep the original.
+
 ## Layout
 
 Cargo workspace with a single distributed binary:
@@ -321,6 +374,7 @@ Cargo workspace with a single distributed binary:
 | `tokenpress-core` | Formatter/Tokenizer traits, tokenizer backends (tiktoken, HF, Kimi ranks) |
 | `tokenpress-python` | Python: token-stream re-render + transform passes + verification |
 | `tokenpress-rust` | Rust: syn token-stream re-render + verification |
+| `tokenpress-js` | JavaScript/TypeScript (experimental): oxc parse + whitespace-minimal re-emit + verification |
 | `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
 | `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python + Rust, per-tokenizer token stats) |
 
