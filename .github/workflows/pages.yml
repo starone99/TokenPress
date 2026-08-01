@@ -1,0 +1,128 @@
+name: Deploy demo site
+
+on:
+  push:
+    branches: [master]
+    # The page embeds the formatters, so a change to any crate changes what
+    # visitors get — the paths deliberately cover the whole workspace build
+    # input, not just site/.
+    paths:
+      - "site/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Read-only by default; only the job that publishes needs more.
+permissions:
+  contents: read
+
+# One Pages deployment at a time, and never cancel one in flight: a half-run
+# deploy would leave the live site in an indeterminate state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build demo site
+    runs-on: ubuntu-latest
+    # Runs unconditionally, including while the repository is private: this is
+    # the only place CI builds site/, so it has to catch a broken wasm bundle
+    # whether or not the result is ever published.
+    steps:
+      - uses: actions/checkout@v4
+      # rustup installs the toolchain pinned in rust-toolchain.toml on first use
+      - uses: Swatinem/rust-cache@v2
+      - name: Add the wasm target to the pinned toolchain
+        run: rustup target add wasm32-unknown-unknown
+
+      # site/build.sh installs a pinned wasm-bindgen CLI into site/.tools/ and
+      # reuses an already-present one. The pin is read out of Cargo.lock, so
+      # that file is the correct cache key.
+      - name: Cache wasm-bindgen CLI
+        uses: actions/cache@v4
+        with:
+          path: site/.tools
+          key: wasm-bindgen-cli-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build the wasm bundle
+        run: ./site/build.sh
+
+      # A silently empty site/pkg/ would still upload and deploy as a blank
+      # page, so fail here instead. These are exactly the two files
+      # `wasm-bindgen --target web --no-typescript` emits, and the JS name is
+      # the one site/app.js imports.
+      - name: Verify the wasm bundle
+        shell: bash
+        run: |
+          missing=0
+          for f in site/pkg/tokenpress_wasm.js site/pkg/tokenpress_wasm_bg.wasm; do
+            if [ ! -s "$f" ]; then
+              echo "error: missing or empty build output: $f" >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "site/pkg/ is incomplete; refusing to publish an empty site" >&2
+            exit 1
+          fi
+          ls -l site/pkg
+
+      # Stage a clean document root: index.html at the top level next to the
+      # generated pkg/, with the build tooling (site/.tools/, build.sh) and the
+      # developer README left out of what gets served.
+      - name: Stage the site root
+        shell: bash
+        run: |
+          rm -rf _site
+          cp -r site _site
+          rm -rf _site/.tools _site/build.sh _site/README.md
+          test -f _site/index.html
+          test -f _site/pkg/tokenpress_wasm.js
+          test -f _site/pkg/tokenpress_wasm_bg.wasm
+          if [ -e _site/.tools ]; then
+            echo "error: build tooling leaked into the published site" >&2
+            exit 1
+          fi
+          find _site -type f | sort
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    # Publishing stays gated on the repository being public. GitHub Pages for a
+    # private repository needs a paid plan, and making the demo public is a
+    # human decision rather than something CI should force — so this workflow is
+    # safe to merge today and starts deploying by itself, with no edit, the
+    # moment the repository is flipped public. `github.event.repository` is
+    # populated for both `push` and `workflow_dispatch`; the explicit null check
+    # means an event that ever lacks it skips the deploy rather than publishing
+    # a private repository by accident (in GitHub expressions `!null` is true).
+    if: ${{ github.event.repository != null && !github.event.repository.private }}
+    permissions:
+      contents: read
+      pages: write # create and publish the Pages deployment
+      id-token: write # actions/deploy-pages mints an OIDC token, which needs write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # Deliberately in this job and not in build: it queries the Pages API and
+      # fails when Pages is not enabled on the repository, which must never be
+      # able to break the always-run build job.
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

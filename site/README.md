@@ -45,5 +45,15 @@ never be committed — rebuild them with `./site/build.sh`.
 
 ## Deployment
 
-Publishing this page (GitHub Pages or otherwise) is a separate, later task;
-this directory only covers building and running it locally.
+`.github/workflows/pages.yml` builds this directory on every push to `master`
+that touches `site/`, `crates/`, `Cargo.toml`, `Cargo.lock` or
+`rust-toolchain.toml` (and on manual dispatch). The build job always runs — it
+is the only place CI exercises `site/build.sh`, and it fails outright if the
+bundle is missing `pkg/tokenpress_wasm.js` or `pkg/tokenpress_wasm_bg.wasm`. It
+then stages a clean document root (`index.html` and the generated `pkg/`, minus
+`build.sh`, `.tools/` and this README) and uploads it as a Pages artifact.
+
+The deploy job is gated on `!github.event.repository.private`, so nothing is
+published while the repository is private — Pages on a private repository needs
+a paid plan, and going public is a human decision. Flipping the repository to
+public opens the gate on its own, with no change to the workflow.
