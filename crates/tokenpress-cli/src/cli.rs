@@ -1,6 +1,8 @@
 //! Library surface of the `tokenpress` binary. All logic lives here (not in
 //! `main.rs`) so it is fully covered by the coverage gate.
 
+pub mod config;
+
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};

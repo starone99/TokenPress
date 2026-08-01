@@ -18,6 +18,14 @@ path = "src/cli.rs"
 tokenpress-core.workspace = true
 tokenpress-python.workspace = true
 tokenpress-rust.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }
+# Config file parsing only: the writer (`display`) half stays out of the build.
+toml = { version = "1", default-features = false, features = [
+    "parse",
+    "serde",
+    "std",
+] }
 clap = { version = "4", features = ["derive"] }
 ignore = "0.4"
 similar = "2"
