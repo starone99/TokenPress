@@ -128,6 +128,22 @@ impl LanguageConfig {
 /// doc for why that predicate, and only that predicate, is the gate. The
 /// returned [`Tree`] is owned and outlives `source`.
 pub fn parse(config: &LanguageConfig, source: &[u8]) -> Result<Tree> {
+    let tree = parse_tree(config, source);
+    if tree.root_node().has_error() {
+        return Err(Error::Parse(format!(
+            "syntax error at byte {}",
+            deepest_error_offset(tree.root_node())
+        )));
+    }
+    Ok(tree)
+}
+
+/// The parse itself, without the gate.
+///
+/// tree-sitter never fails, so this always yields a tree — possibly one
+/// carrying `ERROR` or `MISSING` nodes, which is precisely what [`parse`]
+/// refuses to hand out.
+fn parse_tree(config: &LanguageConfig, source: &[u8]) -> Tree {
     let mut parser = tree_sitter::Parser::new();
     // Fails only when the grammar's ABI is outside the pinned runtime's
     // window, which is a version-pin mistake rather than a runtime condition:
@@ -140,16 +156,21 @@ pub fn parse(config: &LanguageConfig, source: &[u8]) -> Result<Tree> {
     // `None` means no language was set or the parse was cancelled: the
     // language is set immediately above, and neither a timeout nor a
     // cancellation flag is ever configured, so there is no such tree.
-    let tree = parser
+    parser
         .parse(source, None)
-        .expect("a language is set and the parse is never cancelled");
-    if tree.root_node().has_error() {
-        return Err(Error::Parse(format!(
-            "syntax error at byte {}",
-            deepest_error_offset(tree.root_node())
-        )));
-    }
-    Ok(tree)
+        .expect("a language is set and the parse is never cancelled")
+}
+
+/// The ungated parse, for this crate's tests only.
+///
+/// `src/comparable.rs` renders a `<MISSING>` marker so its walk is total, but
+/// [`parse`] gates on `has_error()` and every `MISSING` node sets it, so that
+/// branch is unreachable through the public API. Rather than weaken the gate
+/// or leave the branch untested, the tests reach it through here — and
+/// nothing outside `cfg(test)` can.
+#[cfg(test)]
+pub(crate) fn parse_ungated(config: &LanguageConfig, source: &[u8]) -> Tree {
+    parse_tree(config, source)
 }
 
 /// The start byte of the innermost node whose subtree carries the error.

@@ -44,6 +44,7 @@
 //! runs without it, `no-ruby`, builds `tokenpress-cli
 //! --no-default-features`, which does not reach this crate.
 
+pub mod comparable;
 pub mod parser;
 
 pub use tokenpress_core::{Error, Result};
