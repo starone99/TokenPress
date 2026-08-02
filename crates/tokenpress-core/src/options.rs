@@ -16,8 +16,8 @@ pub enum VerifyLevel {
     /// Implemented by the JavaScript/TypeScript backend, which runs
     /// `tsc --noEmit` (falling back to `node --check`) on top of
     /// [`VerifyLevel::AstEquiv`] and fails when neither tool is on PATH.
-    /// Python (`py_compile`) and Rust (`rustc --emit=metadata`) do not
-    /// implement it yet and treat this level exactly like
+    /// Python (`py_compile`), Rust (`rustc --emit=metadata`) and Ruby
+    /// (`ruby -c`) do not implement it yet and treat this level exactly like
     /// [`VerifyLevel::AstEquiv`].
     External,
 }

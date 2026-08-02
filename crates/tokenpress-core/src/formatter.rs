@@ -31,7 +31,11 @@ pub trait Formatter: Send + Sync {
     /// Language name shown to users, e.g. `"python"`.
     fn language(&self) -> &'static str;
 
-    /// Whether this formatter handles the given path (by extension).
+    /// Whether this formatter handles the given path.
+    ///
+    /// Usually decided by the extension, but the whole path is passed because
+    /// some languages name source files without one — Ruby's `Gemfile` and
+    /// `Rakefile` are matched by basename.
     fn supports(&self, path: &Path) -> bool;
 
     /// Formats `source`, returning token-minimized code that passed the
