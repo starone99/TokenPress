@@ -73,6 +73,13 @@ Building the workspace therefore needs a **C compiler** and **libclang**.
 to `ruby`. (`llvm-tools-preview` from `rust-toolchain.toml` does *not* provide
 libclang; it is a different component.)
 
+The C compiler half of that is **no longer prism's alone**:
+`tokenpress-treesitter` (and every tree-sitter grammar crate a per-language
+backend pins) compiles C sources with `cc` too — tree-sitter's `src/lib.c` and
+a grammar's generated `parser.c`. That half needs *only* a C compiler: no C++,
+and no bindgen, so no libclang. Removing the Ruby backend would therefore not
+remove the C-compiler prerequisite, only the libclang one.
+
 - **Linux**: `apt install libclang-dev` (or `clang`); the C compiler is `gcc`
   or `clang`.
 - **macOS**: `xcode-select --install` — the Command Line Tools ship both, or

@@ -6,6 +6,7 @@ members = [
     "crates/tokenpress-js",
     "crates/tokenpress-ruby",
     "crates/tokenpress-rust",
+    "crates/tokenpress-treesitter",
     "crates/tokenpress-cli",
     "crates/tokenpress-wasm",
 ]

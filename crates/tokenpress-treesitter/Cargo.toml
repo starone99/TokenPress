@@ -1,0 +1,43 @@
+[package]
+name = "tokenpress-treesitter"
+description = "TokenPress tree-sitter engine: the grammar-agnostic half of every tree-sitter backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["hf-tokenizer"]
+# Forwarded to tokenpress-core; see its manifest.
+hf-tokenizer = ["tokenpress-core/hf-tokenizer"]
+
+[dependencies]
+# Path dependency, not `workspace = true`: `default-features = false` is
+# ignored on an inherited dependency, and the `hf-tokenizer` feature has to be
+# switchable by any consumer that cannot build it.
+tokenpress-core = { path = "../tokenpress-core", default-features = false }
+thiserror.workspace = true
+# Grammar crates are pre-1.0 and version-locked to a generated parser ABI, so
+# the ruff/oxc/prism rule applies unchanged: pin the exact version and confine
+# **all** `tree_sitter` API access to src/parser.rs. There is MSRV headroom
+# here (`tree-sitter` declares `rust-version = "1.77"`), but the ABI window
+# between runtime and grammar is the real coupling, which is why every grammar
+# pin ships its own `abi_version()` test.
+#
+# Build prerequisite: `cc` compiles tree-sitter's `src/lib.c` (C11). No C++,
+# and **no bindgen/libclang** — the `bindgen` feature is optional and off.
+#
+# Deliberately **no grammar dependency**: grammars arrive as configuration
+# (`LanguageConfig`), which is what lets Go, Java, C# and PHP share this one
+# engine.
+tree-sitter = "=0.26.11"
+
+[dev-dependencies]
+# A real grammar for the engine's own tests, and only for them: a generic
+# engine cannot be tested without one, and a hand-rolled test grammar (a
+# checked-in generated `parser.c`) would cost a grammar generator in the build
+# and still prove less than a grammar a real backend ships. Go is the first
+# consumer, so the engine is exercised against exactly what `tokenpress-go`
+# will use. It stays a dev-dependency: nothing in this crate's public API
+# mentions Go, and no released artifact links this grammar.
+tree-sitter-go = "=0.25.0"
