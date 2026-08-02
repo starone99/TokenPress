@@ -1,10 +1,12 @@
 //! TokenPress for Ruby — the Ruby backend, built on `ruby-prism`.
 //!
 //! This crate is being assembled in stages; today it holds the parser
-//! boundary ([`parser`]), the path-support decision ([`paths`]) and the
-//! AST-equivalence artifact ([`comparable`]). The
-//! `tokenpress_core::Formatter` implementation, the emitter and the verifier
-//! land in later steps, so nothing here is wired into the CLI yet. Modules
+//! boundary ([`parser`]), the path-support decision ([`paths`]), the
+//! AST-equivalence artifact ([`comparable`]) and the emitter's protected-span
+//! machinery ([`emit`], still policy-free — it rewrites a source to itself).
+//! The `tokenpress_core::Formatter` implementation, the emitter policies and
+//! the verifier land in later steps, so nothing here is wired into the CLI
+//! yet. Modules
 //! are declared `pub` from the moment they land — the same arrangement
 //! `tokenpress-js` uses — so an as-yet-unwired module is covered by its own
 //! unit tests instead of tripping dead-code warnings.
@@ -30,6 +32,7 @@
 //! libclang. Ruby itself is not needed at build time.
 
 pub mod comparable;
+pub mod emit;
 pub mod parser;
 pub mod paths;
 
