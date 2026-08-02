@@ -14,6 +14,17 @@ from. Verification in the browser is internal only (re-parse plus canonical
 re-emit equivalence): WebAssembly cannot spawn processes, so the CLI's
 `--verify external` (`tsc --noEmit` / `node --check`) has no counterpart here.
 
+Ruby is deliberately absent, and there is no `formatRuby`: `tokenpress-wasm`
+does not depend on `tokenpress-ruby` at all. The Ruby parser (prism) is a
+vendored C library whose sources do not build for `wasm32-unknown-unknown`
+(`fatal error: 'ctype.h' file not found` — the target ships no libc headers).
+The only wasm targets that build script handles are the `wasm32-*wasi*` family,
+and `wasm-bindgen` generates no browser bindings for those: run over a
+`wasm32-wasip1` build it exits 0 but emits glue with every `#[wasm_bindgen]`
+export missing. Ruby is CLI-only; see the
+`(b) wasm + demo site` note under `### tokenpress-ruby` in `ROADMAP.md` for the
+full investigation.
+
 No framework, no bundler, no CDN: `index.html`, `style.css` and `app.js` are
 served as-is, and everything else is the wasm-bindgen output. Once built, the
 page works fully offline — the source you paste never leaves the browser.

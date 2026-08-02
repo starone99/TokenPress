@@ -55,6 +55,14 @@
       </label>
     </fieldset>
 
+    <p class="note">
+      Ruby is missing from that list on purpose. The command-line tool
+      supports it, but this page cannot: the Ruby parser (prism) is a C
+      library, and its sources do not build for the
+      <code>wasm32-unknown-unknown</code> target this bundle is compiled to.
+      Ruby is CLI-only.
+    </p>
+
     <fieldset class="options" id="python-options">
       <legend>Python options</legend>
       <label><input type="checkbox" id="py-strip-comments"> Strip <code>#</code> comments</label>

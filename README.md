@@ -152,7 +152,11 @@ both on `o200k_base` — see the table above and
 measured, so the Qwen3.6/GLM-5.2/Kimi K3 columns are still *pending*, and one
 corpus is not a language-wide claim. That run has one verification refusal,
 `lib/rack/utils.rb` — a documented over-refusal class, in the safe direction:
-the file is left unchanged and nothing that fails the check is written.
+the file is left unchanged and nothing that fails the check is written. Ruby is
+also the one supported language the browser demo does not offer: prism is a
+vendored C library whose sources do not build for the
+`wasm32-unknown-unknown` target the demo bundle is compiled to, so Ruby is
+CLI-only.
 
 **Ruby, unlike Rust and JS/TS, is context-lossless at default settings.** The
 Ruby emitter rewrites the whitespace *between* protected source spans and
@@ -528,7 +532,7 @@ Cargo workspace with a single distributed binary:
 | `tokenpress-js` | JavaScript/TypeScript: oxc parse + whitespace-minimal re-emit + verification (built-in and `tsc`/`node`) |
 | `tokenpress-ruby` | Ruby: prism parse + whitespace-minimal re-emit over the source bytes + verification |
 | `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
-| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python + Rust, per-tokenizer token stats) |
+| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python, Rust and JavaScript/TypeScript — not Ruby, per-tokenizer token stats) |
 
 ## Development
 
