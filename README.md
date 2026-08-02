@@ -38,13 +38,15 @@ and all tokenizers.
 | ripgrep | aggressive² | -38.2% | **-42.7%** | -38.1% | -37.9% |
 | express v5.2.1 | default | -17.3% | *pending* | *pending* | *pending* |
 | express | aggressive³ | -25.4% | *pending* | *pending* | *pending* |
+| rack v3.2.6 | default | -9.2% | *pending* | *pending* | *pending* |
+| rack | aggressive⁴ | -20.8% | *pending* | *pending* | *pending* |
 
 ¹ `--py-strip-comments --py-strip-annotations` ² `--rs-strip-doc-comments`
-³ `--js-strip-comments`
+³ `--js-strip-comments` ⁴ `--ruby-strip-comments`
 
 *pending* means not measured yet: the open-model tokenizer numbers
-(Qwen3.6/GLM-5.2/Kimi K3) for express need Hugging Face tokenizer downloads
-that have not been run for this corpus. See
+(Qwen3.6/GLM-5.2/Kimi K3) for express and rack need Hugging Face tokenizer
+downloads that have not been run for those corpora. See
 [benchmarks/RESULTS.md](benchmarks/RESULTS.md), which uses the same *pending*
 convention.
 
@@ -142,9 +144,15 @@ settings are whitespace-only and keep every comment;
 `--ruby-strip-comments` is the lossy opt-in. Ruby is the one backend that also
 claims file names without an extension: `Gemfile` and `Rakefile` are matched
 exactly and **case-sensitively** (`gemfile` is not Ruby, and `Gemfile.lock` is
-not Ruby at all). No measured-savings numbers are published for Ruby yet —
-benchmarking it is a separate step, and no figure is quoted until it has been
-run.
+not Ruby at all). Measured savings are published for one Ruby corpus,
+rack v3.2.6: -9.2% at default settings and -20.8% with `--ruby-strip-comments`,
+both on `o200k_base` — see the table above and
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md), which also reports
+`cl100k_base` (-8.9% / -20.5%). Only the two embedded tokenizers were
+measured, so the Qwen3.6/GLM-5.2/Kimi K3 columns are still *pending*, and one
+corpus is not a language-wide claim. That run has one verification refusal,
+`lib/rack/utils.rb` — a documented over-refusal class, in the safe direction:
+the file is left unchanged and nothing that fails the check is written.
 
 **Ruby, unlike Rust and JS/TS, is context-lossless at default settings.** The
 Ruby emitter rewrites the whitespace *between* protected source spans and
