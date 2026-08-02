@@ -56,11 +56,73 @@
 //!
 //! # Policy stages
 //!
-//! This module ships **no emitter policy**. [`rewrite`] takes the policy as a
-//! parameter and [`keep`] is the identity one, so [`identity`] reproduces its
-//! input byte for byte. The whitespace policy and the `strip_comments` policy
-//! land in later sub-tasks as new gap policies; nothing about span collection
-//! has to change for them.
+//! [`rewrite`] takes the policy as a parameter. [`keep`] is the identity one,
+//! so [`identity`] reproduces its input byte for byte; [`minimize`] is the
+//! whitespace policy, so [`minimize_source`] is the comments-kept
+//! configuration. The `strip_comments` policy lands in a later sub-task as a
+//! change to span collection, not to either policy.
+//!
+//! # The whitespace policy
+//!
+//! [`minimize`] removes the formatting whitespace of a gap and nothing else:
+//!
+//! - a horizontal-whitespace run (spaces and tabs) that follows a newline
+//!   *this call has emitted* is indentation, and vanishes;
+//! - a horizontal-whitespace run that precedes a newline is trailing
+//!   whitespace, and vanishes;
+//! - every other horizontal-whitespace run collapses to **exactly one
+//!   space** — never to zero. That single space is the load-bearing safety
+//!   choice of the whole policy: `a - b` is a subtraction while `a -b` is a
+//!   call with a unary-minus argument, and `defined? x` and `not x` need
+//!   their separator to stay a separator;
+//! - a newline that would open a blank line is dropped, so a run of blank
+//!   lines collapses to one newline. Every other newline survives, because in
+//!   Ruby a newline is a statement terminator.
+//!
+//! Nothing here joins two non-blank lines, and nothing here deletes the last
+//! newline before a protected span — the first newline of a run is always the
+//! one kept — so the constructs that must start a line (`=begin`, `__END__`,
+//! a heredoc terminator) keep the newline that puts them there.
+//!
+//! ## One gap at a time, no state between gaps
+//!
+//! A policy sees a gap, never the protected bytes around it, so it cannot
+//! know what the previous protected span ended with. [`minimize`] is
+//! therefore stateless between calls, and treats the start of a gap as
+//! **mid-line**: leading whitespace there collapses to one space instead of
+//! vanishing. That is the conservative direction. A line may start in one
+//! gap, run through a protected string and resume in the next — `x = "a" +\n
+//! "b"` — and the second gap's leading bytes are then not indentation at all.
+//! The cost is one surviving space at the start of the file and after each
+//! protected span that ends with a newline (a heredoc region, an embdoc);
+//! the benefit is that no gap can be misread as line-leading.
+//!
+//! ## `\r` and `\`
+//!
+//! A `\r\n` is treated as one line terminator and reproduced as `\r\n`, so a
+//! CRLF file stays a CRLF file; a `\r` that does not end a line is an
+//! ordinary byte and is copied. (A CRLF heredoc leaves exactly that: the
+//! marker line's `\r` sits in the gap, because the protected region starts at
+//! the `\n`.) Rewriting CRLF to LF would save a byte per line, but it edits
+//! the source slices that `crate::comparable` keeps for multi-line location
+//! fields, so it is left alone.
+//!
+//! A `\` and the byte after it are copied verbatim as one unit. In a gap a
+//! backslash can only be a line continuation, and `\` + `\n` has to stay
+//! adjacent: stripping "trailing whitespace" around it, or deleting the
+//! newline it holds, would join or split logical lines. The physical line
+//! after a continuation is a continuation of the same logical line, so it is
+//! mid-line and its leading run collapses to a space rather than vanishing.
+//!
+//! ## The one over-refusal this policy triggers
+//!
+//! Reformatting the inside of an index call — `a[1,\n  2]` — moves the source
+//! slice `crate::comparable` keeps for its `message_loc`, which spans the
+//! whole bracket pair. That is the known over-refusal class already pinned in
+//! `comparable.rs`, and the verifier's answer is to leave the file alone; it
+//! costs a saving, never correctness. Measured over the 1650 `.rb` files
+//! shipped with ruby 3.3.6 it is the *only* source of disagreement, and it
+//! hits 6 of them.
 
 use std::ops::Range;
 
@@ -130,6 +192,81 @@ pub fn identity(source: &[u8]) -> Result<Vec<u8>> {
     let parsed = parser::parse(source)?;
     let spans = protected_spans(&parsed);
     Ok(rewrite(source, &spans, keep))
+}
+
+/// The whitespace-minimizing gap policy: indentation and trailing whitespace
+/// go, blank-line runs collapse to one newline, every other
+/// horizontal-whitespace run collapses to one space.
+///
+/// See the module docs for the rules and for why the start of a gap counts as
+/// mid-line.
+pub fn minimize(gap: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(gap.len());
+    // Set only by a newline *this call* has emitted. A gap starts mid-line as
+    // far as the policy can tell, so it starts `false`.
+    let mut line_start = false;
+    let mut index = 0;
+
+    while index < gap.len() {
+        let rest = &gap[index..];
+        if rest[0] == b'\\' {
+            // A continuation: the backslash and whatever it holds move
+            // together, and the logical line carries on past them.
+            let unit = rest.len().min(2);
+            out.extend_from_slice(&rest[..unit]);
+            index += unit;
+            line_start = false;
+        } else if let Some(width) = newline_len(rest) {
+            // The first newline of a run terminates a statement; the ones
+            // after it only open blank lines.
+            if !line_start {
+                out.extend_from_slice(&rest[..width]);
+                line_start = true;
+            }
+            index += width;
+        } else if is_horizontal(rest[0]) {
+            index += rest.iter().take_while(|byte| is_horizontal(**byte)).count();
+            // Indentation and trailing whitespace vanish. Anything else is a
+            // separator, and a separator is one space.
+            if !line_start && newline_len(&gap[index..]).is_none() {
+                out.push(b' ');
+            }
+        } else {
+            out.push(rest[0]);
+            index += 1;
+            line_start = false;
+        }
+    }
+    out
+}
+
+/// Parses `source`, collects its protected spans and rewrites it with
+/// [`minimize`]: the whitespace-minimal emitter, comments kept.
+///
+/// Returns [`tokenpress_core::Error::Parse`] for a source prism reports
+/// errors for.
+pub fn minimize_source(source: &[u8]) -> Result<Vec<u8>> {
+    let parsed = parser::parse(source)?;
+    let spans = protected_spans(&parsed);
+    Ok(rewrite(source, &spans, minimize))
+}
+
+/// The whitespace a run is made of. Only spaces and tabs: every other byte
+/// Ruby happens to accept as whitespace is rare enough that leaving it alone
+/// costs nothing and guessing about it could cost correctness.
+fn is_horizontal(byte: u8) -> bool {
+    byte == b' ' || byte == b'\t'
+}
+
+/// Width of the line terminator starting `bytes`, or `None` when `bytes` does
+/// not start with one. A lone `\r` is not a terminator here — see the module
+/// docs.
+fn newline_len(bytes: &[u8]) -> Option<usize> {
+    match bytes {
+        [b'\n', ..] => Some(1),
+        [b'\r', b'\n', ..] => Some(2),
+        _ => None,
+    }
 }
 
 /// The `Visit` pass that records literal spans. It is generic over node kind
@@ -553,5 +690,143 @@ mod tests {
     fn identity_reports_a_parse_error() {
         let err = identity(b"def ; end").unwrap_err();
         assert!(matches!(err, Error::Parse(_)), "{err}");
+    }
+
+    #[test]
+    fn minimize_strips_line_indentation() {
+        assert_eq!(minimize(b"a\n    b\n\tc\n"), b"a\nb\nc\n");
+    }
+
+    #[test]
+    fn minimize_strips_trailing_whitespace() {
+        assert_eq!(minimize(b"a   \nb\t\n"), b"a\nb\n");
+    }
+
+    #[test]
+    fn minimize_strips_a_whitespace_run_that_ends_the_gap_after_a_newline() {
+        // Indentation with nothing after it is still indentation.
+        assert_eq!(minimize(b"a\n   "), b"a\n");
+    }
+
+    #[test]
+    fn minimize_collapses_blank_line_runs_to_one_newline() {
+        assert_eq!(minimize(b"a\n\n\n\nb\n"), b"a\nb\n");
+        // A line holding only whitespace is blank too.
+        assert_eq!(minimize(b"a\n  \n\t\nb\n"), b"a\nb\n");
+        // A gap that opens with blank lines keeps the first newline: the
+        // policy cannot see what came before it.
+        assert_eq!(minimize(b"\n\n\na\n"), b"\na\n");
+    }
+
+    #[test]
+    fn minimize_keeps_the_newline_that_ends_a_statement() {
+        // Newlines are statement terminators; only *blank* lines go.
+        assert_eq!(minimize(b"a = 1\nb = 2\n"), b"a = 1\nb = 2\n");
+    }
+
+    #[test]
+    fn minimize_collapses_intra_line_whitespace_to_one_space() {
+        assert_eq!(minimize(b"a   =\t\t1\n"), b"a = 1\n");
+    }
+
+    #[test]
+    fn minimize_never_collapses_a_space_run_to_nothing() {
+        // The load-bearing choice: one space, never zero. `a -b` is a call
+        // with a unary-minus argument, `a - b` a subtraction.
+        assert_eq!(minimize(b"a  -  b\n"), b"a - b\n");
+        assert_eq!(minimize(b"defined?  x\n"), b"defined? x\n");
+        assert_eq!(minimize(b"not  x\n"), b"not x\n");
+        // A run that ends the gap is mid-line as far as the policy knows, so
+        // it also keeps its space — the next bytes may be a protected span.
+        assert_eq!(minimize(b"p   "), b"p ");
+    }
+
+    #[test]
+    fn minimize_treats_the_start_of_a_gap_as_mid_line() {
+        // Stateless per gap: without a newline of its own to key on, leading
+        // whitespace is an intra-line run, not indentation.
+        assert_eq!(minimize(b"    a\n"), b" a\n");
+    }
+
+    #[test]
+    fn minimize_keeps_a_backslash_and_the_byte_after_it_verbatim() {
+        // `\` + `\n` is one indivisible line continuation, and the physical
+        // line after it is mid-logical-line, so its leading run collapses to
+        // a space rather than vanishing.
+        assert_eq!(minimize(b"a + \\\n  b\n"), b"a + \\\n b\n");
+        // A backslash that ends the gap has nothing to protect.
+        assert_eq!(minimize(b"a \\"), b"a \\");
+    }
+
+    #[test]
+    fn minimize_preserves_crlf_line_endings() {
+        assert_eq!(minimize(b"a = 1\r\nb = 2\r\n"), b"a = 1\r\nb = 2\r\n");
+        assert_eq!(minimize(b"a   \r\n   b\r\n"), b"a\r\nb\r\n");
+        assert_eq!(minimize(b"a\r\n\r\n\r\nb\r\n"), b"a\r\nb\r\n");
+    }
+
+    #[test]
+    fn minimize_copies_a_carriage_return_that_ends_no_line() {
+        // The byte a CRLF heredoc leaves in the gap before its body.
+        assert_eq!(minimize(b"x = <<~A\r"), b"x = <<~A\r");
+    }
+
+    #[test]
+    fn minimize_of_an_empty_gap_is_empty() {
+        assert_eq!(minimize(b""), b"");
+    }
+
+    #[test]
+    fn minimize_source_rewrites_only_the_gaps() {
+        assert_eq!(
+            minimize_source(b"def f(a,   b)\n    a  +  b\nend\n").unwrap(),
+            b"def f(a, b)\na + b\nend\n"
+        );
+    }
+
+    #[test]
+    fn minimize_source_keeps_word_list_separators_but_not_array_spacing() {
+        // The stage-1 seam, now under the real policy.
+        assert_eq!(
+            minimize_source(b"x = %w[a   b]\n").unwrap(),
+            b"x = %w[a   b]\n"
+        );
+        assert_eq!(minimize_source(b"x = [1,   2]\n").unwrap(), b"x = [1, 2]\n");
+    }
+
+    #[test]
+    fn minimize_source_leaves_a_heredoc_body_alone_while_minimizing_its_marker_line() {
+        assert_eq!(
+            minimize_source(b"x   =   <<~EOS.strip\n  body\nEOS\n").unwrap(),
+            b"x = <<~EOS.strip\n  body\nEOS\n"
+        );
+    }
+
+    #[test]
+    fn minimize_source_keeps_comments_and_the_newline_before_a_column_zero_construct() {
+        // `=begin` and `__END__` must stay at column 0, so the newline that
+        // puts them there is the one blank-run collapsing keeps. The blank
+        // run after the embdoc collapses to two newlines rather than one:
+        // the embdoc span ends *with* a newline, which the following gap
+        // cannot see, so its own first newline still counts as a terminator.
+        assert_eq!(
+            minimize_source(b"x = 1   # c\n\n\n=begin\nd\n=end\n\n\n__END__\ndata\n").unwrap(),
+            b"x = 1 # c\n=begin\nd\n=end\n\n__END__\ndata\n"
+        );
+    }
+
+    #[test]
+    fn minimize_source_reports_a_parse_error() {
+        let err = minimize_source(b"def ; end").unwrap_err();
+        assert!(matches!(err, Error::Parse(_)), "{err}");
+    }
+
+    #[test]
+    fn every_hazard_stays_equivalent_under_minimization() {
+        for (name, source) in HAZARDS {
+            let out = minimize_source(source).unwrap();
+            let equivalent = crate::comparable::equivalent(source, &out).unwrap();
+            assert!(equivalent, "{name}: {}", String::from_utf8_lossy(&out));
+        }
     }
 }
