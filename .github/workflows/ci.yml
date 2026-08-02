@@ -48,6 +48,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The action builds `tokenpress-cli`, which now pulls in
+      # `tokenpress-ruby` -> `ruby-prism-sys` (vendored C + bindgen), so the
+      # *consumer's* runner needs libclang and a C compiler. This step is what
+      # a real consumer would have to provide for itself: a composite action
+      # cannot install toolchain prerequisites into the job that uses it, so
+      # the repository's own action is used here to mirror that requirement
+      # honestly instead of hiding it.
+      - uses: ./.github/actions/libclang
       # No rust-cache here on purpose: the action brings its own actions/cache
       # step, and that step is part of what this job is testing.
       - name: Create fixtures
@@ -63,6 +71,15 @@ jobs:
           printf 'notes\n' > action-fixtures/pass/notes.md
           printf '{"a": 1}\n' > action-fixtures/pass/data.json
           printf 'def  f( a ,  b ):\n    return   a  +  b\n' > action-fixtures/fail/bad.py
+          # Ruby. Unlike the other backends, normalized Ruby *does* end in a
+          # newline -- newlines are statement terminators and are never
+          # removed -- and every comment survives at the default settings, so
+          # `# keep me` stays put. `Gemfile` is here because it is the one
+          # supported path with no extension: naming it explicitly below is
+          # what exercises the action's basename filter.
+          printf '# keep me\ndef f(a, b)\na + b\nend\n' > action-fixtures/pass/ok.rb
+          printf 'source "https://rubygems.org"\n' > action-fixtures/pass/Gemfile
+          printf 'def  f(a,  b)\n    a  +  b\nend\n' > action-fixtures/fail/bad.rb
 
       # Every step below that is expected to succeed asserts by failing the job.
       - name: Normalized tree passes
@@ -74,6 +91,20 @@ jobs:
         uses: ./
         with:
           paths: action-fixtures/pass/ok.py action-fixtures/pass/notes.md
+
+      # Named explicitly, not via the directory walk: this is the path the
+      # action's own filter has to let through by basename.
+      - name: Explicitly named Ruby files pass
+        uses: ./
+        with:
+          paths: action-fixtures/pass/ok.rb action-fixtures/pass/Gemfile
+
+      - name: Unformatted Ruby fails
+        id: ruby-fail
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: action-fixtures/fail/bad.rb
 
       - name: Unformatted tree fails
         id: check-fail
@@ -112,6 +143,10 @@ jobs:
             || fail 'check must fail on an unformatted tree'
           [ '${{ steps.check-fail.outputs.changed }}' = true ] \
             || fail 'check must report changed=true on an unformatted tree'
+          [ '${{ steps.ruby-fail.outcome }}' = failure ] \
+            || fail 'check must fail on an unformatted Ruby file'
+          [ '${{ steps.ruby-fail.outputs.changed }}' = true ] \
+            || fail 'check must report changed=true on an unformatted Ruby file'
           [ '${{ steps.extra-args.outcome }}' = failure ] \
             || fail 'extra-args did not reach the CLI'
           [ '${{ steps.format.outcome }}' = failure ] \

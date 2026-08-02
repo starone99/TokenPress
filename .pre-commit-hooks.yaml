@@ -14,25 +14,35 @@
 # script below builds the CLI from pre-commit's clone of this repository
 # instead, so a working `cargo` is the only prerequisite.
 #
-# Only the extensions the CLI accepts are matched: any other path makes the
-# CLI exit 2 with "unsupported language for path".
+# Only the paths the CLI accepts are matched: any other path makes the CLI
+# exit 2 with "unsupported language for path". Ruby is the one backend that
+# also claims extensionless names, so the regex is an alternation of an
+# extension branch and an exact-basename branch for `Gemfile`/`Rakefile`
+# (`(^|/)` because pre-commit matches the repository-relative path, not the
+# file name).
 #
-# The `files` regex is the authority; `types_or` is only a coarse pre-filter
-# (an identify release that does not yet tag `.mts`/`.cts` as `ts` skips those
-# files, which is a conservative miss, never a wrong rewrite). `jsx` is listed
-# because identify tags `.jsx` as `jsx` and not as `javascript`; `.tsx` is
-# tagged `ts` + `tsx`, so it is already covered by `ts`, and `tsx` is listed
-# alongside it for the same conservative-miss reason.
+# `files` and `types_or` are ANDed by pre-commit: a path has to match the
+# regex *and* carry one of the tags. The `files` regex is the authority;
+# `types_or` is only a coarse pre-filter, so a tag an older identify release
+# does not emit means a skipped file -- a conservative miss, never a wrong
+# rewrite. Known cases:
+#   * `.mts`/`.cts` are not tagged `ts` by every identify release.
+#   * `jsx` is listed because identify tags `.jsx` as `jsx`, not `javascript`;
+#     `.tsx` is tagged `ts` + `tsx`, so `ts` already covers it and `tsx` is
+#     listed alongside for the same reason.
+#   * `ruby` covers every Ruby path this hook matches: identify 2.6.19 tags
+#     `.rb`, `.rake`, `.gemspec`, `.ru`, `Gemfile` and `Rakefile` all as
+#     `ruby` (verified against that release), so no second tag is needed.
 
 - id: tokenpress-check
   name: tokenpress check
   description: >-
-    Fail if any Python, Rust or JavaScript/TypeScript file is not in
+    Fail if any Python, Rust, JavaScript/TypeScript or Ruby file is not in
     TokenPress-normalized form. Writes nothing.
   entry: scripts/pre-commit-hook.sh check
   language: script
-  files: \.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx)$
-  types_or: [python, rust, javascript, jsx, ts, tsx]
+  files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru)$|(^|/)(Gemfile|Rakefile)$)
+  types_or: [python, rust, javascript, jsx, ts, tsx, ruby]
   # One process at a time: every invocation runs `cargo build` first, and
   # parallel builds would only contend for the same cargo lock.
   require_serial: true
@@ -41,12 +51,12 @@
 - id: tokenpress-format
   name: tokenpress format
   description: >-
-    Rewrite Python, Rust and JavaScript/TypeScript files in place with
+    Rewrite Python, Rust, JavaScript/TypeScript and Ruby files in place with
     token-minimized formatting. Modifies files, so pre-commit reports the run
     as failed whenever it had something to rewrite.
   entry: scripts/pre-commit-hook.sh format
   language: script
-  files: \.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx)$
-  types_or: [python, rust, javascript, jsx, ts, tsx]
+  files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru)$|(^|/)(Gemfile|Rakefile)$)
+  types_or: [python, rust, javascript, jsx, ts, tsx, ruby]
   require_serial: true
   minimum_pre_commit_version: '2.9.0'

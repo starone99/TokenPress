@@ -20,6 +20,7 @@ pub struct FileConfig {
     pub python: Option<PythonConfig>,
     pub rust: Option<RustConfig>,
     pub javascript: Option<JavaScriptConfig>,
+    pub ruby: Option<RubyConfig>,
 }
 
 /// `[python]` table.
@@ -47,6 +48,15 @@ pub struct RustConfig {
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct JavaScriptConfig {
+    pub strip_comments: Option<bool>,
+}
+
+/// `[ruby]` table. Named after `RubyFormatter::language()`, and it covers every
+/// path that backend claims — the `.rb`/`.rake`/`.gemspec`/`.ru` extensions as
+/// well as the extensionless `Gemfile` and `Rakefile`.
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RubyConfig {
     pub strip_comments: Option<bool>,
 }
 
@@ -141,6 +151,7 @@ mod tests {
         assert_eq!(cfg.python, None);
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.javascript, None);
+        assert_eq!(cfg.ruby, None);
     }
 
     #[test]
@@ -156,6 +167,8 @@ mod tests {
              [rust]\n\
              strip_doc_comments = true\n\
              [javascript]\n\
+             strip_comments = true\n\
+             [ruby]\n\
              strip_comments = true\n",
         );
         assert_eq!(cfg.tokenizer.as_deref(), Some("cl100k_base"));
@@ -181,6 +194,12 @@ mod tests {
                 strip_comments: Some(true)
             })
         );
+        assert_eq!(
+            cfg.ruby,
+            Some(RubyConfig {
+                strip_comments: Some(true)
+            })
+        );
     }
 
     #[test]
@@ -190,6 +209,7 @@ mod tests {
         assert_eq!(cfg.verify, None);
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.javascript, None);
+        assert_eq!(cfg.ruby, None);
         let python = cfg.python.unwrap();
         assert_eq!(python.strip_comments, Some(true));
         assert_eq!(python.strip_docstrings, None);
@@ -202,6 +222,7 @@ mod tests {
         let cfg = parse("[python]\nstrip_annotations = true\nmerge_imports = true\n");
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.javascript, None);
+        assert_eq!(cfg.ruby, None);
         let python = cfg.python.unwrap();
         assert_eq!(python.strip_annotations, Some(true));
         assert_eq!(python.merge_imports, Some(true));
@@ -212,6 +233,7 @@ mod tests {
         let cfg = parse("[rust]\nstrip_doc_comments = false\n");
         assert_eq!(cfg.python, None);
         assert_eq!(cfg.javascript, None);
+        assert_eq!(cfg.ruby, None);
         assert_eq!(
             cfg.rust,
             Some(RustConfig {
@@ -225,6 +247,7 @@ mod tests {
         let cfg = parse("[javascript]\nstrip_comments = true\n");
         assert_eq!(cfg.python, None);
         assert_eq!(cfg.rust, None);
+        assert_eq!(cfg.ruby, None);
         assert_eq!(
             cfg.javascript,
             Some(JavaScriptConfig {
@@ -234,8 +257,22 @@ mod tests {
     }
 
     #[test]
+    fn ruby_table_alone_parses() {
+        let cfg = parse("[ruby]\nstrip_comments = true\n");
+        assert_eq!(cfg.python, None);
+        assert_eq!(cfg.rust, None);
+        assert_eq!(cfg.javascript, None);
+        assert_eq!(
+            cfg.ruby,
+            Some(RubyConfig {
+                strip_comments: Some(true)
+            })
+        );
+    }
+
+    #[test]
     fn empty_tables_are_valid_and_leave_their_keys_unset() {
-        let cfg = parse("[python]\n[rust]\n[javascript]\n");
+        let cfg = parse("[python]\n[rust]\n[javascript]\n[ruby]\n");
         assert_eq!(
             cfg.python,
             Some(PythonConfig {
@@ -254,6 +291,12 @@ mod tests {
         assert_eq!(
             cfg.javascript,
             Some(JavaScriptConfig {
+                strip_comments: None
+            })
+        );
+        assert_eq!(
+            cfg.ruby,
+            Some(RubyConfig {
                 strip_comments: None
             })
         );
@@ -302,6 +345,12 @@ mod tests {
     fn unknown_javascript_key_is_an_error() {
         let msg = parse_err("[javascript]\nstrip_jsdoc = true\n");
         assert!(msg.contains("strip_jsdoc"), "{msg}");
+    }
+
+    #[test]
+    fn unknown_ruby_key_is_an_error() {
+        let msg = parse_err("[ruby]\nstrip_embdocs = true\n");
+        assert!(msg.contains("strip_embdocs"), "{msg}");
     }
 
     #[test]

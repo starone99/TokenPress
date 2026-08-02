@@ -1,7 +1,7 @@
 # TokenPress
 
-> A token-aware formatter for Python, Rust and JavaScript/TypeScript that
-> minimizes LLM token usage while preserving behavior.
+> A token-aware formatter for Python, Rust, JavaScript/TypeScript and Ruby
+> (experimental) that minimizes LLM token usage while preserving behavior.
 
 TokenPress is a token-aware source code formatter for LLMs. Unlike a minifier that
 shrinks characters, TokenPress optimizes against an actual LLM tokenizer —
@@ -78,6 +78,7 @@ not a character minifier.
 | Python | `.py` | Supported |
 | Rust | `.rs` | Supported (with the comment/macro caveats below) |
 | JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts` `.cts` `.tsx` | Supported (with the comment/JSX caveats below) |
+| Ruby | `.rb` `.rake` `.gemspec` `.ru`, plus the exact file names `Gemfile` and `Rakefile` | **Experimental** (see below) |
 
 **`--verify external` is real for JavaScript/TypeScript**, which is what
 "Supported" is gated on here: the output is handed to the language's own
@@ -90,9 +91,9 @@ back to `node --check` when no `tsc` is on PATH. The fallback reads only
 checking less than you asked for, so `--verify external` requires `tsc` (or,
 for plain JavaScript, `node`) on PATH. The candidate is checked in a private
 temp file that carries the target's extension; nothing is written to your file
-until every check has passed. Python and Rust do not implement the level yet
-and still treat it as `--verify ast`; the CLI says so on stderr when a `.py` or
-`.rs` file is in the run.
+until every check has passed. Python, Rust and Ruby do not implement the level
+yet and still treat it as `--verify ast`; the CLI says so on stderr when a
+`.py`, `.rs` or Ruby path is in the run.
 
 If your *input* does not pass the external checker (a file the toolchain
 already rejects — ESM syntax in a `.cjs`, a syntax newer than your `tsc`), the
@@ -121,6 +122,31 @@ construct the strip flag reaches is a comment-only expression container:
 renders identically. The CLI prints these caveats on stderr once per run that
 touches a JS/TS file.
 
+**Ruby is experimental, not "supported".** The label is gated on the
+external-verification paragraph above: `--verify external` has no Ruby
+implementation yet — `ruby -c` is planned — so for a Ruby path the level falls
+back to the built-in AST-equivalence check, and the CLI says so on stderr.
+Everything else is in place: the backend parses with prism, re-emits, verifies,
+and refuses to write anything that fails. Ruby is the one backend that also
+claims file names without an extension: `Gemfile` and `Rakefile` are matched
+exactly and **case-sensitively** (`gemfile` is not Ruby, and `Gemfile.lock` is
+not Ruby at all). No measured-savings numbers are published for Ruby yet —
+benchmarking it is a separate step, and no figure is quoted until it has been
+run.
+
+**Ruby, unlike Rust and JS/TS, is context-lossless at default settings.** The
+Ruby emitter rewrites the whitespace *between* protected source spans and
+copies everything else verbatim, so **every comment survives byte for byte** —
+leading, trailing, inline and `=begin`/`=end` embdocs alike.
+`--ruby-strip-comments` is the opt-in that removes them, and even then the
+shebang and the leading magic-comment window (everything before the first code
+token, e.g. `# frozen_string_literal: true`) are kept. Whitespace minimization
+removes indentation, trailing whitespace and blank lines and collapses other
+runs of spaces and tabs to exactly one space — never to zero, because `a - b`
+is a subtraction while `a -b` is a call with a unary-minus argument — and
+newlines are statement terminators in Ruby, so they stay. There is therefore no
+Ruby caveat warning on stderr: there is nothing to warn about.
+
 ## Usage
 
 ```bash
@@ -143,6 +169,7 @@ tokenpress format . --py-strip-annotations   # drop type hints (breaks dataclass
 tokenpress format . --py-no-merge-imports    # keep adjacent imports separate
 tokenpress format . --rs-strip-doc-comments  # drop ///+//! doc comments (and doctests)
 tokenpress format . --js-strip-comments      # drop the JS/TS comments that survive at all
+tokenpress format . --ruby-strip-comments    # drop Ruby comments/embdocs (shebang + magic comments kept)
 ```
 
 Exit codes: `0` ok · `1` check found changes · `2` error (parse/verification
@@ -195,10 +222,14 @@ on rewritten files" rule as the Action's `mode: format`. Exit 2 (a parse or
 verification failure, or an unsupported path) fails the hook too, and nothing
 that fails verification is ever written.
 
-Both hooks declare `files: \.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx)$` alongside
-`types_or: [python, rust, javascript, jsx, ts, tsx]`, so only files the CLI
-accepts ever reach it. The regex is the authority; `types_or` is a coarse
-pre-filter.
+Both hooks declare
+`files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru)$|(^|/)(Gemfile|Rakefile)$)`
+alongside `types_or: [python, rust, javascript, jsx, ts, tsx, ruby]`, so only
+files the CLI accepts ever reach it. pre-commit ANDs the two: a path has to
+match the regex *and* carry one of the tags. The regex is the authority;
+`types_or` is a coarse pre-filter, so a tag an older `identify` release does not
+emit only means a skipped file, never a wrong rewrite. The second regex branch
+is what picks up Ruby's extensionless `Gemfile`/`Rakefile`.
 Extension-less scripts with a Python shebang are excluded on purpose: an
 explicitly named unsupported path makes the CLI exit 2. Both are
 `require_serial: true` — every invocation runs a `cargo build` first, and
@@ -213,6 +244,13 @@ Prerequisites for the consumer:
   so `rust-toolchain.toml` pins the compiler (rustup then installs it on first
   use). The first hook run therefore pays one release build; later runs reuse
   that clone's `target/`.
+- **libclang and a C compiler** — the CLI now builds the Ruby backend, whose
+  `ruby-prism-sys` dependency compiles vendored prism C sources and generates
+  its bindings with bindgen. Without libclang the build fails with
+  `Unable to find libclang`. On Linux `apt install libclang-dev` (plus `gcc` or
+  `clang`); on macOS `xcode-select --install`; on Windows install LLVM
+  (`choco install llvm`) and set `LIBCLANG_PATH=C:\Program Files\LLVM\bin`.
+  **Ruby itself is not needed** — nothing shells out to `ruby`.
 - **On Windows, `sh` on `PATH`** — the entry point is a `#!/usr/bin/env sh`
   script. Git for Windows provides one.
 
@@ -237,6 +275,19 @@ installed first:
     mode: check               # default; `format` rewrites in place
     extra-args: --rs-strip-doc-comments   # optional, passed through verbatim
 ```
+
+**The runner needs libclang and a C compiler.** The action builds the CLI from
+its own checkout, and that build now includes the Ruby backend
+(`ruby-prism-sys`: vendored C + bindgen). GitHub-hosted Ubuntu runners
+generally ship both; Windows runners may need LLVM installed
+(`choco install llvm`, with `LIBCLANG_PATH` pointing at it). A composite action
+cannot install toolchain prerequisites into the job that uses it, so this
+action does not try to — provide your own step if your runner lacks them (this
+repository's own CI uses a local `.github/actions/libclang` composite action for
+exactly that, and consumers need their own equivalent). Ruby itself is never
+needed. Shipping Ruby always-on in the default build is a deliberate decision
+for now; a default-on cargo feature to opt out of the backend (and with it the
+libclang requirement) is tracked as follow-up work.
 
 As a standalone gate workflow:
 
@@ -291,7 +342,7 @@ Inputs:
 |---|---|---|
 | `mode` | `check` | `check` reports and fails, writing nothing. `format` rewrites in place and then fails if it had something to rewrite. Any other value fails the step with exit 2. |
 | `paths` | `.` | Whitespace-separated files and/or directories, relative to the workspace. Subject to the shell's word splitting and globbing, so `src/*.py` works. |
-| `extra-args` | *(empty)* | Extra `tokenpress` flags, passed through verbatim (whitespace-separated), e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments`. |
+| `extra-args` | *(empty)* | Extra `tokenpress` flags, passed through verbatim (whitespace-separated), e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments --ruby-strip-comments`. |
 
 Output:
 
@@ -301,12 +352,15 @@ Output:
 
 **Directories and explicitly named files are treated differently.** A directory
 is handed to the CLI as-is: its walk is `.gitignore`-aware and picks up only
-the supported extensions (`.py`, `.rs`, `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
-`.mts`, `.cts`, `.tsx`), so pointing `paths` at a mixed tree is safe. An
+the supported paths (`.py`, `.rs`, `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
+`.mts`, `.cts`, `.tsx`, `.rb`, `.rake`, `.gemspec`, `.ru`, and files named
+`Gemfile` or `Rakefile`), so pointing `paths` at a mixed tree is safe. An
 explicitly named file
 is *not* filtered by the CLI — an unsupported one is an error (exit 2) — so the
-action drops files with any other extension from the argument list itself and
-logs which ones it skipped. A glob over a mixed tree therefore does not abort
+action drops every other path from the argument list itself and logs which ones
+it skipped. Extensions are matched with globs; the two extensionless Ruby names
+are matched on the basename exactly, so `myGemfile` is skipped while
+`lib/Gemfile` is not. A glob over a mixed tree therefore does not abort
 the run, and if nothing supported is left the step succeeds with
 `changed=false`. A path that is neither a file nor a directory is passed
 through, so a typo is reported rather than silently swallowed.
@@ -338,12 +392,16 @@ strip_doc_comments = false    # --rs-strip-doc-comments
 # Covers TypeScript too — one backend, one option set.
 [javascript]
 strip_comments = false        # --js-strip-comments
+
+# Covers every Ruby path: .rb/.rake/.gemspec/.ru plus Gemfile and Rakefile.
+[ruby]
+strip_comments = false        # --ruby-strip-comments
 ```
 
 That is the complete schema — there are no other keys. `verify = "external"`
 runs the JavaScript/TypeScript toolchain over JS/TS output (see **Language
-support**); for `.py` and `.rs` files it still behaves exactly like `"ast"` and
-says so on stderr.
+support**); for `.py`, `.rs` and the Ruby paths it still behaves exactly like
+`"ast"` and says so on stderr.
 
 **Discovery.** Without `--config`, the nearest `tokenpress.toml` found walking
 up from the current directory is used; the first one found wins, and having
@@ -358,7 +416,8 @@ flags are presence-only booleans, so the command line can only turn them *on*:
 the config file is the project baseline, and `strip_comments = false` there
 cannot cancel a `--py-strip-comments` passed on the command line (nor can the
 command line re-enable import merging that `merge_imports = false` turned off).
-The same holds for `[javascript] strip_comments` and `--js-strip-comments`.
+The same holds for `[javascript] strip_comments`/`--js-strip-comments` and
+`[ruby] strip_comments`/`--ruby-strip-comments`.
 
 **Config problems fail loudly**, like every other linter-style tool: an unknown
 key, a wrong value type, malformed TOML, or an unknown `tokenizer`/`verify`
@@ -413,6 +472,7 @@ Cargo workspace with a single distributed binary:
 | `tokenpress-python` | Python: token-stream re-render + transform passes + verification |
 | `tokenpress-rust` | Rust: syn token-stream re-render + verification |
 | `tokenpress-js` | JavaScript/TypeScript: oxc parse + whitespace-minimal re-emit + verification (built-in and `tsc`/`node`) |
+| `tokenpress-ruby` | Ruby: prism parse + whitespace-minimal re-emit over the source bytes + verification |
 | `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
 | `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python + Rust, per-tokenizer token stats) |
 

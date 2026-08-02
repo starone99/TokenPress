@@ -86,6 +86,17 @@ If bindgen cannot find the library, the build fails with
 workflows do not rely on that silently: every job that builds the workspace
 runs `.github/actions/libclang`, which checks and installs only if missing.
 
+This is **not** confined to the Ruby crate: `tokenpress-cli` depends on
+`tokenpress-ruby` unconditionally, so even a narrow `cargo build -p
+tokenpress-cli` — which is exactly what the pre-commit hook
+(`scripts/pre-commit-hook.sh`) and the GitHub Action (`action.yml`) run on a
+*consumer's* machine — needs both. Shipping Ruby always-on in the default build
+is a deliberate decision for now; a default-on cargo feature to opt out of the
+backend is tracked as follow-up work. The consumer-facing prerequisites are
+stated in the README's **Integrations** section, and neither integration can
+install them for the consumer: a composite action cannot add a toolchain to the
+job that uses it.
+
 **`node` must be on PATH to run the suite.** `tokenpress-js` implements
 `--verify external` by running the real toolchain (`tsc --noEmit`, falling back
 to `node --check`), and its tests exercise that against real processes. Only

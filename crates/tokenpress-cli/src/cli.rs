@@ -15,13 +15,14 @@ use tokenpress_core::{
 };
 use tokenpress_js::{JsFormatter, JsOptions};
 use tokenpress_python::{PythonFormatter, PythonOptions};
+use tokenpress_ruby::{RubyFormatter, RubyOptions};
 use tokenpress_rust::{RustFormatter, RustOptions};
 
 #[derive(Parser)]
 #[command(
     name = "tokenpress",
     version,
-    about = "Token-aware formatter for Python, Rust and JavaScript/TypeScript"
+    about = "Token-aware formatter for Python, Rust, JavaScript/TypeScript and Ruby"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -37,9 +38,10 @@ enum VerifyArg {
 
 #[derive(Args)]
 struct CommonOpts {
-    /// Files or directories to process: `.py`, `.rs`, and the
+    /// Files or directories to process: `.py`, `.rs`, the
     /// JavaScript/TypeScript set `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts`
-    /// `.cts` `.tsx`.
+    /// `.cts` `.tsx`, and the Ruby set `.rb` `.rake` `.gemspec` `.ru` plus the
+    /// files named `Gemfile` and `Rakefile` (exact, case-sensitive names).
     #[arg(required = true)]
     paths: Vec<PathBuf>,
     /// Config file to read. Without it the nearest `tokenpress.toml` found
@@ -77,6 +79,11 @@ struct CommonOpts {
     /// way).
     #[arg(long)]
     js_strip_comments: bool,
+    /// RBO1: strip Ruby comments and embdocs (kept by default — and, unlike
+    /// Rust and JS/TS, nothing is dropped without this flag). The shebang and
+    /// the leading magic-comment window survive either way.
+    #[arg(long)]
+    ruby_strip_comments: bool,
 }
 
 #[derive(Subcommand)]
@@ -170,6 +177,9 @@ fn apply_config(common: &mut CommonOpts, cfg: FileConfig) {
     if let Some(javascript) = cfg.javascript {
         common.js_strip_comments |= javascript.strip_comments.unwrap_or(false);
     }
+    if let Some(ruby) = cfg.ruby {
+        common.ruby_strip_comments |= ruby.strip_comments.unwrap_or(false);
+    }
 }
 
 /// Runs the CLI and returns the process exit code.
@@ -244,6 +254,9 @@ fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
         })),
         Box::new(JsFormatter::new(JsOptions {
             strip_comments: common.js_strip_comments,
+        })),
+        Box::new(RubyFormatter::new(RubyOptions {
+            strip_comments: common.ruby_strip_comments,
         })),
     ]
 }
@@ -343,33 +356,40 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
 }
 
 /// `--verify external` is real for JavaScript/TypeScript but still equals
-/// `--verify ast` for Python and Rust, so a run containing files of those two
-/// languages must not read the level as a stronger guarantee than it is.
+/// `--verify ast` for Python, Rust and Ruby, so a run containing files of
+/// those three languages must not read the level as a stronger guarantee than
+/// it is.
 const EXTERNAL_VERIFY_WARNING: &str = "\
 warning: external-tooling verification is implemented for JavaScript/TypeScript
   only, where `--verify external` runs `tsc --noEmit` (falling back to
   `node --check`) over the output and fails if neither tool is on PATH. It is
-  not implemented for Python and Rust: neither `py_compile` nor
-  `rustc --emit=metadata` is invoked, so for `.py` and `.rs` files this level
-  behaves exactly like `--verify ast`, i.e. the output is re-parsed and
-  compared for AST / token-stream equivalence.";
+  not implemented for Python, Rust and Ruby: none of `py_compile`,
+  `rustc --emit=metadata` or `ruby -c` is invoked -- `ruby -c` is planned but
+  not wired up yet -- so for `.py`, `.rs` and the Ruby paths this level behaves
+  exactly like `--verify ast`, i.e. the output is re-parsed and compared for
+  AST / token-stream equivalence.";
 
 /// Extensions the warning above is about: the backends the external level does
-/// not reach yet.
+/// not reach yet. Ruby is affected too but cannot be listed here, because its
+/// paths include the extensionless `Gemfile` and `Rakefile`; that backend's own
+/// path predicate is asked instead.
 const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 2] = ["py", "rs"];
+
+/// True when `path` belongs to a backend the external level does not reach.
+fn lacks_external_verify(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| {
+        NO_EXTERNAL_VERIFY_EXTENSIONS
+            .iter()
+            .any(|affected| ext == *affected)
+    }) || tokenpress_ruby::paths::supports_path(path)
+}
 
 /// Writes the external-verification warning to `err` at most once per run:
 /// only at `--verify external`, and only when the run contains a file of a
 /// language the level does not reach. Verification runs for every subcommand,
 /// so the warning is not restricted to the rewriting ones.
 fn warn_external_verify(common: &CommonOpts, files: &[PathBuf], err: &mut dyn Write) {
-    let any_affected = files.iter().any(|p| {
-        p.extension().is_some_and(|ext| {
-            NO_EXTERNAL_VERIFY_EXTENSIONS
-                .iter()
-                .any(|affected| ext == *affected)
-        })
-    });
+    let any_affected = files.iter().any(|p| lacks_external_verify(p));
     if matches!(common.verify, Some(VerifyArg::External)) && any_affected {
         let _ = writeln!(err, "{EXTERNAL_VERIFY_WARNING}");
     }
@@ -610,11 +630,18 @@ mod tests {
         let (code, text) = run_cli(&["format", "--help"]);
         assert_eq!(code, 0);
         for ext in [
-            ".py", ".rs", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx",
+            ".py", ".rs", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".rb",
+            ".rake", ".gemspec", ".ru",
         ] {
             assert!(text.contains(ext), "{ext} missing from help:\n{text}");
         }
+        // Ruby is the only backend that also claims extensionless names, so
+        // the blurb has to spell them out.
+        for name in ["Gemfile", "Rakefile"] {
+            assert!(text.contains(name), "{name} missing from help:\n{text}");
+        }
         assert!(text.contains("--js-strip-comments"), "{text}");
+        assert!(text.contains("--ruby-strip-comments"), "{text}");
     }
 
     #[test]
@@ -1053,6 +1080,112 @@ mod tests {
     }
 
     #[test]
+    fn format_rewrites_ruby_files() {
+        let dir = Scratch::new();
+        let rb = dir.file(
+            "a.rb",
+            "def add(a, b)\n    sum  =  a + b\n\n\n    sum\nend\n",
+        );
+        let gemfile = dir.file(
+            "Gemfile",
+            "source  \"https://rubygems.org\"\n\ngem  \"rake\"\n",
+        );
+        let (code, text) = run_cli(&["format", rb.to_str().unwrap(), gemfile.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&rb).unwrap(),
+            "def add(a, b)\nsum = a + b\nsum\nend\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&gemfile).unwrap(),
+            "source \"https://rubygems.org\"\ngem \"rake\"\n"
+        );
+        assert!(text.contains("tokens"));
+        assert!(text.contains("2 files"));
+    }
+
+    #[test]
+    fn every_ruby_path_including_the_extensionless_build_files_is_discovered() {
+        let dir = Scratch::new();
+        for name in [
+            "a.rb",
+            "tasks.rake",
+            "pkg.gemspec",
+            "config.ru",
+            "Gemfile",
+            "Rakefile",
+        ] {
+            dir.file(name, "x  =  1\n");
+        }
+        // A lockfile sits next to them and must not be picked up.
+        dir.file("Gemfile.lock", "GEM\n");
+        let (code, text) = run_cli(&["stats", dir.0.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(text.contains("6 files"), "{text}");
+        assert!(text.contains("config.ru"), "{text}");
+        assert!(text.contains("Rakefile"), "{text}");
+        assert!(!text.contains("Gemfile.lock"), "{text}");
+    }
+
+    #[test]
+    fn ruby_strip_comments_flag_is_forwarded() {
+        let dir = Scratch::new();
+        let rb = dir.file("a.rb", "x  =  1  # trailing\n");
+        let (code, _) = run_cli(&["format", "--ruby-strip-comments", rb.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x = 1\n");
+        // Without the flag every comment survives, byte for byte.
+        let kept = dir.file("b.rb", "x  =  1  # trailing\n");
+        let (code, _) = run_cli(&["format", kept.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&kept).unwrap(),
+            "x = 1 # trailing\n"
+        );
+    }
+
+    #[test]
+    fn ruby_runs_emit_no_caveat_warning() {
+        // There is deliberately no Ruby analogue of the Rust and JS/TS caveat
+        // warnings: the Ruby emitter rewrites whitespace only and drops
+        // nothing at the default settings, so there is nothing to warn about.
+        let dir = Scratch::new();
+        let rb = dir.file("a.rb", "x  =  1  # trailing\n");
+        let path = rb.to_str().unwrap();
+        for args in [
+            vec!["format", path],
+            vec!["check", path],
+            vec!["diff", path],
+            vec!["stats", path],
+        ] {
+            let (_, _, err) = run_cli_err(&args);
+            assert_eq!(err, "", "{args:?}");
+        }
+    }
+
+    #[test]
+    fn external_verify_warning_covers_ruby_paths() {
+        // Ruby's `External` level falls back to the AST-equivalence check, so
+        // a Ruby run must be told the same thing a Python or Rust run is —
+        // including for the extensionless build files.
+        let dir = Scratch::new();
+        let rb = dir.file("a.rb", "x  =  1\n");
+        let gemfile = dir.file("Gemfile", "gem  \"rake\"\n");
+        let (code, out, err) = run_cli_err(&[
+            "format",
+            "--verify",
+            "external",
+            rb.to_str().unwrap(),
+            gemfile.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("ruby -c"), "{err}");
+        assert!(err.contains("--verify ast"), "{err}");
+        assert!(!out.contains("warning:"));
+    }
+
+    #[test]
     fn external_verify_warning_is_emitted_once_per_run() {
         let dir = Scratch::new();
         let a = dir.file("a.py", "x = 1\n");
@@ -1379,6 +1512,83 @@ mod tests {
         assert!(err.contains("invalid config file"), "{err}");
         assert!(err.contains("strip_comment"), "{err}");
         assert_eq!(std::fs::read_to_string(&js).unwrap(), "const a = 1;\n");
+    }
+
+    #[test]
+    fn config_file_supplies_ruby_settings() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[ruby]\nstrip_comments = true\n");
+        let rb = dir.file("a.rb", "x  =  1  # trailing\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            rb.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x = 1\n");
+    }
+
+    #[test]
+    fn the_ruby_strip_flag_ors_with_the_config_file() {
+        let dir = Scratch::new();
+        // Presence-only flags: `false` in the config cannot cancel the flag,
+        // and the flag cannot cancel a `true` in the config.
+        let off = dir.file("off.toml", "[ruby]\nstrip_comments = false\n");
+        let a = dir.file("a.rb", "x  =  1  # trailing\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            off.to_str().unwrap(),
+            "--ruby-strip-comments",
+            a.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "x = 1\n");
+
+        let on = dir.file("on.toml", "[ruby]\nstrip_comments = true\n");
+        let b = dir.file("b.rb", "x  =  1  # trailing\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            on.to_str().unwrap(),
+            "--ruby-strip-comments",
+            b.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "x = 1\n");
+    }
+
+    #[test]
+    fn a_ruby_config_table_without_keys_keeps_the_built_in_defaults() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[ruby]\n");
+        let rb = dir.file("a.rb", "x  =  1  # trailing\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            rb.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x = 1 # trailing\n");
+    }
+
+    #[test]
+    fn unknown_ruby_config_key_is_an_error() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[ruby]\nstrip_embdocs = true\n");
+        let rb = dir.file("a.rb", "x = 1\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            rb.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("invalid config file"), "{err}");
+        assert!(err.contains("strip_embdocs"), "{err}");
+        assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x = 1\n");
     }
 
     #[test]

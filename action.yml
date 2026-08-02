@@ -15,7 +15,7 @@
 # *there* and not in the consumer's workspace.
 name: TokenPress
 description: >-
-  Fail CI when Python, Rust or JavaScript/TypeScript sources are not in
+  Fail CI when Python, Rust, JavaScript/TypeScript or Ruby sources are not in
   TokenPress-normalized, token-minimized form (or rewrite them in place).
 author: TokenPress contributors
 
@@ -38,17 +38,19 @@ inputs:
     description: >-
       Whitespace-separated files and/or directories to process, relative to the
       consumer's workspace. Directories are walked recursively by the CLI
-      itself: the walk is `.gitignore`-aware and only picks up `.py`, `.rs` and
+      itself: the walk is `.gitignore`-aware and only picks up `.py`, `.rs`,
       the JavaScript/TypeScript set (`.js`, `.mjs`, `.cjs`,
-      `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`), so pointing this at a mixed tree
-      is safe. Subject to the shell's word splitting and globbing, so `src/*.py`
-      works.
+      `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`) and the Ruby set (`.rb`, `.rake`,
+      `.gemspec`, `.ru`, plus files named `Gemfile` or `Rakefile`), so pointing
+      this at a mixed tree is safe. Subject to the shell's word splitting and
+      globbing, so `src/*.py` works.
     required: false
     default: .
   extra-args:
     description: >-
       Extra `tokenpress` flags, passed through verbatim (whitespace-separated),
-      e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments`.
+      e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments
+      --ruby-strip-comments`.
     required: false
     default: ''
 
@@ -164,13 +166,22 @@ runs:
             # An explicitly named file is *not* filtered by the CLI -- an
             # unsupported one is an error (exit 2). Drop those here so that a
             # glob over a mixed tree does not abort the run.
-            # Mirrors the CLI's supported extensions exactly. `.jsx` and
-            # `.tsx` need their own patterns: `*.ts` does not match `.tsx`.
+            # Mirrors the CLI's supported paths exactly. `.jsx` and `.tsx`
+            # need their own patterns: `*.ts` does not match `.tsx`. Ruby also
+            # claims two extensionless names, and a glob cannot express "this
+            # basename": `*Gemfile` would match `myGemfile` too, so the file
+            # name is taken off the path first and compared exactly (the CLI
+            # matches `Gemfile`/`Rakefile` case-sensitively).
             case "$path" in
-              *.py | *.rs | *.js | *.mjs | *.cjs | *.jsx | *.ts | *.mts | *.cts | *.tsx)
+              *.py | *.rs | *.js | *.mjs | *.cjs | *.jsx | *.ts | *.mts | *.cts | *.tsx | *.rb | *.rake | *.gemspec | *.ru)
                 set -- "$@" "$path"
                 ;;
-              *) skipped="$skipped $path" ;;
+              *)
+                case "${path##*/}" in
+                  Gemfile | Rakefile) set -- "$@" "$path" ;;
+                  *) skipped="$skipped $path" ;;
+                esac
+                ;;
             esac
           else
             # Neither a file nor a directory: pass it on and let the CLI report

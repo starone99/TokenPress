@@ -1814,6 +1814,7 @@ dependencies = [
  "tokenpress-core",
  "tokenpress-js",
  "tokenpress-python",
+ "tokenpress-ruby",
  "tokenpress-rust",
  "toml",
 ]

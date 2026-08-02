@@ -1,6 +1,6 @@
 [package]
 name = "tokenpress-cli"
-description = "The tokenpress binary: token-aware formatting for Python, Rust and JavaScript/TypeScript"
+description = "The tokenpress binary: token-aware formatting for Python, Rust, JavaScript/TypeScript and Ruby"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -19,6 +19,11 @@ tokenpress-core.workspace = true
 tokenpress-python.workspace = true
 tokenpress-rust.workspace = true
 tokenpress-js.workspace = true
+# Always on in the default build: there is no cargo feature to opt out of the
+# Ruby backend yet, so every `tokenpress` build needs libclang and a C compiler
+# for `ruby-prism-sys` (see that crate's manifest). A default-on feature to
+# switch it off is tracked as follow-up work.
+tokenpress-ruby.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
 # Config file parsing only: the writer (`display`) half stays out of the build.
