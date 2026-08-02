@@ -18,6 +18,9 @@ echo "requests: $(git -C "$corpus/requests" rev-parse HEAD)"
 echo "ripgrep:  $(git -C "$corpus/ripgrep" rev-parse HEAD)"
 
 # Well-known projects, pinned to the exact commits measured in RESULTS.md.
+# Two of them are pinned at a tagged release rather than a snapshot: express
+# `dbac741a` is tag v5.2.1 and rack `e1f22fdb` is tag v3.2.6. Those are the tags
+# verify-upstream.sh clones, and it asserts the same SHAs after the clone.
 known=(
     "django|https://github.com/django/django|50d706d0aebcc2d073c8d034b6e22fc98fad49f2"
     "fastapi|https://github.com/fastapi/fastapi|95f8322ee1dcda7ceace7b1c4f6c9915b36d748f"
@@ -26,6 +29,7 @@ known=(
     "transformers|https://github.com/huggingface/transformers|71c6f699ac9b3f8fc42a6a3e9dc59034c349a678"
     "uv|https://github.com/astral-sh/uv|be765050837d81badb20e1f70eec62146c586902"
     "express|https://github.com/expressjs/express|dbac741a49a5a64336b70c06e85c2e2706e36336"
+    "rack|https://github.com/rack/rack|e1f22fdbe99afd2126b6fbf05bb12399359574b7"
 )
 for entry in "${known[@]}"; do
     IFS='|' read -r name url sha <<< "$entry"

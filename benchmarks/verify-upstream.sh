@@ -7,7 +7,7 @@
 # settings, and runs the project's real test suite against both. The run only
 # succeeds if every test reaches the same outcome on both copies.
 #
-# Usage: verify-upstream.sh <requests|ripgrep|express|all>
+# Usage: verify-upstream.sh <requests|ripgrep|express|rack|all>
 #
 # Exit codes: 0 = outcomes identical, 1 = outcomes diverged, 2 = usage or
 # infrastructure error (the comparison never ran).
@@ -29,6 +29,12 @@ ripgrep_sha="4649aa9700619f94cf9c66876e9549d83420e16c"
 # Same pin as fetch.sh (expressjs/express v5.2.1), asserted the same way.
 express_tag="v5.2.1"
 express_sha="dbac741a49a5a64336b70c06e85c2e2706e36336"
+
+# Same pin as fetch.sh (rack/rack v3.2.6), asserted the same way. v3.2.6 is an
+# annotated tag, so the SHA is the commit it peels to, which is what
+# `git rev-parse HEAD` reports after the clone below.
+rack_tag="v3.2.6"
+rack_sha="e1f22fdbe99afd2126b6fbf05bb12399359574b7"
 
 work_dir=""
 cleanup() {
@@ -54,7 +60,9 @@ targets:
              cargo test suite
   express    expressjs/express v5.2.1 - the same comparison against its mocha
              suite (needs node, npm and npm registry access)
-  all        every target (requests, then ripgrep, then express)
+  rack       rack/rack v3.2.6 - the same comparison against its minitest suite
+             (needs ruby, bundler and rubygems.org access)
+  all        every target (requests, ripgrep, express, then rack)
 EOF
 }
 
@@ -113,6 +121,22 @@ ensure_express_corpus() {
         die "corpus $dest is at $head, expected the pinned $express_sha"
     fi
     echo "corpus: expressjs/express $express_tag ($express_sha)"
+}
+
+# The same for the pinned rack corpus.
+ensure_rack_corpus() {
+    local dest="$corpus/rack"
+    if [ ! -e "$dest" ]; then
+        mkdir -p "$corpus"
+        git clone --quiet --depth 1 --branch "$rack_tag" \
+            https://github.com/rack/rack "$dest"
+    fi
+    local head
+    head="$(git -C "$dest" rev-parse HEAD)"
+    if [ "$head" != "$rack_sha" ]; then
+        die "corpus $dest is at $head, expected the pinned $rack_sha"
+    fi
+    echo "corpus: rack/rack $rack_tag ($rack_sha)"
 }
 
 # --- helpers ----------------------------------------------------------------
@@ -600,6 +624,252 @@ verify_express() {
     return 1
 }
 
+# --- rack -------------------------------------------------------------------
+
+# Writes the minitest plugin that records per-test outcomes into $1.
+#
+# minitest ships no machine-readable reporter, and its `--verbose` console
+# output cannot be used instead: a suite that runs tests in threads interleaves
+# the id and the result marker, which are printed separately, so lines are lost
+# (measured on another candidate corpus: 1,095 parsable lines for 1,114 tests).
+# A reporter object is told about every result exactly once, whichever thread
+# produced it, so that is what is used here.
+#
+# The file is dropped at <dir>/minitest/tokenpress_plugin.rb and <dir> is put on
+# the load path: minitest discovers plugins by globbing "minitest/*_plugin.rb"
+# over $LOAD_PATH and requires them itself, after it is loaded. Requiring the
+# file directly through RUBYOPT would not work - `-r` runs before bundler has
+# set the load path up, so `require "minitest"` would pick the interpreter's
+# default-gem copy rather than the bundled one. Nothing else lives under <dir>,
+# so `require "minitest"` and `require "minitest/autorun"` still resolve to the
+# real gem.
+#
+# Rows are appended, not truncated: the `test:separate` phase runs one process
+# per test file and every one of them appends to the same report.
+write_minitest_plugin() {
+    local dir="$1/minitest"
+    mkdir -p "$dir" || die "cannot create the minitest plugin directory $dir"
+    cat >"$dir/tokenpress_plugin.rb" <<'RUBY'
+# Records one "outcome<TAB>Class#test" row per test into $TOKENPRESS_REPORT.
+module Minitest
+  class TokenpressReporter < AbstractReporter
+    CODES = { "." => "passed", "F" => "failed",
+              "E" => "error", "S" => "skipped" }.freeze
+
+    def initialize path
+      super()
+      @path = path
+      @mutex = Mutex.new
+      @rows = []
+    end
+
+    # Called once per test, possibly from a worker thread.
+    def record result
+      outcome = CODES.fetch result.result_code, result.result_code
+      @mutex.synchronize { @rows << "#{outcome}\t#{result.klass}##{result.name}" }
+    end
+
+    def report
+      @mutex.synchronize do
+        File.open(@path, "a") { |io| @rows.each { |row| io.puts row } }
+      end
+    end
+  end
+
+  def self.plugin_tokenpress_init options
+    path = ENV["TOKENPRESS_REPORT"].to_s
+    reporter << TokenpressReporter.new(path) unless path.empty?
+  end
+end
+RUBY
+}
+
+# Emits the corpus's Ruby paths under $1, NUL-separated.
+#
+# Every path class the backend claims: the four extensions plus the two exact
+# file names. `vendor/` is excluded along with `.git/`, because the bundle is
+# installed into the work directory and a stray vendored copy must never be
+# counted or rewritten.
+rack_ruby_paths() {
+    find "$1" \
+        \( -name '*.rb' -o -name '*.rake' -o -name '*.gemspec' -o -name '*.ru' \
+        -o -name 'Gemfile' -o -name 'Rakefile' \) \
+        -not -path '*/.git/*' -not -path '*/vendor/*' -print0
+}
+
+# Runs one rake test task in $1, its per-test report to $3 and its console
+# output to $4. $5 is the shared bundle path, $6 the minitest plugin directory.
+#
+# Isolation, mirroring the other runners:
+#   * a private TMPDIR per run, because parts of the suite write fixture files
+#     under the temp directory;
+#   * BUNDLE_PATH into the work directory, so the gems are vendored there and
+#     the user's gem home is never written to;
+#   * the proxy environment variables of the calling shell are dropped, exactly
+#     as for requests: the suite drives ephemeral localhost servers and an
+#     inherited HTTP(S)_PROXY would send those requests to a proxy. Both runs
+#     get the same stripped environment.
+#
+# Failing tests are the thing being measured, so rake's non-zero exit is
+# expected; what is not acceptable is an empty report, which means the suite
+# never ran and there is nothing to compare.
+run_rake() {
+    local dir="$1" task="$2" report="$3" log="$4" bundle_path="$5" plugins="$6"
+    local tmp="$log.tmpdir"
+    mkdir -p "$tmp" || die "cannot create the run directory for $log"
+    local rc=0
+    (
+        cd "$dir"
+        env -u http_proxy -u https_proxy -u all_proxy -u no_proxy \
+            -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
+            TMPDIR="$tmp" BUNDLE_PATH="$bundle_path" \
+            RUBYOPT="-I$plugins" TOKENPRESS_REPORT="$report" \
+            bundle exec rake "$task"
+    ) >"$log" 2>&1 || rc=$?
+    if [ ! -s "$report" ]; then
+        tail -n 30 "$log" >&2
+        die "rake $task exited $rc in $dir without writing a report (it never produced a comparable result)"
+    fi
+}
+
+# Prefixes every row of the phase report $1 with the phase name $2, giving
+# "outcome<TAB>phase<TAB>test id".
+#
+# The phase is part of the id for the same reason the cargo listing carries the
+# test target: `test:separate` re-runs the very same test ids in a separate
+# process per file, so without it the two phases would be indistinguishable and
+# a change confined to one of them could cancel out against the other.
+#
+# Only the first tab is treated as the separator, so a test name that contains
+# one is carried over whole rather than truncated.
+tag_phase() {
+    awk -v phase="$2" '{
+        at = index($0, "\t")
+        print substr($0, 1, at - 1) "\t" phase "\t" substr($0, at + 1)
+    }' "$1"
+}
+
+# Fails unless the copy that is about to be tested is the one whose rack is
+# loaded - otherwise a run could silently measure the wrong tree.
+assert_rack_from() {
+    local dir="$1" bundle_path="$2" actual
+    actual="$(cd "$dir" && env BUNDLE_PATH="$bundle_path" bundle exec ruby -Ilib \
+        -e 'require "rack"; print $LOADED_FEATURES.grep(%r{/rack\.rb$}).first')"
+    case "$actual" in
+    "$dir"/*) ;;
+    *) die "the bundle loads rack from $actual, expected it under $dir" ;;
+    esac
+}
+
+verify_rack() {
+    ensure_rack_corpus
+
+    local tokenpress
+    tokenpress="$(build_tokenpress)"
+
+    local baseline="$work_dir/rack-baseline"
+    local formatted="$work_dir/rack-formatted"
+    cp -a "$corpus/rack" "$baseline" || die "cannot copy the rack corpus"
+    cp -a "$corpus/rack" "$formatted" || die "cannot copy the rack corpus"
+
+    # Default settings only - no --ruby-strip-comments. Unlike Rust and JS/TS,
+    # the Ruby backend drops nothing at this level: comments and embdocs all
+    # survive, so the rewrite is whitespace only.
+    #
+    # The Ruby paths are formatted explicitly rather than by handing the whole
+    # tree to the formatter: rack ships two files named *.js under
+    # test/cgi/assets/ whose entire content is "### TestFile ###", so they are
+    # placeholders for the CGI asset tests and not JavaScript at all. Passing
+    # the tree would hand them to the JS backend, which reports them as parse
+    # errors - noise from another language in a Ruby measurement.
+    local file_list="$work_dir/rack-files.nul"
+    rack_ruby_paths "$formatted" >"$file_list" || die "cannot list the rack Ruby files"
+    if [ ! -s "$file_list" ]; then
+        die "no Ruby files found under $formatted - the corpus is not what it should be"
+    fi
+    local total
+    total="$(tr -dc '\0' <"$file_list" | wc -c | tr -d ' ')"
+    local format_log="$work_dir/rack-format.log"
+    local rc=0
+    xargs -0 "$tokenpress" format <"$file_list" >"$format_log" 2>&1 || rc=$?
+    local refused
+    refused="$(grep -c '^error: ' "$format_log" || true)"
+    if [ "$rc" -ne 0 ] && [ "$refused" -eq 0 ]; then
+        tail -n 30 "$format_log" >&2
+        die "tokenpress format exited $rc"
+    fi
+    local changed
+    changed="$(git -C "$formatted" status --porcelain | wc -l)"
+
+    # rack ships no lockfile, so two independent `bundle install` runs could
+    # resolve different versions inside the declared ranges. The install
+    # therefore happens once, in the baseline copy, and its Gemfile.lock is
+    # copied to the other side; both copies then resolve through that one lock
+    # against one shared vendored gem set (BUNDLE_PATH), which is the bundler
+    # equivalent of the one shared venv, the one shared cargo fetch and the one
+    # shared node_modules above. It also means the formatted Gemfile has to
+    # still satisfy the lock resolved from the unformatted one, which is a
+    # small check in its own right.
+    local bundle_path="$work_dir/rack-bundle"
+    (cd "$baseline" && env BUNDLE_PATH="$bundle_path" \
+        bundle install --jobs 4 --quiet) ||
+        die "bundle install failed in $baseline - the rack target needs rubygems.org access"
+    cp "$baseline/Gemfile.lock" "$formatted/Gemfile.lock" ||
+        die "cannot copy the resolved lockfile to $formatted"
+
+    local plugins="$work_dir/rack-minitest"
+    write_minitest_plugin "$plugins"
+
+    assert_rack_from "$baseline" "$bundle_path"
+    assert_rack_from "$formatted" "$bundle_path"
+
+    # Both of rack's test tasks, each invoked on its own. rack's own `rake test`
+    # chains spec -> test:regular -> test:separate, but `spec` only regenerates
+    # SPEC.rdoc from the `##` comments in lib/rack/lint.rb and defines no tests,
+    # and rake stops at the first failing task, so a single failing test in
+    # test:regular would skip test:separate entirely. Running the two test tasks
+    # separately reaches more of the suite than `rake test` does, not less.
+    local phase
+    for phase in regular separate; do
+        run_rake "$baseline" "test:$phase" "$work_dir/rack-baseline-$phase.tsv" \
+            "$work_dir/rack-baseline-$phase.log" "$bundle_path" "$plugins"
+        run_rake "$formatted" "test:$phase" "$work_dir/rack-formatted-$phase.tsv" \
+            "$work_dir/rack-formatted-$phase.log" "$bundle_path" "$plugins"
+    done
+
+    local side
+    for side in baseline formatted; do
+        {
+            tag_phase "$work_dir/rack-$side-regular.tsv" regular
+            tag_phase "$work_dir/rack-$side-separate.tsv" separate
+        } | sort >"$work_dir/rack-$side.outcomes"
+    done
+    if [ ! -s "$work_dir/rack-baseline.outcomes" ]; then
+        die "no test results were parsed from the baseline run"
+    fi
+
+    echo
+    echo "rack $rack_tag"
+    echo "  Ruby files         $total"
+    echo "  rewritten          $changed"
+    echo "  refused by verify  $refused"
+    echo "  unchanged          $((total - changed - refused))"
+    echo "baseline outcomes:"
+    tally "$work_dir/rack-baseline.outcomes"
+    echo "formatted outcomes:"
+    tally "$work_dir/rack-formatted.outcomes"
+
+    if diff -u "$work_dir/rack-baseline.outcomes" \
+        "$work_dir/rack-formatted.outcomes" \
+        >"$work_dir/rack-outcomes.diff"; then
+        echo "verdict: IDENTICAL - every test reached the same outcome on both copies"
+        return 0
+    fi
+    echo "verdict: DIVERGED - the formatted copy behaves differently:"
+    sed 's/^/  /' "$work_dir/rack-outcomes.diff"
+    return 1
+}
+
 # --- main -------------------------------------------------------------------
 
 main() {
@@ -612,7 +882,7 @@ main() {
         usage
         exit 0
         ;;
-    requests | ripgrep | express | all) ;;
+    requests | ripgrep | express | rack | all) ;;
     *)
         usage
         exit 2
@@ -632,6 +902,12 @@ main() {
         command -v npm >/dev/null || die "npm is required for the express target"
         ;;
     esac
+    case "$1" in
+    rack | all)
+        command -v ruby >/dev/null || die "ruby is required for the rack target"
+        command -v bundle >/dev/null || die "bundler is required for the rack target"
+        ;;
+    esac
     work_dir="$(mktemp -d "${TMPDIR:-/tmp}/tokenpress-verify-XXXXXX")"
 
     # A target returns 1 when the outcomes diverged; that is a result, not an
@@ -643,10 +919,12 @@ main() {
     requests) verify_requests || diverged=1 ;;
     ripgrep) verify_ripgrep || diverged=1 ;;
     express) verify_express || diverged=1 ;;
+    rack) verify_rack || diverged=1 ;;
     all)
         verify_requests || diverged=1
         verify_ripgrep || diverged=1
         verify_express || diverged=1
+        verify_rack || diverged=1
         ;;
     esac
     return "$diverged"

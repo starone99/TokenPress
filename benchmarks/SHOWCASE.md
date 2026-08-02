@@ -1,6 +1,6 @@
 # TokenPress Showcase
 
-Measured token reduction on nine commit-pinned open-source repositories, at
+Measured token reduction on ten commit-pinned open-source repositories, at
 the *aggressive* (lossy) settings. Every number on this page is taken from
 [`RESULTS.md`](RESULTS.md), which holds the full methodology, the platform
 notes, and the default-setting numbers. Nothing here is extrapolated.
@@ -13,7 +13,7 @@ embedded in the binary and were measured locally.
 
 ## Headline: tokio, -50.5%
 
-The only corpus of the nine that clears a 40% reduction *on the two embedded
+The only corpus of the ten that clears a 40% reduction *on the two embedded
 OpenAI tokenizers measured here*. Per-model candidate lists are still pending
 (see caveats).
 
@@ -45,8 +45,9 @@ target/release/tokenpress stats benchmarks/corpus/tokio \
 
 ## Full corpus table (aggressive settings)
 
-Measured 2026-08-01 on a Linux LF checkout of the pinned commits (express
-2026-08-02, same way). `Files` is the number of files successfully formatted.
+Measured 2026-08-01 on a Linux LF checkout of the pinned commits (express and
+rack 2026-08-02, same way). `Files` is the number of files successfully
+formatted.
 
 | Project | Lang | Pinned commit | Files | `o200k_base` | `cl100k_base` |
 |---|---|---|---|---|---|
@@ -58,6 +59,7 @@ Measured 2026-08-01 on a Linux LF checkout of the pinned commits (express
 | [huggingface/transformers](https://github.com/huggingface/transformers) | Python | `71c6f699ac9b3f8fc42a6a3e9dc59034c349a678` | 4,700 | -34.9% | -35.6% |
 | [expressjs/express](https://github.com/expressjs/express) | JavaScript | `dbac741a49a5a64336b70c06e85c2e2706e36336` (tag v5.2.1) | 142 | -25.4% | -25.9% |
 | [django/django](https://github.com/django/django) | Python | `50d706d0aebcc2d073c8d034b6e22fc98fad49f2` | 2,924 | -23.1% | -23.8% |
+| [rack/rack](https://github.com/rack/rack) | Ruby | `e1f22fdbe99afd2126b6fbf05bb12399359574b7` (tag v3.2.6) | 104 | -20.8% | -20.5% |
 | [astral-sh/uv](https://github.com/astral-sh/uv) | Rust + Python | `be765050837d81badb20e1f70eec62146c586902` | 718 | -21.5% | -21.8% |
 
 Raw token counts for the same runs:
@@ -72,6 +74,7 @@ Raw token counts for the same runs:
 | transformers | 17,030,922 | 11,086,759 | 16,956,696 | 10,927,850 |
 | express | 135,740 | 101,253 | 135,206 | 100,122 |
 | django | 4,191,951 | 3,221,811 | 4,122,515 | 3,141,905 |
+| rack | 187,175 | 148,273 | 186,474 | 148,157 |
 | uv | 4,806,817 | 3,773,907 | 4,779,673 | 3,739,347 |
 
 ### Flags used
@@ -81,7 +84,27 @@ Raw token counts for the same runs:
 | Python (requests, django, fastapi, langchain, transformers) | `--py-strip-comments --py-strip-annotations --py-strip-docstrings` |
 | Rust (ripgrep, tokio) | `--rs-strip-doc-comments` |
 | JavaScript (express) | `--js-strip-comments` |
+| Ruby (rack: 93 `.rb`, 9 `.ru`, `rack.gemspec`, `Gemfile`, `Rakefile`) | `--ruby-strip-comments` |
 | Mixed (uv: 624 `.rs` + 94 `.py`) | all four Python/Rust flags — per-language flags are language-scoped, so passing a Rust flag to a Python tree is a verified no-op |
+
+### Why rack is low, and what its default number is
+
+rack is the only Ruby corpus, and Ruby is the one backend whose *default*
+settings discard nothing at all: every `#` comment and every `=begin`/`=end`
+embdoc survives, so the default-settings figure — **-9.2% on `o200k_base`,
+-8.9% on `cl100k_base`** — is genuinely context-lossless, unlike the Rust and
+JavaScript defaults. `--ruby-strip-comments` is the entire
+comments-kept-vs-dropped difference and adds +11.6pp on top, the largest
+comment-stripping delta of any backend on this page. rack is also
+comment-dense rather than prose-dense, which is why the total lands near
+django's. **No Ruby project has been hunted for a ≥40% result**, so this page
+makes **no ≥40% claim for Ruby in either direction**.
+
+rack was picked over sinatra, the first candidate: sinatra's suite installs
+and runs, but its test count varied run to run (1,114 vs 1,120 tests), one of
+its integration tests rewrites the repository's own `Gemfile.lock` mid-run,
+and it randomizes test order, so runs were not comparable to each other — let
+alone across two copies. rack's 1,177 tests are bit-for-bit reproducible.
 
 ### Why express is mid-table
 
@@ -119,8 +142,14 @@ difference:
 ## Verification
 
 * **Every file counted above passed TokenPress verification** (re-parse plus
-  token/AST equivalence). The runs reported here have **0 verification
-  refusals**. Two files across the corpus are excluded because they are
+  token/AST equivalence). The runs reported here have **1 verification
+  refusal in total**, in rack: `lib/rack/utils.rb`, at default settings and
+  with `--ruby-strip-comments` alike, so it is excluded from rack's 104-file
+  count and from its token totals. It is a documented Ruby over-refusal class
+  — a location slice that spans a multi-line index call — and it is the safe
+  direction: the file is left byte-for-byte alone and no output that failed
+  the check is ever written. `RESULTS.md` has the minimal reproducer. Two
+  further files across the corpus are excluded because they are
   intentionally-broken fixtures — Django's `tests_syntax_error.py` (invalid
   Python by design) and LangChain's `non-utf8-encoding.py` (invalid UTF-8 by
   design) — i.e. unreadable/invalid *input*, reported per file, not refused
@@ -134,7 +163,7 @@ difference:
 ### Behavioral verification against upstream test suites
 
 Structural equivalence is not behavioral equivalence, so
-`benchmarks/verify-upstream.sh` runs two projects' own upstream test suites
+`benchmarks/verify-upstream.sh` runs four projects' own upstream test suites
 against a TokenPress-formatted copy and diffs the outcome **per test id**
 against an unformatted baseline copy.
 
@@ -143,6 +172,7 @@ against an unformatted baseline copy.
 | requests v2.32.3 (`pytest`) | 36 `.py` | 35 | 0 | **IDENTICAL** — 585 passed / 5 failed / 15 skipped / 1 xfailed on both copies |
 | ripgrep 14.1.1 (`cargo test --workspace`) | 98 `.rs` | 98 | 0 | **IDENTICAL after a fix** — 1106 ok / 3 ignored, exit 0 |
 | express v5.2.1 (`mocha`, express's own `npm test` arguments) | 142 `.js` | 141 | 0 | **IDENTICAL** — 1238 passed / 0 failed on both copies, exit 0 |
+| rack v3.2.6 (`rake test:regular` + `rake test:separate`) | 105 Ruby | 103 | 1 | **DIVERGED** — 1 of 2,354 outcomes; 2,348→2,346 passed, 2→4 failed, exit 1 |
 
 All caveats matter:
 
@@ -157,6 +187,15 @@ All caveats matter:
   localhost servers and needs no outbound network. That is a property of the
   suite, not a stronger claim: what is verified is still *identical outcomes*.
   The express target needs `node`, `npm` and npm registry access to run at all.
+* **The rack run diverged, and the divergence is real** — reproduced twice,
+  byte-identically. One test, `Rack::Builder::parse_file` "sets `__LINE__`
+  correctly", passes on the unformatted copy and fails on the formatted one:
+  its fixture asserts that a line number is `3`, and deleting the blank line
+  above the code makes it `2`. Nothing else in rack's 1,177 tests noticed the
+  reformatting. See the line-number caveat below; `RESULTS.md` has the full
+  triage. rack's other 2 failures are a root-user filesystem-permission
+  artifact and fail identically on both copies. The rack target needs `ruby`,
+  `bundler` and rubygems.org access to run at all.
 * These runs cover **default settings only**. The aggressive flags on this
   page are not covered by that harness — stripping doc comments would delete
   the doc tests being compared.
@@ -178,6 +217,7 @@ each removes information from the source:
 | `--py-strip-annotations` | Python type hints — breaks `__annotations__`-based introspection (dataclass, pydantic) |
 | `--rs-strip-doc-comments` | Rust `///` and `//!` doc comments, and with them rustdoc and doctests |
 | `--js-strip-comments` | the JS/TS comments that survive re-emission at all — leading statement-level comments, jsdoc, annotation comments (`#__PURE__`) and legal comments (`//!`, `/*!`, `@license`, `@preserve`) |
+| `--ruby-strip-comments` | Ruby `#` comments and `=begin`/`=end` embdocs — all of them, this being the only Ruby lever. The shebang and the leading magic-comment window (`# frozen_string_literal: true` and friends) survive, being semantic rather than prose |
 
 **Token savings are not free context.** Every comment and docstring stripped
 above is prose the model can no longer read. Whether that degrades the quality
@@ -213,6 +253,30 @@ with no TypeScript and no JSX, so **nothing on this page measures the
 `.ts`/`.tsx`/`.jsx` paths**, and a JSX-heavy tree should be expected to save
 less than -25.4%.
 
+**Ruby keeps every comment at default settings — but no backend keeps line
+numbers.** Ruby is the one language on this page whose default settings
+discard nothing: comments and embdocs all survive, so rack's default `-9.2%`
+is context-lossless and `--ruby-strip-comments` is a pure opt-in. What Ruby
+shares with every other backend is that removing blank lines and indentation
+**moves every line below the removal**, so `__LINE__`, `caller` and backtraces
+change. Token/AST equivalence cannot see this — the location-independent
+comparison that stands in for AST equality is blind to it by construction —
+and the rack upstream run above is the measured proof that it is observable:
+one rack test asserts a `__LINE__` value and fails on the formatted copy. On
+that particular file the deleted blank line saved **zero tokens** (35 before,
+35 after at `o200k_base`), because a blank line and a plain newline cost the
+same one token. If your code, your tests or your tooling depend on line
+numbers, TokenPress output is not a drop-in replacement for the original.
+
+**Ruby has known over-refusal classes, and one of them fires on rack.** Two
+shapes make the Ruby verifier reject a rewrite that was in fact harmless — a
+`<<~` squiggly heredoc whose body gets re-indented, and a location slice
+spanning a multi-line index call. rack hits the second one in
+`lib/rack/utils.rb`, which is therefore left untouched and excluded from
+rack's counts above (**1 refusal**, at both settings). Refusals are the safe
+direction and cost only savings, never correctness, but they mean a Ruby tree
+may come back with a few files unchanged.
+
 **Rust macro-body whitespace is minimized.** The tokens inside a macro
 invocation are preserved exactly; the whitespace between them is not. For
 whitespace-sensitive macros — `stringify!` is the common case — this changes
@@ -244,10 +308,11 @@ CRLF, which raises the before-counts (requests: 86,331 LF vs 86,922 CRLF at
 aggressive table — the flag set is unchanged. Converting the LF checkout back
 to CRLF reproduces the historical numbers exactly.
 
-**Nine corpora is not a population.** These are the repositories measured,
+**Ten corpora is not a population.** These are the repositories measured,
 not a sample chosen to be representative. Savings depend heavily on how much
-of a tree is prose documentation. JavaScript is represented by exactly one
-project, so `-25.4%` is a data point, not a language-level expectation.
+of a tree is prose documentation. JavaScript and Ruby are each represented by
+exactly one project, so `-25.4%` and `-20.8%` are data points, not
+language-level expectations.
 
 ---
 
@@ -273,6 +338,14 @@ done
 target/release/tokenpress stats benchmarks/corpus/express --tokenizer o200k_base \
     --js-strip-comments
 
+# Ruby corpus - the paths are listed explicitly, because rack ships two
+# `*.js` placeholder fixtures that are not JavaScript
+find benchmarks/corpus/rack -not -path '*/.git/*' \
+    \( -name '*.rb' -o -name '*.rake' -o -name '*.gemspec' -o -name '*.ru' \
+    -o -name 'Gemfile' -o -name 'Rakefile' \) -print0 |
+    xargs -0 target/release/tokenpress stats --tokenizer o200k_base \
+        --ruby-strip-comments
+
 # Mixed tree
 target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
     --py-strip-comments --py-strip-annotations --py-strip-docstrings \
@@ -281,8 +354,10 @@ target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
 # repeat any of the above with --tokenizer cl100k_base for the second column
 
 # upstream behavioral check (default settings)
-# the express target additionally needs node, npm and npm registry access
+# express additionally needs node, npm and npm registry access; rack needs
+# ruby, bundler and rubygems.org access
 ./benchmarks/verify-upstream.sh all   # 0 = identical, 1 = diverged, 2 = never ran
+# this currently exits 1: the rack target diverges on the __LINE__ test above
 ```
 
 `fetch.sh` exits non-zero at the tokenizer-download step when huggingface.co

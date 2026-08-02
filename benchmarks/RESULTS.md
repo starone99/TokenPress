@@ -1,7 +1,8 @@
 # TokenPress Benchmark Results
 
 Measured: 2026-07-31 (open-model tokenizers added 2026-08-01; the
-JavaScript/TypeScript corpus added 2026-08-02)
+JavaScript/TypeScript corpus added 2026-08-02; the Ruby corpus added
+2026-08-02)
 Binary: `cargo build --release -p tokenpress-cli` at the commit containing this file
 Command: `tokenpress stats <corpus> --tokenizer <name> [options]`
 Platform: Windows 11, rustc 1.95.0
@@ -19,12 +20,17 @@ Platform: Windows 11, rustc 1.95.0
 | huggingface/transformers | main snapshot | `71c6f699` | 4,700 `.py` |
 | astral-sh/uv | main snapshot | `be765050` | 718 `.rs` + `.py` |
 | expressjs/express | v5.2.1 | `dbac741a` | 142 `.js` |
+| rack/rack | v3.2.6 | `e1f22fdb` | 105 Ruby (93 `.rb`, 9 `.ru`, `rack.gemspec`, `Gemfile`, `Rakefile`) |
 
-**Every parseable file passed verification** (re-parse + token/AST
-equivalence). The only skipped files across ~13,100 are two intentionally
-broken test fixtures: Django's `tests_syntax_error.py` (invalid Python by
-design) and LangChain's `non-utf8-encoding.py` (invalid UTF-8 by design) —
-both correctly rejected with per-file errors.
+**Every parseable file passed verification, with one measured exception**
+(re-parse + token/AST equivalence). The only skipped files across ~13,200 are
+two intentionally broken test fixtures — Django's `tests_syntax_error.py`
+(invalid Python by design) and LangChain's `non-utf8-encoding.py` (invalid
+UTF-8 by design), both correctly rejected with per-file errors — plus one
+genuine refusal in rack, `lib/rack/utils.rb`, which is a known Ruby
+over-refusal class documented in the Ruby section below. A refusal writes
+nothing and leaves the file untouched; it is the core invariant working, not
+a corruption.
 
 ## Which LLM does each number apply to? (tokenizer ↔ model mapping)
 
@@ -43,7 +49,7 @@ revision-pinned by `benchmarks/fetch.ps1`.
 
 ## Results
 
-### Default settings (Python: comments/docstrings/annotations kept; Rust: doc comments kept, regular comments dropped; JS/TS: only some comments kept; adjacent imports merged)
+### Default settings (Python: comments/docstrings/annotations kept; Rust: doc comments kept, regular comments dropped; JS/TS: only some comments kept; Ruby: everything kept; adjacent imports merged)
 
 Context-lossless for Python — whitespace/blank-line/indent minimization plus
 PY09 import merging only.
@@ -66,6 +72,21 @@ cannot detect it because its canonical form is comment-free by construction.
 Part of express's default savings below therefore comes from discarded
 comments. The CLI prints this caveat on stderr once per run that touches a
 JS/TS file.
+
+**Ruby, unlike Rust and JavaScript/TypeScript, drops nothing at default
+settings.** The Ruby backend rewrites the source in place rather than
+re-emitting from a token stream, so every `#` comment and every `=begin`/`=end`
+embdoc survives, along with the shebang and the magic-comment window. Ruby's
+default savings below are therefore **pure whitespace** — the
+context-lossless case, like Python — and comment removal is entirely opt-in
+behind `--ruby-strip-comments`. The CLI prints no caveat warning for a
+Ruby-only run, because there is nothing to warn about.
+
+**What no backend preserves is line numbers.** Removing blank lines and
+indentation moves every line below the removal, in Ruby exactly as in Rust and
+JS/TS. That is invisible to token/AST equivalence, and the rack run below is
+the first corpus in this file whose own test suite asserts on a line number
+directly; see the behavioral-verification section.
 
 | Corpus | Tokenizer | Before | After | Saved |
 |---|---|---|---|---|
@@ -136,6 +157,86 @@ the context-lossless number that the Python corpora report.
 target/release/tokenpress stats benchmarks/corpus/express --tokenizer o200k_base
 ```
 
+### Ruby — rack/rack (default settings, added 2026-08-02)
+
+Measured 2026-08-02, Linux LF checkout, rustc 1.95.0, ruby 3.3.6, on the
+commit pinned in `fetch.sh`/`fetch.ps1`
+(`e1f22fdbe99afd2126b6fbf05bb12399359574b7`, tag `v3.2.6`). This is the first
+corpus for the `tokenpress-ruby` backend, and it is reported on its own for
+the same reason express is: the tables above were measured on Windows with a
+CRLF checkout, and the line-ending caveat further down applies to any
+comparison across the two.
+
+**Only the two embedded tokenizers were measured** — the measurement
+environment cannot reach huggingface.co, so the Qwen3.6 / GLM-5.2 / Kimi K3
+columns are pending here exactly as they are for express and for the
+full-aggressive run below.
+
+The whole tree is measured: 49 files under `lib/`, 53 under `test/` and the 3
+build files at the root (rack's other directories — `contrib/`, `config/`,
+`docs/` — hold no Ruby).
+**Every path class the backend claims is exercised except `.rake`**, which
+rack has none of — 93 `.rb`, 9 `.ru` (rack's `config.ru` fixtures),
+`rack.gemspec`, `Gemfile` and `Rakefile`, 105 files in total. The two
+extensionless files are matched by exact name, which is what makes rack a
+useful first Ruby corpus rather than just a `.rb` count.
+
+The Ruby paths are passed explicitly rather than handing the tree to the
+formatter: rack ships two files named `*.js` under `test/cgi/assets/` whose
+entire content is `### TestFile ###`. They are placeholders for the CGI asset
+tests and are not JavaScript, so a whole-tree run hands them to the JS backend
+and reports two parse errors — noise from another language in a Ruby
+measurement. They contribute nothing to the totals either way.
+
+| Corpus | Tokenizer | Files | Before | After | Saved |
+|---|---|---|---|---|---|
+| rack | o200k_base | 104 | 187,175 | 170,012 | **-9.2%** |
+| rack | cl100k_base | 104 | 186,474 | 169,907 | **-8.9%** |
+| rack | Qwen3.6 | — | — | — | *pending* |
+| rack | GLM-5.2 | — | — | — | *pending* |
+| rack | Kimi K3 | — | — | — | *pending* |
+
+`Files` is 104 of the 105, because of **1 verification refusal**:
+`lib/rack/utils.rb`. It refuses at both settings and both tokenizers, and it
+is a known over-refusal class, not a new defect — see the subsection below.
+Absolute saving at o200k: 17,163 tokens per full-repo prompt.
+
+Unlike express's `-17.3%`, this `-9.2%` **is** context-lossless: nothing but
+whitespace was removed, every comment and embdoc is still in the output. It
+sits in the same range as the Python default-settings numbers (requests
+`-9.0%`) for the same reason — the honest, nothing-discarded case costs the
+most.
+
+```bash
+find benchmarks/corpus/rack -not -path '*/.git/*' \
+    \( -name '*.rb' -o -name '*.rake' -o -name '*.gemspec' -o -name '*.ru' \
+    -o -name 'Gemfile' -o -name 'Rakefile' \) -print0 |
+    xargs -0 target/release/tokenpress stats --tokenizer o200k_base
+```
+
+#### The one Ruby refusal, identified
+
+`lib/rack/utils.rb` fails verification with `output AST differs from input` at
+default settings. It is over-refusal **class 1** from
+`crates/tokenpress-ruby/src/verify.rs`: a location slice that spans more than
+one token, here a multi-line index call, whose `message_loc` covers the whole
+bracket pair, so joining the lines inside it moves the slice even though
+nothing semantic changed.
+
+Delta-debugged down to this shape, which rack has in
+`SYMBOL_TO_STATUS_CODE`:
+
+```ruby
+X = Hash[*Y.map { |a, b|
+  [a, b]
+}.flatten]
+```
+
+`tokenpress stats` on that file alone reproduces the refusal; putting the same
+call on one line formats fine. The refusal is in the safe direction — a
+formattable file is left alone, and no output that fails the check is ever
+written.
+
 ### Aggressive settings (accepting context loss)
 
 #### Historical run — predates `--py-strip-docstrings`
@@ -166,9 +267,9 @@ in the next subsection.
 #### Aggressive + strip_docstrings (full aggressive, added 2026-08-01)
 
 Measured: 2026-08-01, Linux, rustc 1.95.0, same commit-pinned corpus
-(`benchmarks/fetch.sh`); the express row was measured the same way on
-2026-08-02, when the JS/TS backend and its corpus were added. **Only the two
-embedded tokenizers were measured**
+(`benchmarks/fetch.sh`); the express and rack rows were measured the same way
+on 2026-08-02, when the JS/TS and Ruby backends and their corpora were added.
+**Only the two embedded tokenizers were measured**
 — the measurement environment cannot reach huggingface.co, so the Qwen3.6 /
 GLM-5.2 / Kimi K3 columns are absent here and are to be filled in from an
 environment that can fetch those revision-pinned tokenizer files.
@@ -186,6 +287,12 @@ Exact flags:
   comments the backend keeps at all — the trailing and expression-position
   comments are gone either way (see the caveat above), so this flag is a
   smaller lever for JS/TS than `--rs-strip-doc-comments` is for Rust.
+* Ruby corpus (rack): `--ruby-strip-comments`. This is the opposite case from
+  JS/TS — the Ruby default keeps *every* comment and embdoc, so the flag is
+  the full difference between "all comments kept" and "none", and it is the
+  single largest lever the Ruby backend has. The shebang and the leading
+  magic-comment window survive it (`# frozen_string_literal: true` and
+  friends are semantic, not prose).
 
 **Line-ending caveat — read before comparing against the tables above.**
 The earlier tables were measured on Windows, where git checks the corpus out
@@ -217,6 +324,8 @@ formatter change.**
 | uv | cl100k_base | 718 | 4,779,673 | 3,739,347 | **-21.8%** |
 | express | o200k_base | 142 | 135,740 | 101,253 | **-25.4%** |
 | express | cl100k_base | 142 | 135,206 | 100,122 | **-25.9%** |
+| rack | o200k_base | 104 | 187,175 | 148,273 | **-20.8%** |
+| rack | cl100k_base | 104 | 186,474 | 148,157 | **-20.5%** |
 
 `Files` counts files that were successfully formatted; refused files (next
 subsection) are excluded from both the file count and the token totals. The
@@ -348,13 +457,36 @@ AST-span-to-token mapping, both fixed test-first in
 Re-measured after the fix: langchain 2,530 files and transformers 4,700
 files, **0 verification refusals** in both, at both embedded tokenizers.
 
+##### What `--ruby-strip-comments` adds
+
+Same corpus, same LF checkout, the added flag being the only difference:
+
+| Corpus | Tokenizer | Without comment stripping | With `--ruby-strip-comments` | Delta |
+|---|---|---|---|---|
+| rack | o200k_base | -9.2% | **-20.8%** | +11.6pp |
+| rack | cl100k_base | -8.9% | **-20.5%** | +11.7pp |
+
++11.6pp is a bigger jump than express's +8.1pp from `--js-strip-comments`, and
+for a structural reason rather than a corpus one: the JS/TS flag starts from a
+baseline that has already lost the trailing and expression-position comments,
+whereas the Ruby flag starts from a baseline that has lost nothing. Ruby is
+the only backend where the strip flag really is the whole of the
+comments-kept-vs-dropped difference.
+
+The **1 refusal is the same file at both settings** (`lib/rack/utils.rb`, the
+multi-line index call above), so nothing new is refused by adding the flag.
+The second known Ruby over-refusal class — a whitelisted magic-comment key
+appearing lexically *after* the first code token, which `--ruby-strip-comments`
+deletes and the verifier then rejects — **did not fire anywhere in rack**.
+
 #### Showcase candidates (≥40% aggressive reduction)
 
 Recorded for the ROADMAP P3 task ("hunt for well-known projects per
 supported language where the aggressive setting clears ≥40% token
-reduction"). Measured 2026-08-01 on the embedded tokenizers only.
+reduction"). Measured 2026-08-01 on the embedded tokenizers only; rack was
+added 2026-08-02 the same way.
 
-**Clears ≥40% — 1 of 9 corpora:**
+**Clears ≥40% — 1 of 10 corpora:**
 
 | Project | Language | Commit | o200k_base | cl100k_base | Absolute saving (o200k) |
 |---|---|---|---|---|---|
@@ -383,14 +515,18 @@ Flags: Python projects `--py-strip-comments --py-strip-annotations
 --py-strip-docstrings`; ripgrep `--rs-strip-doc-comments`.
 
 **Well under 40%:** expressjs/express `dbac741a` (-25.4% / -25.9%,
-`--js-strip-comments`), django/django `50d706d0` (-23.1% / -23.8%) and
-astral-sh/uv `be765050` (-21.5% / -21.8%, all four flags). Django's bulk is
+`--js-strip-comments`), django/django `50d706d0` (-23.1% / -23.8%),
+astral-sh/uv `be765050` (-21.5% / -21.8%, all four flags) and rack/rack
+`e1f22fdb` (-20.8% / -20.5%, `--ruby-strip-comments`). Django's bulk is
 test fixtures and data tables rather than prose; uv is dominated by Rust
 source whose doc comments are a small fraction of the tree. express is the
 only JavaScript corpus and the JS/TS backend has no lever comparable to
 `--rs-strip-doc-comments` or `--py-strip-docstrings` — no JS/TS showcase
 candidate has been hunted for yet, so **no ≥40% claim is made for JavaScript
-or TypeScript in either direction**; one corpus is not a search.
+or TypeScript in either direction**; one corpus is not a search. The same
+holds for Ruby: rack is the only Ruby corpus, `--ruby-strip-comments` is the
+backend's only lossy flag, and **no ≥40% claim is made for Ruby in either
+direction** either.
 
 Two caveats on this list:
 
@@ -429,6 +565,12 @@ Two caveats on this list:
   little syntax and the backend already discards some comments; unlike Rust,
   it has no doc-comment-sized lever to pull on top, because the comments the
   strip flag reaches are the smaller half to begin with.
+* Ruby behaves like Python, not like Rust or JS/TS: rack's default `-9.2%` is
+  the context-lossless number (nothing but whitespace removed), and it lands
+  next to requests' `-9.0%` rather than next to express's `-17.3%`. The whole
+  of Ruby's comment cost is in one opt-in flag, which is why
+  `--ruby-strip-comments` moves it further (+11.6pp) than
+  `--js-strip-comments` moves express (+8.1pp).
 * Context math: with default settings alone, ripgrep's full source drops
   from ~3.3 to ~2.7 fills of a 128k context (o200k).
 
@@ -484,6 +626,16 @@ target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
 target/release/tokenpress stats benchmarks/corpus/express --tokenizer o200k_base \
     --js-strip-comments
 
+# Ruby corpus - the paths are listed explicitly so that rack's two non-JS
+# `*.js` placeholder fixtures are not handed to the JS backend
+find benchmarks/corpus/rack -not -path '*/.git/*' \
+    \( -name '*.rb' -o -name '*.rake' -o -name '*.gemspec' -o -name '*.ru' \
+    -o -name 'Gemfile' -o -name 'Rakefile' \) -print0 >/tmp/rack-files.nul
+xargs -0 target/release/tokenpress stats --tokenizer o200k_base \
+    </tmp/rack-files.nul                       # default settings
+xargs -0 target/release/tokenpress stats --tokenizer o200k_base \
+    --ruby-strip-comments </tmp/rack-files.nul # full aggressive
+
 # repeat any of the above with --tokenizer cl100k_base for the second column
 ```
 
@@ -536,13 +688,15 @@ compares the result, per test id, against an unformatted baseline copy.
 
 ### Methodology
 
-The script (`benchmarks/verify-upstream.sh <requests|ripgrep|express|all>`)
-does the same thing for every target:
+The script
+(`benchmarks/verify-upstream.sh <requests|ripgrep|express|rack|all>`) does the
+same thing for every target:
 
 1. **Pinned corpus, SHA-asserted.** The corpus is cloned at the same tag as
    `fetch.ps1`/`fetch.sh` and its `HEAD` is asserted against a hard-coded
    commit SHA, so a retagged upstream cannot silently change what is verified
-   (requests `0e322af8`, ripgrep `4649aa97`, express `dbac741a`).
+   (requests `0e322af8`, ripgrep `4649aa97`, express `dbac741a`, rack
+   `e1f22fdb`).
 2. **Two pristine copies** of that corpus in a private work directory:
    `*-baseline` (untouched) and `*-formatted`.
 3. **Format at default settings only** — no aggressive flags. Files that fail
@@ -567,6 +721,7 @@ Isolation, per target:
 | requests | `pytest tests -q -p no:cacheprovider --junitxml=…` | one shared venv from `requirements-dev.txt` (byte-identical dependencies), editable install repointed at each copy and asserted via `requests.__file__`; private `TMPDIR` per run; proxy env vars stripped for both runs |
 | ripgrep | `cargo test --workspace --offline --no-fail-fast` | private `CARGO_TARGET_DIR` and `TMPDIR` per run; one shared `cargo fetch` warmed before both runs so `--offline` resolves identical dependencies; `--workspace` without `--features pcre2`, matching ripgrep's own non-pcre2 CI job |
 | express | `mocha --require test/support/env --check-leaks test/ test/acceptance/` — the exact arguments of express's own `npm test`, only the reporter differs | one `npm install`, run in the baseline copy and then copied to the formatted copy, so both runs execute against byte-identical dependencies; private `TMPDIR` per run |
+| rack | `bundle exec rake test:regular` and `bundle exec rake test:separate` — both of rack's test tasks, invoked separately | one `bundle install`, run in the baseline copy, its `Gemfile.lock` copied to the formatted copy and one `BUNDLE_PATH` vendored inside the work directory shared by both; private `TMPDIR` per run; proxy env vars stripped for both runs |
 
 The shared `node_modules` is not a convenience. express sets
 `package-lock=false` in its `.npmrc` and ships no lockfile, so two independent
@@ -576,6 +731,40 @@ one shared venv and the one shared `cargo fetch`. It also means the express
 target needs npm registry access; the script checks for `node` and `npm` up
 front and fails with exit 2 (infrastructure, not a result) if the install
 cannot complete.
+
+The rack target has the same problem and solves it the bundler way: rack ships
+no lockfile either, so the resolution happens once in the baseline copy and
+the resulting `Gemfile.lock` is copied to the formatted copy, with both
+resolving through it against one `BUNDLE_PATH` vendored inside the work
+directory. Nothing is installed into the user's gem home. As a side effect the
+formatted `Gemfile` — TokenPress rewrites it, it being a Ruby file — has to
+still satisfy the lock resolved from the unformatted one.
+
+Three rack-specific choices worth stating:
+
+* **Both test tasks are run, each on its own.** rack's own `rake test` chains
+  `spec` → `test:regular` → `test:separate`, but `spec` only regenerates
+  `SPEC.rdoc` from the `##` comments in `lib/rack/lint.rb` and defines no
+  tests, and rake stops at the first failing task — so one failing test in
+  `test:regular` would skip `test:separate` entirely, which is exactly what
+  happens in this sandbox. Invoking the two test tasks separately reaches
+  *more* of the suite than a bare `rake test` does, not less. The phase name
+  is part of the test id, because `test:separate` re-runs the same ids one
+  process per file.
+* **A minitest reporter plugin, not `--verbose`.** minitest ships no
+  machine-readable reporter, and its verbose console output prints the test id
+  and the result marker separately, so a suite that runs tests in threads
+  interleaves them and lines are lost (measured on another Ruby candidate:
+  1,095 parsable lines for 1,114 tests). The script writes a tiny plugin into
+  the work directory and puts it on the load path; minitest discovers it by
+  globbing `minitest/*_plugin.rb` over `$LOAD_PATH` and requires it itself.
+  It cannot be injected with `RUBYOPT=-r` instead — that runs before bundler
+  has set the load path up, so `require "minitest"` would pick the
+  interpreter's default-gem copy rather than the bundled one.
+* **The Ruby paths are formatted explicitly**, for the same reason the
+  measurement passes them explicitly: rack's two `*.js` placeholder fixtures
+  are not JavaScript and would otherwise be reported as parse errors by
+  another backend.
 
 Normalizations are needed to make the comparison meaningful, and each is
 deliberately narrow:
@@ -595,6 +784,12 @@ deliberately narrow:
   in the id rather than dropped, because 8 of express's `fullTitle`s are
   shared by two tests each; rows that are still identical after that are
   compared as a multiset, like the ripgrep doc-test ids.
+* **rack**: none. The ids minitest reports are `Class#test_name` and carry no
+  path and no line number, so nothing has to be rewritten. In particular the
+  ripgrep line-number normalization is deliberately *not* generalized to this
+  target: there a line number was part of a test's *identity*, here the one
+  test that mentions a line number asserts it as a *value*, and normalizing
+  that away would delete the finding below instead of measuring it.
 
 **Methodology gotcha worth recording**: the first requests attempt reported a
 false divergence. requests' own `extract_zipped_paths()` caches its output
@@ -704,24 +899,105 @@ Two limits on what this run proves, both specific to the pin:
   comments the backend drops unconditionally. Behavioral equivalence is not
   context equivalence — the same caveat already recorded for Rust.
 
+### rack v3.2.6 — DIVERGED on 1 test, and it is a real behavior change
+
+Run 2026-08-02, the first behavioral verification of the `tokenpress-ruby`
+backend. **Reproduced twice, byte-identically** — this is not a flake.
+
+| | Value |
+|---|---|
+| Ruby files | 105 |
+| Rewritten | 103 |
+| Refused by verification | 1 (`lib/rack/utils.rb`) |
+| Unchanged | 1 (`test/builder/bom.ru`) |
+| Verdict | **DIVERGED** — 1 test id, in both phases |
+
+| Outcome | Baseline | Formatted |
+|---|---|---|
+| passed | 2,348 | 2,346 |
+| failed | 2 | 4 |
+| skipped | 4 | 4 |
+
+2,354 rows is rack's 1,177 tests counted once per phase (`test:regular` and
+`test:separate` run the same suite, in one process and in one process per
+file).
+
+**The diverging test is `Rack::Builder::parse_file` "sets `__LINE__`
+correctly", and it fails on the formatted copy in both phases.** The fixture
+it loads, `test/builder/line.ru`, is three lines:
+
+```ruby
+# frozen_string_literal: true
+
+run lambda{ |env| [200, { 'content-type' => 'text/plain' }, [__LINE__.to_s]] }
+```
+
+and the test asserts that the app's body is `'3'`. TokenPress deletes the
+blank line — its whitespace-minimization policy, working as designed — so
+`__LINE__` evaluates to `2` and the assertion fails.
+
+Three things make this worth stating plainly rather than filing as a bug:
+
+1. **It is not Ruby-specific.** Every backend moves line numbers: Rust and
+   JS/TS delete newlines outright, Python collapses blank lines. Ruby is
+   simply the first corpus in this file whose own suite asserts on a line
+   number as a *value*. ripgrep's doc-test ids also shift, but there the line
+   number is part of an id and the harness normalizes it; no normalization can
+   legitimately hide an assertion.
+2. **Verification is structurally blind to it, by construction.** The
+   comparable artifact prism produces is location-independent — that is what
+   makes it usable as an AST-equality stand-in at all — so `__LINE__` before
+   and after are the same token in the same position, and format-time
+   verification passes. This is the second time the upstream-suite harness has
+   caught something the formatter's own check cannot see (the first was
+   ripgrep's mixed doc block).
+3. **The rewrite that broke it saved nothing.** `line.ru` is 35 tokens before
+   and 35 tokens after at `o200k_base`: a blank line and a following newline
+   cost the same one token, so deleting the blank line bought zero tokens and
+   changed observable behavior. That is a strictly bad trade on this file, and
+   it is the concrete argument for the caveat rather than a hypothetical one.
+
+The two failures present on **both** copies are
+`Rack::Directory` "return 404 for unreadable directories", once per phase. The
+test writes a file, `chmod`s it to `0`, and expects the server to refuse it;
+the run environment is root, for whom mode `0` is still readable, so it gets
+`200`. That is a sandbox artifact, it fails identically on the unformatted
+copy, and it is exactly why the comparison is against a baseline rather than
+against "all green". The 4 skips (2 per phase) are rack's own unconditional
+skips in `spec_request.rb`.
+
+What this run does *not* show: no other rack test noticed the reformatting.
+2,346 of 2,354 outcomes are `passed` on both sides, including rack's own
+fixtures for `__END__`, `=begin`/`=end` embdocs, a leading byte-order mark and
+the `frozen_string_literal` magic comment — the four shapes most likely to
+break a whitespace rewriter, all of which survive.
+
 ### Scope and caveats
 
 * These runs verify **default settings only**. The aggressive settings above
   (`--py-strip-comments`, `--py-strip-annotations`, `--rs-strip-doc-comments`,
-  `--js-strip-comments`) are knowingly lossy and are not covered by this
-  harness — stripping doc comments would delete the doc tests being compared.
+  `--js-strip-comments`, `--ruby-strip-comments`) are knowingly lossy and are
+  not covered by this harness — stripping doc comments would delete the doc
+  tests being compared.
 * The Rust and JS/TS comment-loss caveats still stand: Rust `//` and `/* */`
   comments, and JS/TS trailing and expression-position comments, are dropped
   unconditionally, and no test suite can detect that, because comments do not
-  run. Behavioral equivalence is not context equivalence.
-* Only three corpora are covered (requests, ripgrep, express). The larger
+  run. Behavioral equivalence is not context equivalence. Ruby is the
+  exception — it drops no comments at default settings — but it shares the
+  line-number caveat below.
+* **Line numbers are not preserved by any backend**, and the rack run above is
+  the measured proof that this is observable: `__LINE__`, `caller`, backtraces
+  and anything derived from them move when blank lines and indentation go.
+  Only rack's suite happens to assert on one.
+* Only four corpora are covered (requests, ripgrep, express, rack). The larger
   corpora in the table above are verified structurally, not behaviorally.
-* The 5 requests failures are environment artifacts, not upstream-green
-  results; the claim is *identical outcomes*, not *all tests pass*.
+* The 5 requests failures and the 2 rack failures are environment artifacts,
+  not upstream-green results; the claim is *identical outcomes*, not *all
+  tests pass*.
 * The express target additionally requires `node`, `npm` and npm registry
-  access. It is the only target with a network prerequisite beyond the git
-  clone; without it the run exits 2 (never ran) rather than reporting a
-  verdict.
+  access; the rack target requires `ruby`, `bundler` and rubygems.org access.
+  They are the only targets with a network prerequisite beyond the git clone;
+  without it the run exits 2 (never ran) rather than reporting a verdict.
 
 ### Reproduce
 
@@ -729,6 +1005,8 @@ Two limits on what this run proves, both specific to the pin:
 ./benchmarks/verify-upstream.sh requests   # pytest, junit per-test-id diff
 ./benchmarks/verify-upstream.sh ripgrep    # cargo test, multiset diff
 ./benchmarks/verify-upstream.sh express    # mocha, JSON reporter per-test-id diff
+./benchmarks/verify-upstream.sh rack       # minitest, reporter-plugin per-test-id diff
 ./benchmarks/verify-upstream.sh all
 # exit 0 = identical, 1 = diverged, 2 = the comparison never ran
+# the rack target currently exits 1 - see the __LINE__ finding above
 ```
