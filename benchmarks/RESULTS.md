@@ -1,6 +1,7 @@
 # TokenPress Benchmark Results
 
-Measured: 2026-07-31 (open-model tokenizers added 2026-08-01)
+Measured: 2026-07-31 (open-model tokenizers added 2026-08-01; the
+JavaScript/TypeScript corpus added 2026-08-02)
 Binary: `cargo build --release -p tokenpress-cli` at the commit containing this file
 Command: `tokenpress stats <corpus> --tokenizer <name> [options]`
 Platform: Windows 11, rustc 1.95.0
@@ -17,9 +18,10 @@ Platform: Windows 11, rustc 1.95.0
 | langchain-ai/langchain | main snapshot | `a1a1ad3b` | 2,530 `.py` |
 | huggingface/transformers | main snapshot | `71c6f699` | 4,700 `.py` |
 | astral-sh/uv | main snapshot | `be765050` | 718 `.rs` + `.py` |
+| expressjs/express | v5.2.1 | `dbac741a` | 142 `.js` |
 
 **Every parseable file passed verification** (re-parse + token/AST
-equivalence). The only skipped files across ~13,000 are two intentionally
+equivalence). The only skipped files across ~13,100 are two intentionally
 broken test fixtures: Django's `tests_syntax_error.py` (invalid Python by
 design) and LangChain's `non-utf8-encoding.py` (invalid UTF-8 by design) —
 both correctly rejected with per-file errors.
@@ -41,7 +43,7 @@ revision-pinned by `benchmarks/fetch.ps1`.
 
 ## Results
 
-### Default settings (Python: comments/docstrings/annotations kept; Rust: doc comments kept, regular comments dropped; adjacent imports merged)
+### Default settings (Python: comments/docstrings/annotations kept; Rust: doc comments kept, regular comments dropped; JS/TS: only some comments kept; adjacent imports merged)
 
 Context-lossless for Python — whitespace/blank-line/indent minimization plus
 PY09 import merging only.
@@ -52,6 +54,18 @@ re-emits from the `syn` token stream, which does not carry regular comments:
 `//!`) survive. Part of the default savings for every Rust corpus below —
 ripgrep in this table, tokio and uv in the next — therefore comes from
 discarded comments, not from syntactic noise alone.
+
+**JavaScript/TypeScript is not context-lossless at default settings either,
+and the loss is partial rather than total.** The JS/TS backend re-emits from
+its own code generator: **trailing comments and comments in expression
+position are always dropped, with or without `--js-strip-comments`.** Only
+leading statement-level comments, jsdoc (`/** */`), annotation comments (such
+as `#__PURE__`) and legal comments (`//!`, `/*!`, `@license`, `@preserve`)
+survive. That is a property of the generator, not an option, and verification
+cannot detect it because its canonical form is comment-free by construction.
+Part of express's default savings below therefore comes from discarded
+comments. The CLI prints this caveat on stderr once per run that touches a
+JS/TS file.
 
 | Corpus | Tokenizer | Before | After | Saved |
 |---|---|---|---|---|
@@ -81,6 +95,46 @@ Token totals in parentheses are the o200k before-counts. Absolute savings at
 o200k: Django 435k, FastAPI 163k, tokio 290k, LangChain 370k, transformers
 1.46M, uv 641k tokens per full-repo prompt. Qwen3.6 consistently benefits
 the most (its tokenizer prices whitespace runs highest).
+
+### JavaScript/TypeScript — expressjs/express (default settings, added 2026-08-02)
+
+Measured 2026-08-02, Linux LF checkout, rustc 1.95.0, on the commit pinned in
+`fetch.sh`/`fetch.ps1` (`dbac741a49a5a64336b70c06e85c2e2706e36336`, tag
+`v5.2.1`). This is the first corpus for the `tokenpress-js` backend, so it is
+reported on its own rather than folded into the tables above: those were
+measured on Windows with a CRLF checkout, and the line-ending caveat further
+down applies to any comparison across the two.
+
+**Only the two embedded tokenizers were measured** — the measurement
+environment cannot reach huggingface.co, so the Qwen3.6 / GLM-5.2 / Kimi K3
+columns are pending here exactly as they are for the full-aggressive run
+below, to be filled in from an environment that can fetch those
+revision-pinned tokenizer files.
+
+The whole tree is measured, matching every other corpus: `index.js`, `lib/`,
+`test/`, `examples/` and `benchmarks/`. All 142 files are `.js`; there is no
+TypeScript and no JSX in this pin, so the **JSX-text caveat (JSX children are
+re-emitted verbatim and save nothing) is untested by these numbers** and a
+`.jsx`/`.tsx`-heavy corpus would be expected to save less.
+
+| Corpus | Tokenizer | Files | Before | After | Saved |
+|---|---|---|---|---|---|
+| express | o200k_base | 142 | 135,740 | 112,307 | **-17.3%** |
+| express | cl100k_base | 142 | 135,206 | 111,338 | **-17.7%** |
+| express | Qwen3.6 | — | — | — | *pending* |
+| express | GLM-5.2 | — | — | — | *pending* |
+| express | Kimi K3 | — | — | — | *pending* |
+
+**0 verification refusals** across all 142 files, at both tokenizers. Absolute
+saving at o200k: 23,433 tokens per full-repo prompt.
+
+Read `-17.3%` with the comment caveat above: at default settings this run has
+already lost express's trailing and expression-position comments, so it is not
+the context-lossless number that the Python corpora report.
+
+```bash
+target/release/tokenpress stats benchmarks/corpus/express --tokenizer o200k_base
+```
 
 ### Aggressive settings (accepting context loss)
 
@@ -112,7 +166,9 @@ in the next subsection.
 #### Aggressive + strip_docstrings (full aggressive, added 2026-08-01)
 
 Measured: 2026-08-01, Linux, rustc 1.95.0, same commit-pinned corpus
-(`benchmarks/fetch.sh`). **Only the two embedded tokenizers were measured**
+(`benchmarks/fetch.sh`); the express row was measured the same way on
+2026-08-02, when the JS/TS backend and its corpus were added. **Only the two
+embedded tokenizers were measured**
 — the measurement environment cannot reach huggingface.co, so the Qwen3.6 /
 GLM-5.2 / Kimi K3 columns are absent here and are to be filled in from an
 environment that can fetch those revision-pinned tokenizer files.
@@ -126,6 +182,10 @@ Exact flags:
   flags are language-scoped — passing the Rust flag to a pure-Python tree
   (or vice versa) is a verified no-op, so a mixed tree can safely take all
   four at once.
+* JavaScript corpus (express): `--js-strip-comments`. It only reaches the
+  comments the backend keeps at all — the trailing and expression-position
+  comments are gone either way (see the caveat above), so this flag is a
+  smaller lever for JS/TS than `--rs-strip-doc-comments` is for Rust.
 
 **Line-ending caveat — read before comparing against the tables above.**
 The earlier tables were measured on Windows, where git checks the corpus out
@@ -155,6 +215,8 @@ formatter change.**
 | transformers | cl100k_base | 4,700 | 16,956,696 | 10,927,850 | **-35.6%** |
 | uv | o200k_base | 718 | 4,806,817 | 3,773,907 | **-21.5%** |
 | uv | cl100k_base | 718 | 4,779,673 | 3,739,347 | **-21.8%** |
+| express | o200k_base | 142 | 135,740 | 101,253 | **-25.4%** |
+| express | cl100k_base | 142 | 135,206 | 100,122 | **-25.9%** |
 
 `Files` counts files that were successfully formatted; refused files (next
 subsection) are excluded from both the file count and the token totals. The
@@ -183,6 +245,22 @@ Docstring stripping is the single largest aggressive lever for
 documentation-heavy Python (langchain +16.4pp, requests +15.9pp). It barely
 moves uv (+0.1pp), which is 87% Rust by file count, or FastAPI (+1.7pp),
 whose bulk is annotations and inline comments rather than prose docstrings.
+
+##### What `--js-strip-comments` adds
+
+Same corpus, same LF checkout, same tokenizer (o200k_base), the added flag
+being the only difference:
+
+| Corpus | Without comment stripping | With `--js-strip-comments` | Delta |
+|---|---|---|---|
+| express | -17.3% | **-25.4%** | +8.1pp |
+
++8.1pp is the *whole* opt-in cost of comment stripping for JS/TS, and it is
+smaller than it looks: the trailing and expression-position comments were
+already gone from the -17.3% baseline, so the flag only buys the leading
+statement-level comments, jsdoc, annotation and legal comments on top. Unlike
+`--rs-strip-doc-comments`, it is not the difference between "all comments
+kept" and "no comments kept" — no JS/TS setting keeps all of them.
 
 ##### Verification refusals under `--py-strip-annotations` (FIXED 2026-08-01)
 
@@ -276,7 +354,7 @@ Recorded for the ROADMAP P3 task ("hunt for well-known projects per
 supported language where the aggressive setting clears ≥40% token
 reduction"). Measured 2026-08-01 on the embedded tokenizers only.
 
-**Clears ≥40% — 1 of 8 corpora:**
+**Clears ≥40% — 1 of 9 corpora:**
 
 | Project | Language | Commit | o200k_base | cl100k_base | Absolute saving (o200k) |
 |---|---|---|---|---|---|
@@ -304,10 +382,15 @@ stream, so more than half of a full-repo prompt disappears.
 Flags: Python projects `--py-strip-comments --py-strip-annotations
 --py-strip-docstrings`; ripgrep `--rs-strip-doc-comments`.
 
-**Well under 40%:** django/django `50d706d0` (-23.1% / -23.8%) and
+**Well under 40%:** expressjs/express `dbac741a` (-25.4% / -25.9%,
+`--js-strip-comments`), django/django `50d706d0` (-23.1% / -23.8%) and
 astral-sh/uv `be765050` (-21.5% / -21.8%, all four flags). Django's bulk is
 test fixtures and data tables rather than prose; uv is dominated by Rust
-source whose doc comments are a small fraction of the tree.
+source whose doc comments are a small fraction of the tree. express is the
+only JavaScript corpus and the JS/TS backend has no lever comparable to
+`--rs-strip-doc-comments` or `--py-strip-docstrings` — no JS/TS showcase
+candidate has been hunted for yet, so **no ≥40% claim is made for JavaScript
+or TypeScript in either direction**; one corpus is not a search.
 
 Two caveats on this list:
 
@@ -341,6 +424,11 @@ Two caveats on this list:
   o200k's 421k on the same corpus), so whitespace removal pays off more.
   This is the strongest evidence for the premise that TokenPress optimizes
   tokens, not characters.
+* JavaScript lands between the two: express saves -17.3% at default settings
+  and -25.4% with `--js-strip-comments`. Like Rust, JS/TS newlines carry
+  little syntax and the backend already discards some comments; unlike Rust,
+  it has no doc-comment-sized lever to pull on top, because the comments the
+  strip flag reaches are the smaller half to begin with.
 * Context math: with default settings alone, ripgrep's full source drops
   from ~3.3 to ~2.7 fills of a 128k context (o200k).
 
@@ -358,6 +446,7 @@ cargo build --release -p tokenpress-cli
 # aggressive settings
 .\target\release\tokenpress.exe stats benchmarks\corpus\requests --tokenizer o200k_base --py-strip-comments --py-strip-annotations
 .\target\release\tokenpress.exe stats benchmarks\corpus\ripgrep --tokenizer o200k_base --rs-strip-doc-comments
+.\target\release\tokenpress.exe stats benchmarks\corpus\express --tokenizer o200k_base --js-strip-comments
 ```
 
 Bash equivalent, including the full-aggressive runs added 2026-08-01. Note
@@ -372,6 +461,7 @@ cargo build --release -p tokenpress-cli
 # default settings
 target/release/tokenpress stats benchmarks/corpus/requests --tokenizer o200k_base
 target/release/tokenpress stats benchmarks/corpus/ripgrep --tokenizer o200k_base
+target/release/tokenpress stats benchmarks/corpus/express --tokenizer o200k_base
 
 # full aggressive — Python corpora
 for c in requests django fastapi langchain transformers; do
@@ -389,6 +479,10 @@ done
 target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
     --py-strip-comments --py-strip-annotations --py-strip-docstrings \
     --rs-strip-doc-comments
+
+# full aggressive - JavaScript corpus
+target/release/tokenpress stats benchmarks/corpus/express --tokenizer o200k_base \
+    --js-strip-comments
 
 # repeat any of the above with --tokenizer cl100k_base for the second column
 ```
@@ -442,13 +536,13 @@ compares the result, per test id, against an unformatted baseline copy.
 
 ### Methodology
 
-The script (`benchmarks/verify-upstream.sh <requests|ripgrep|all>`) does the
-same thing for both targets:
+The script (`benchmarks/verify-upstream.sh <requests|ripgrep|express|all>`)
+does the same thing for every target:
 
 1. **Pinned corpus, SHA-asserted.** The corpus is cloned at the same tag as
    `fetch.ps1`/`fetch.sh` and its `HEAD` is asserted against a hard-coded
    commit SHA, so a retagged upstream cannot silently change what is verified
-   (requests `0e322af8`, ripgrep `4649aa97`).
+   (requests `0e322af8`, ripgrep `4649aa97`, express `dbac741a`).
 2. **Two pristine copies** of that corpus in a private work directory:
    `*-baseline` (untouched) and `*-formatted`.
 3. **Format at default settings only** — no aggressive flags. Files that fail
@@ -472,8 +566,18 @@ Isolation, per target:
 |---|---|---|
 | requests | `pytest tests -q -p no:cacheprovider --junitxml=…` | one shared venv from `requirements-dev.txt` (byte-identical dependencies), editable install repointed at each copy and asserted via `requests.__file__`; private `TMPDIR` per run; proxy env vars stripped for both runs |
 | ripgrep | `cargo test --workspace --offline --no-fail-fast` | private `CARGO_TARGET_DIR` and `TMPDIR` per run; one shared `cargo fetch` warmed before both runs so `--offline` resolves identical dependencies; `--workspace` without `--features pcre2`, matching ripgrep's own non-pcre2 CI job |
+| express | `mocha --require test/support/env --check-leaks test/ test/acceptance/` — the exact arguments of express's own `npm test`, only the reporter differs | one `npm install`, run in the baseline copy and then copied to the formatted copy, so both runs execute against byte-identical dependencies; private `TMPDIR` per run |
 
-Two normalizations are needed to make the comparison meaningful, and both are
+The shared `node_modules` is not a convenience. express sets
+`package-lock=false` in its `.npmrc` and ships no lockfile, so two independent
+`npm install` runs may resolve different versions inside the declared semver
+ranges — installing once and copying the tree is the node equivalent of the
+one shared venv and the one shared `cargo fetch`. It also means the express
+target needs npm registry access; the script checks for `node` and `npm` up
+front and fails with exit 2 (infrastructure, not a result) if the install
+cannot complete.
+
+Normalizations are needed to make the comparison meaningful, and each is
 deliberately narrow:
 
 * **requests**: parametrized test ids can embed the tree path (the suite
@@ -486,6 +590,11 @@ deliberately narrow:
   tests must still run and still reach the same outcome. Ids that collide
   after stripping are kept as duplicate rows and compared as a multiset, so a
   change in any single code block still shows up.
+* **express**: mocha records each test's defining file as an absolute path, so
+  the run directory is rewritten to a `<tree>` placeholder. The file is kept
+  in the id rather than dropped, because 8 of express's `fullTitle`s are
+  shared by two tests each; rows that are still identical after that are
+  compared as a multiset, like the ripgrep doc-test ids.
 
 **Methodology gotcha worth recording**: the first requests attempt reported a
 false divergence. requests' own `extract_zipped_paths()` caches its output
@@ -555,25 +664,71 @@ behavioral divergence that the formatter's own verification could not see, in
 a corpus that had already passed every structural check reported earlier in
 this file.
 
+### express v5.2.1 — IDENTICAL
+
+Run 2026-08-02, the first behavioral verification of the `tokenpress-js`
+backend.
+
+| | Value |
+|---|---|
+| `.js` files | 142 |
+| Rewritten | 141 |
+| Refused by verification | 0 |
+| Verdict | **IDENTICAL** |
+
+| Outcome | Baseline | Formatted |
+|---|---|---|
+| passed | 1238 | 1238 |
+| failed | 0 | 0 |
+| pending | 0 | 0 |
+
+Every one of express's 1,238 tests reached the same outcome on both copies,
+and the script exited 0. Unlike the requests run, this suite is green on both
+sides — it drives its own ephemeral localhost servers through supertest and
+needs no outbound network — so here *identical outcomes* and *all tests pass*
+happen to coincide. The claim being made is still only the first one.
+
+The single unrewritten file is `examples/static-files/public/js/app.js`, a
+one-line stub whose entire content is `// foo` — a leading statement-level
+comment, which the backend keeps, so the file is already in TokenPress's
+canonical form. It is not a refusal, and the formatter reported no error for
+it.
+
+Two limits on what this run proves, both specific to the pin:
+
+* **express v5.2.1 is 142 `.js` files and nothing else** — no TypeScript, no
+  JSX. The `.ts`/`.mts`/`.cts`/`.tsx`/`.jsx` paths of the backend are covered
+  by the crate's own tests, not by this corpus.
+* **No test can observe the comment loss.** Comments do not run, so a suite
+  that is IDENTICAL says nothing about the trailing and expression-position
+  comments the backend drops unconditionally. Behavioral equivalence is not
+  context equivalence — the same caveat already recorded for Rust.
+
 ### Scope and caveats
 
 * These runs verify **default settings only**. The aggressive settings above
-  (`--py-strip-comments`, `--py-strip-annotations`, `--rs-strip-doc-comments`)
-  are knowingly lossy and are not covered by this harness — stripping doc
-  comments would delete the doc tests being compared.
-* The Rust comment-loss caveat still stands: `//` and `/* */` comments are
-  dropped, and no test suite can detect that, because comments do not run.
-  Behavioral equivalence is not context equivalence.
-* Only two corpora are covered (requests, ripgrep). The larger corpora in the
-  table above are verified structurally, not behaviorally.
+  (`--py-strip-comments`, `--py-strip-annotations`, `--rs-strip-doc-comments`,
+  `--js-strip-comments`) are knowingly lossy and are not covered by this
+  harness — stripping doc comments would delete the doc tests being compared.
+* The Rust and JS/TS comment-loss caveats still stand: Rust `//` and `/* */`
+  comments, and JS/TS trailing and expression-position comments, are dropped
+  unconditionally, and no test suite can detect that, because comments do not
+  run. Behavioral equivalence is not context equivalence.
+* Only three corpora are covered (requests, ripgrep, express). The larger
+  corpora in the table above are verified structurally, not behaviorally.
 * The 5 requests failures are environment artifacts, not upstream-green
   results; the claim is *identical outcomes*, not *all tests pass*.
+* The express target additionally requires `node`, `npm` and npm registry
+  access. It is the only target with a network prerequisite beyond the git
+  clone; without it the run exits 2 (never ran) rather than reporting a
+  verdict.
 
 ### Reproduce
 
 ```bash
 ./benchmarks/verify-upstream.sh requests   # pytest, junit per-test-id diff
 ./benchmarks/verify-upstream.sh ripgrep    # cargo test, multiset diff
+./benchmarks/verify-upstream.sh express    # mocha, JSON reporter per-test-id diff
 ./benchmarks/verify-upstream.sh all
 # exit 0 = identical, 1 = diverged, 2 = the comparison never ran
 ```

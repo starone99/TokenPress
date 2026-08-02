@@ -25,6 +25,7 @@ known=(
     "langchain|https://github.com/langchain-ai/langchain|a1a1ad3bb3eb6cf7680b39ff0fb37f7150393a25"
     "transformers|https://github.com/huggingface/transformers|71c6f699ac9b3f8fc42a6a3e9dc59034c349a678"
     "uv|https://github.com/astral-sh/uv|be765050837d81badb20e1f70eec62146c586902"
+    "express|https://github.com/expressjs/express|dbac741a49a5a64336b70c06e85c2e2706e36336"
 )
 for entry in "${known[@]}"; do
     IFS='|' read -r name url sha <<< "$entry"

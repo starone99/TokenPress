@@ -21,7 +21,8 @@ $known = @(
     @{ name = "tokio";        url = "https://github.com/tokio-rs/tokio";           sha = "adc2ae7af2caaea83985fbdfbc7884c159c486f2" },
     @{ name = "langchain";    url = "https://github.com/langchain-ai/langchain";   sha = "a1a1ad3bb3eb6cf7680b39ff0fb37f7150393a25" },
     @{ name = "transformers"; url = "https://github.com/huggingface/transformers"; sha = "71c6f699ac9b3f8fc42a6a3e9dc59034c349a678" },
-    @{ name = "uv";           url = "https://github.com/astral-sh/uv";             sha = "be765050837d81badb20e1f70eec62146c586902" }
+    @{ name = "uv";           url = "https://github.com/astral-sh/uv";             sha = "be765050837d81badb20e1f70eec62146c586902" },
+    @{ name = "express";      url = "https://github.com/expressjs/express";        sha = "dbac741a49a5a64336b70c06e85c2e2706e36336" }
 )
 foreach ($k in $known) {
     $dest = Join-Path $corpus $k.name

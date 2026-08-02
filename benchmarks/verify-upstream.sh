@@ -7,7 +7,7 @@
 # settings, and runs the project's real test suite against both. The run only
 # succeeds if every test reaches the same outcome on both copies.
 #
-# Usage: verify-upstream.sh <requests|ripgrep|all>
+# Usage: verify-upstream.sh <requests|ripgrep|express|all>
 #
 # Exit codes: 0 = outcomes identical, 1 = outcomes diverged, 2 = usage or
 # infrastructure error (the comparison never ran).
@@ -25,6 +25,10 @@ requests_sha="0e322af87745eff34caffe4df68456ebc20d9068"
 # Same pin as fetch.sh (BurntSushi/ripgrep 14.1.1), asserted the same way.
 ripgrep_tag="14.1.1"
 ripgrep_sha="4649aa9700619f94cf9c66876e9549d83420e16c"
+
+# Same pin as fetch.sh (expressjs/express v5.2.1), asserted the same way.
+express_tag="v5.2.1"
+express_sha="dbac741a49a5a64336b70c06e85c2e2706e36336"
 
 work_dir=""
 cleanup() {
@@ -48,7 +52,9 @@ targets:
              unformatted and the formatted copy, require identical outcomes
   ripgrep    BurntSushi/ripgrep 14.1.1 - the same comparison against its
              cargo test suite
-  all        every target (requests, then ripgrep)
+  express    expressjs/express v5.2.1 - the same comparison against its mocha
+             suite (needs node, npm and npm registry access)
+  all        every target (requests, then ripgrep, then express)
 EOF
 }
 
@@ -91,6 +97,22 @@ ensure_ripgrep_corpus() {
         die "corpus $dest is at $head, expected the pinned $ripgrep_sha"
     fi
     echo "corpus: BurntSushi/ripgrep $ripgrep_tag ($ripgrep_sha)"
+}
+
+# The same for the pinned express corpus.
+ensure_express_corpus() {
+    local dest="$corpus/express"
+    if [ ! -e "$dest" ]; then
+        mkdir -p "$corpus"
+        git clone --quiet --depth 1 --branch "$express_tag" \
+            https://github.com/expressjs/express "$dest"
+    fi
+    local head
+    head="$(git -C "$dest" rev-parse HEAD)"
+    if [ "$head" != "$express_sha" ]; then
+        die "corpus $dest is at $head, expected the pinned $express_sha"
+    fi
+    echo "corpus: expressjs/express $express_tag ($express_sha)"
 }
 
 # --- helpers ----------------------------------------------------------------
@@ -429,6 +451,155 @@ verify_ripgrep() {
     return 1
 }
 
+# --- express ----------------------------------------------------------------
+
+# Runs the upstream mocha suite in $1, its JSON report to $2 and its console
+# output to $3.
+#
+# The suite is invoked exactly as express's own `npm test` script does
+# (`--require test/support/env --check-leaks test/ test/acceptance/`); only the
+# reporter differs, because `spec` output cannot be reduced to per-test ids
+# reliably. The JSON reporter is asked to write to a file rather than stdout so
+# that anything the suite itself prints cannot corrupt the report.
+#
+# Each run gets a private TMPDIR, mirroring the pytest and cargo runners: parts
+# of the suite write fixture files under the temp directory, and a shared one
+# would let the two runs see each other's leftovers.
+#
+# mocha exits with the number of failing tests, so any exit code is expected -
+# failures are the thing being compared. What is not acceptable is no report at
+# all, which means mocha never ran and there is nothing to compare.
+run_mocha() {
+    local dir="$1" report="$2" log="$3"
+    local tmp="$log.tmpdir"
+    mkdir -p "$tmp" || die "cannot create the run directory for $log"
+    local rc=0
+    (
+        cd "$dir"
+        env TMPDIR="$tmp" ./node_modules/.bin/mocha \
+            --require test/support/env \
+            --reporter json --reporter-option "output=$report" \
+            --check-leaks test/ test/acceptance/
+    ) >"$log" 2>&1 || rc=$?
+    if [ ! -s "$report" ]; then
+        tail -n 30 "$log" >&2
+        die "mocha exited $rc in $dir without writing a report (it never produced a comparable result)"
+    fi
+}
+
+# Turns a mocha JSON report into a sorted "outcome<TAB>file<TAB>test id"
+# listing. The rows are built from the passes/failures/pending arrays rather
+# than from `tests`, because only those carry the outcome.
+#
+# The test file is part of the id because express's suite has same-named tests
+# in different files (8 fullTitles are shared by two tests each), and the run
+# tree is rewritten to a placeholder because the report records absolute paths.
+# Rows that are still identical after that are kept as duplicates and compared
+# as a multiset, exactly like the cargo doc-test ids.
+#
+# node does the parsing: the express target already requires it, so this adds
+# no prerequisite that the target did not have.
+outcomes_from_mocha() {
+    local report="$1" tree="$2"
+    node -e '
+const fs = require("fs");
+const [report, tree] = process.argv.slice(1);
+const data = JSON.parse(fs.readFileSync(report, "utf8"));
+const rows = [];
+for (const [outcome, key] of [["passed", "passes"], ["failed", "failures"], ["pending", "pending"]]) {
+    for (const test of data[key] || []) {
+        const file = (test.file || "").split(tree).join("<tree>");
+        rows.push(outcome + "\t" + file + "\t" + (test.fullTitle || ""));
+    }
+}
+rows.sort();
+process.stdout.write(rows.map((row) => row + "\n").join(""));
+' "$report" "$tree"
+}
+
+verify_express() {
+    ensure_express_corpus
+
+    local tokenpress
+    tokenpress="$(build_tokenpress)"
+
+    local baseline="$work_dir/express-baseline"
+    local formatted="$work_dir/express-formatted"
+    cp -a "$corpus/express" "$baseline" || die "cannot copy the express corpus"
+    cp -a "$corpus/express" "$formatted" || die "cannot copy the express corpus"
+
+    # Default settings only - no --js-strip-comments. A JS/TS file makes
+    # TokenPress warn on stderr that trailing and expression-position comments
+    # are dropped unconditionally; that is by design and not an error, and no
+    # test can observe it because comments do not run. Only the "error: " lines
+    # on stdout are refusals, and a refused file is left untouched and takes
+    # part in the test run unformatted.
+    local format_log="$work_dir/express-format.log"
+    local rc=0
+    "$tokenpress" format "$formatted" >"$format_log" 2>&1 || rc=$?
+    local refused
+    refused="$(grep -c '^error: ' "$format_log" || true)"
+    if [ "$rc" -ne 0 ] && [ "$refused" -eq 0 ]; then
+        tail -n 30 "$format_log" >&2
+        die "tokenpress format exited $rc"
+    fi
+    # Counted before the install below, so node_modules cannot contribute to
+    # either number. All eight supported extensions are counted, not just .js,
+    # so the figure stays honest if the pin ever moves to a mixed tree.
+    local changed
+    changed="$(git -C "$formatted" status --porcelain | wc -l)"
+    local total
+    total="$(find "$formatted" \
+        \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \
+        -o -name '*.ts' -o -name '*.mts' -o -name '*.cts' -o -name '*.tsx' \) \
+        -not -path '*/.git/*' -not -path '*/node_modules/*' | wc -l)"
+
+    # express sets package-lock=false in .npmrc and ships no lockfile, so two
+    # independent `npm install` runs can resolve different versions inside the
+    # declared semver ranges. The install therefore happens once and the
+    # resulting tree is copied to the other side, which is the node equivalent
+    # of the one shared venv and the one shared cargo fetch above: both runs
+    # then execute against byte-identical dependencies.
+    (cd "$baseline" && npm install --no-audit --no-fund --loglevel=error) ||
+        die "npm install failed in $baseline - the express target needs npm registry access"
+    cp -a "$baseline/node_modules" "$formatted/node_modules" ||
+        die "cannot copy the installed dependencies to $formatted"
+
+    run_mocha "$baseline" "$work_dir/express-baseline.json" \
+        "$work_dir/express-baseline.log"
+    run_mocha "$formatted" "$work_dir/express-formatted.json" \
+        "$work_dir/express-formatted.log"
+
+    outcomes_from_mocha "$work_dir/express-baseline.json" "$baseline" \
+        >"$work_dir/express-baseline.outcomes"
+    outcomes_from_mocha "$work_dir/express-formatted.json" "$formatted" \
+        >"$work_dir/express-formatted.outcomes"
+    if [ ! -s "$work_dir/express-baseline.outcomes" ]; then
+        die "no test results were parsed from the baseline run"
+    fi
+
+    echo
+    echo "express $express_tag"
+    echo "  .js files          $total"
+    echo "  rewritten          $changed"
+    echo "  refused by verify  $refused"
+    echo "  unchanged          $((total - changed - refused))"
+    echo "baseline outcomes:"
+    tally "$work_dir/express-baseline.outcomes"
+    echo "formatted outcomes:"
+    tally "$work_dir/express-formatted.outcomes"
+
+    if diff -u "$work_dir/express-baseline.outcomes" \
+        "$work_dir/express-formatted.outcomes" \
+        >"$work_dir/express-outcomes.diff"; then
+        echo "verdict: IDENTICAL - every test reached the same outcome on both copies"
+        return 0
+    fi
+    echo "verdict: DIVERGED - the formatted copy behaves differently:"
+    sed 's/^/  /' "$work_dir/express-outcomes.diff"
+    return 1
+}
+
 # --- main -------------------------------------------------------------------
 
 main() {
@@ -441,7 +612,7 @@ main() {
         usage
         exit 0
         ;;
-    requests | ripgrep | all) ;;
+    requests | ripgrep | express | all) ;;
     *)
         usage
         exit 2
@@ -449,9 +620,18 @@ main() {
     esac
 
     command -v cargo >/dev/null || die "cargo is required"
-    if [ "$1" != "ripgrep" ]; then
-        command -v python3 >/dev/null || die "python3 is required"
-    fi
+    case "$1" in
+    requests | all) command -v python3 >/dev/null || die "python3 is required" ;;
+    esac
+    # Checked up front rather than at the install: the express target is the
+    # only one with a network prerequisite beyond the git clone, and finding
+    # that out after a full format and test run would waste the whole run.
+    case "$1" in
+    express | all)
+        command -v node >/dev/null || die "node is required for the express target"
+        command -v npm >/dev/null || die "npm is required for the express target"
+        ;;
+    esac
     work_dir="$(mktemp -d "${TMPDIR:-/tmp}/tokenpress-verify-XXXXXX")"
 
     # A target returns 1 when the outcomes diverged; that is a result, not an
@@ -462,9 +642,11 @@ main() {
     case "$1" in
     requests) verify_requests || diverged=1 ;;
     ripgrep) verify_ripgrep || diverged=1 ;;
+    express) verify_express || diverged=1 ;;
     all)
         verify_requests || diverged=1
         verify_ripgrep || diverged=1
+        verify_express || diverged=1
         ;;
     esac
     return "$diverged"

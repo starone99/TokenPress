@@ -1,6 +1,6 @@
 # TokenPress Showcase
 
-Measured token reduction on eight commit-pinned open-source repositories, at
+Measured token reduction on nine commit-pinned open-source repositories, at
 the *aggressive* (lossy) settings. Every number on this page is taken from
 [`RESULTS.md`](RESULTS.md), which holds the full methodology, the platform
 notes, and the default-setting numbers. Nothing here is extrapolated.
@@ -13,7 +13,7 @@ embedded in the binary and were measured locally.
 
 ## Headline: tokio, -50.5%
 
-The only corpus of the eight that clears a 40% reduction *on the two embedded
+The only corpus of the nine that clears a 40% reduction *on the two embedded
 OpenAI tokenizers measured here*. Per-model candidate lists are still pending
 (see caveats).
 
@@ -45,8 +45,8 @@ target/release/tokenpress stats benchmarks/corpus/tokio \
 
 ## Full corpus table (aggressive settings)
 
-Measured 2026-08-01 on a Linux LF checkout of the pinned commits. `Files` is
-the number of files successfully formatted.
+Measured 2026-08-01 on a Linux LF checkout of the pinned commits (express
+2026-08-02, same way). `Files` is the number of files successfully formatted.
 
 | Project | Lang | Pinned commit | Files | `o200k_base` | `cl100k_base` |
 |---|---|---|---|---|---|
@@ -56,6 +56,7 @@ the number of files successfully formatted.
 | [fastapi/fastapi](https://github.com/fastapi/fastapi) | Python | `95f8322ee1dcda7ceace7b1c4f6c9915b36d748f` | 1,136 | -36.2% | -36.9% |
 | [psf/requests](https://github.com/psf/requests) | Python | `0e322af8` (tag v2.32.3) | 36 | -36.0% | -36.3% |
 | [huggingface/transformers](https://github.com/huggingface/transformers) | Python | `71c6f699ac9b3f8fc42a6a3e9dc59034c349a678` | 4,700 | -34.9% | -35.6% |
+| [expressjs/express](https://github.com/expressjs/express) | JavaScript | `dbac741a49a5a64336b70c06e85c2e2706e36336` (tag v5.2.1) | 142 | -25.4% | -25.9% |
 | [django/django](https://github.com/django/django) | Python | `50d706d0aebcc2d073c8d034b6e22fc98fad49f2` | 2,924 | -23.1% | -23.8% |
 | [astral-sh/uv](https://github.com/astral-sh/uv) | Rust + Python | `be765050837d81badb20e1f70eec62146c586902` | 718 | -21.5% | -21.8% |
 
@@ -69,6 +70,7 @@ Raw token counts for the same runs:
 | fastapi | 731,846 | 466,724 | 728,430 | 459,582 |
 | requests | 86,331 | 55,265 | 86,014 | 54,827 |
 | transformers | 17,030,922 | 11,086,759 | 16,956,696 | 10,927,850 |
+| express | 135,740 | 101,253 | 135,206 | 100,122 |
 | django | 4,191,951 | 3,221,811 | 4,122,515 | 3,141,905 |
 | uv | 4,806,817 | 3,773,907 | 4,779,673 | 3,739,347 |
 
@@ -78,7 +80,19 @@ Raw token counts for the same runs:
 |---|---|
 | Python (requests, django, fastapi, langchain, transformers) | `--py-strip-comments --py-strip-annotations --py-strip-docstrings` |
 | Rust (ripgrep, tokio) | `--rs-strip-doc-comments` |
-| Mixed (uv: 624 `.rs` + 94 `.py`) | all four flags — per-language flags are language-scoped, so passing a Rust flag to a Python tree is a verified no-op |
+| JavaScript (express) | `--js-strip-comments` |
+| Mixed (uv: 624 `.rs` + 94 `.py`) | all four Python/Rust flags — per-language flags are language-scoped, so passing a Rust flag to a Python tree is a verified no-op |
+
+### Why express is mid-table
+
+express is the only JavaScript corpus, and `--js-strip-comments` is a weaker
+lever than its Python and Rust counterparts: the JS/TS backend already drops
+trailing and expression-position comments unconditionally (see caveats), so
+the flag only buys the leading statement-level comments, jsdoc, annotation
+and legal comments on top. At default settings express is already at -17.3%
+on `o200k_base`; the flag adds +8.1pp. No JavaScript or TypeScript project
+has been hunted for a ≥40% result yet — one corpus is not a search, so this
+page makes **no ≥40% claim for JS/TS in either direction**.
 
 ### Why django and uv are low
 
@@ -128,8 +142,9 @@ against an unformatted baseline copy.
 |---|---|---|---|---|
 | requests v2.32.3 (`pytest`) | 36 `.py` | 35 | 0 | **IDENTICAL** — 585 passed / 5 failed / 15 skipped / 1 xfailed on both copies |
 | ripgrep 14.1.1 (`cargo test --workspace`) | 98 `.rs` | 98 | 0 | **IDENTICAL after a fix** — 1106 ok / 3 ignored, exit 0 |
+| express v5.2.1 (`mocha`, express's own `npm test` arguments) | 142 `.js` | 141 | 0 | **IDENTICAL** — 1238 passed / 0 failed on both copies, exit 0 |
 
-Both caveats matter:
+All caveats matter:
 
 * The requests suite's 5 failures are sandbox network artifacts and fail
   identically on the unformatted copy. The claim is *identical outcomes*, not
@@ -138,9 +153,16 @@ Both caveats matter:
   real formatter bug (a mixed sugared/raw doc block changed what a doc example
   asserted), which token/AST equivalence is structurally blind to. It was
   fixed test-first in commit `b1572d3`; the re-run is IDENTICAL.
+* express is the only target green on both sides — its suite drives ephemeral
+  localhost servers and needs no outbound network. That is a property of the
+  suite, not a stronger claim: what is verified is still *identical outcomes*.
+  The express target needs `node`, `npm` and npm registry access to run at all.
 * These runs cover **default settings only**. The aggressive flags on this
   page are not covered by that harness — stripping doc comments would delete
   the doc tests being compared.
+* No test suite can detect the Rust or JS/TS comment loss below, because
+  comments do not run. An IDENTICAL verdict is behavioral equivalence, not
+  context equivalence.
 
 ---
 
@@ -155,6 +177,7 @@ each removes information from the source:
 | `--py-strip-docstrings` | the leading string literal of a module, class or function body — this empties `__doc__`, breaking `help()` and doctests |
 | `--py-strip-annotations` | Python type hints — breaks `__annotations__`-based introspection (dataclass, pydantic) |
 | `--rs-strip-doc-comments` | Rust `///` and `//!` doc comments, and with them rustdoc and doctests |
+| `--js-strip-comments` | the JS/TS comments that survive re-emission at all — leading statement-level comments, jsdoc, annotation comments (`#__PURE__`) and legal comments (`//!`, `/*!`, `@license`, `@preserve`) |
 
 **Token savings are not free context.** Every comment and docstring stripped
 above is prose the model can no longer read. Whether that degrades the quality
@@ -170,6 +193,25 @@ comments; they are always dropped. Only doc comments survive, and only without
 therefore comes from discarded comments, not from syntactic noise alone. If a
 file's `//` comments matter to you, keep the original — TokenPress cannot
 round-trip them.
+
+**JavaScript/TypeScript loses some comments even at default settings.** The
+JS/TS backend re-emits from its own code generator, and **trailing comments
+and comments in expression position are always dropped, with or without
+`--js-strip-comments`.** Only leading statement-level comments, jsdoc
+(`/** */`), annotation comments and legal comments survive. Verification
+cannot detect this — its canonical form is comment-free by construction — so
+the express default-settings number (-17.3% on `o200k_base`) is already a
+lossy one, and `--js-strip-comments` is the difference between "some comments
+kept" and "none", not between "all" and "none". The CLI prints the caveat on
+stderr once per run that touches a JS/TS file.
+
+**JSX text is never compressed, and this page does not measure it.**
+Whitespace inside JSX element children is semantically significant, so it is
+re-emitted verbatim; a `.jsx`/`.tsx` file saves tokens only on the
+JavaScript/TypeScript around its markup. express v5.2.1 is 142 `.js` files
+with no TypeScript and no JSX, so **nothing on this page measures the
+`.ts`/`.tsx`/`.jsx` paths**, and a JSX-heavy tree should be expected to save
+less than -25.4%.
 
 **Rust macro-body whitespace is minimized.** The tokens inside a macro
 invocation are preserved exactly; the whitespace between them is not. For
@@ -202,9 +244,10 @@ CRLF, which raises the before-counts (requests: 86,331 LF vs 86,922 CRLF at
 aggressive table — the flag set is unchanged. Converting the LF checkout back
 to CRLF reproduces the historical numbers exactly.
 
-**Eight corpora is not a population.** These are the repositories measured,
+**Nine corpora is not a population.** These are the repositories measured,
 not a sample chosen to be representative. Savings depend heavily on how much
-of a tree is prose documentation.
+of a tree is prose documentation. JavaScript is represented by exactly one
+project, so `-25.4%` is a data point, not a language-level expectation.
 
 ---
 
@@ -226,6 +269,10 @@ for c in requests django fastapi langchain transformers; do
         --py-strip-comments --py-strip-annotations --py-strip-docstrings
 done
 
+# JavaScript corpus
+target/release/tokenpress stats benchmarks/corpus/express --tokenizer o200k_base \
+    --js-strip-comments
+
 # Mixed tree
 target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
     --py-strip-comments --py-strip-annotations --py-strip-docstrings \
@@ -234,6 +281,7 @@ target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
 # repeat any of the above with --tokenizer cl100k_base for the second column
 
 # upstream behavioral check (default settings)
+# the express target additionally needs node, npm and npm registry access
 ./benchmarks/verify-upstream.sh all   # 0 = identical, 1 = diverged, 2 = never ran
 ```
 
