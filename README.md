@@ -157,7 +157,9 @@ removes indentation, trailing whitespace and blank lines and collapses other
 runs of spaces and tabs to exactly one space — never to zero, because `a - b`
 is a subtraction while `a -b` is a call with a unary-minus argument — and
 newlines are statement terminators in Ruby, so they stay. There is therefore no
-Ruby caveat warning on stderr: there is nothing to warn about.
+Ruby caveat warning on stderr: there is nothing to warn about. Context-lossless
+here is about *comments*, not line numbers — those no backend preserves, Ruby
+included (see **What it never touches** below).
 
 ## Usage
 
@@ -452,9 +454,36 @@ loses information: `--py-strip-docstrings` removes the leading string literal
 of a module, class or function body (other string expressions are untouched),
 which empties `__doc__`.
 
-Three documented exceptions — two in Rust, one in JavaScript/TypeScript. These
-are the scope limits on the "preserving behavior" claim at the top of this
-page.
+Four documented exceptions — one that applies to every backend, two in Rust,
+one in JavaScript/TypeScript. These are the scope limits on the "preserving
+behavior" claim at the top of this page.
+
+**Line numbers are never preserved, by any backend, at any settings.** Deleting
+blank lines and re-flowing whitespace is the core of what TokenPress does, so
+every line below a removal moves — in Python and Ruby exactly as in Rust and
+JS/TS. No flag turns this off. Code whose behavior depends on physical line
+numbers can therefore change behavior after formatting: Ruby `__LINE__` and
+`caller`, Rust `line!()` and `std::panic::Location`, Python `inspect` and
+traceback line numbers, JavaScript `Error.stack`, and any test that asserts on
+a traceback or a stack trace.
+
+Format-time verification cannot detect this **by construction**: the canonical
+forms the re-parse/equivalence check compares are location-independent, which
+is what makes them usable as an equality stand-in at all, so a moved line is
+the same token in the same position before and after. `--verify external` does
+not help either — `tsc` and `ruby -c` are syntax checks and nothing runs. The
+layer that does catch it is running a corpus's own upstream test suite against
+the formatted copy (`benchmarks/verify-upstream.sh`), and it has: on 2026-08-02
+the rack v3.2.6 target came back **DIVERGED** on one test,
+`Rack::Builder::parse_file` "sets `__LINE__` correctly" — TokenPress deletes the
+blank line above the code in `test/builder/line.ru`, so `__LINE__` reads `2`
+where the test asserts `3`. Reproduced byte-identically on repeat runs — not a
+flake. That rewrite saved **zero tokens** (35 before, 35 after at
+`o200k_base`: a blank line and a plain newline each cost one token). Full triage in
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md). The limitation is documented
+rather than mitigated: if your code, your tests or your tooling depend on line
+numbers, TokenPress output is not a drop-in replacement for the original —
+keep it.
 
 **Regular comments are dropped.** `//` and `/* */` comments are always lost,
 because the `syn` token stream the emitter works from does not preserve them.
