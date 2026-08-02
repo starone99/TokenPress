@@ -36,8 +36,17 @@ and all tokenizers.
 | requests | aggressive¹ | -20.6% | -21.0% | -20.7% | -20.2% |
 | ripgrep 14.1.1 | default | -18.9% | **-23.2%** | -18.3% | -18.2% |
 | ripgrep | aggressive² | -38.2% | **-42.7%** | -38.1% | -37.9% |
+| express v5.2.1 | default | -17.3% | *pending* | *pending* | *pending* |
+| express | aggressive³ | -25.4% | *pending* | *pending* | *pending* |
 
 ¹ `--py-strip-comments --py-strip-annotations` ² `--rs-strip-doc-comments`
+³ `--js-strip-comments`
+
+*pending* means not measured yet: the open-model tokenizer numbers
+(Qwen3.6/GLM-5.2/Kimi K3) for express need Hugging Face tokenizer downloads
+that have not been run for this corpus. See
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md), which uses the same *pending*
+convention.
 
 The default setting is context-lossless for Python: comments, docstrings and
 type annotations are all kept; only syntactic noise (whitespace, blank lines,
@@ -49,6 +58,15 @@ re-emits from the `syn` token stream, which does not carry regular comments:
 `//!`) survive — they are `#[doc = "..."]` attributes — and only unless
 `--rs-strip-doc-comments` is passed. Part of the measured Rust savings above
 therefore comes from discarded comments, not from syntactic noise alone.
+
+**JavaScript/TypeScript is not context-lossless at default settings either,
+and the loss is partial rather than total.** The JS/TS backend re-emits through
+oxc's code generator: trailing comments and comments in expression position are
+always dropped, with or without `--js-strip-comments`; only leading
+statement-level comments, jsdoc (`/** */`), annotation comments (such as
+`#__PURE__`) and legal comments (`//!`, `/*!`, `@license`, `@preserve`)
+survive. Part of express's default savings above therefore comes from
+discarded comments.
 
 Savings differ per tokenizer — the reason this is a token-aware formatter,
 not a character minifier.
