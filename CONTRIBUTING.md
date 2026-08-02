@@ -64,6 +64,13 @@ CI runs the build and test suite on both `ubuntu-latest` and `windows-latest`,
 so keep changes platform-neutral — in particular path handling and any
 path-string assertions in tests.
 
+**`node` must be on PATH to run the suite.** `tokenpress-js` implements
+`--verify external` by running the real toolchain (`tsc --noEmit`, falling back
+to `node --check`), and its tests exercise that against real processes. Only
+`node` is assumed — it is present on both CI runners — so the orchestration
+around it (probe order, the missing-tool error, the Windows `tsc.cmd` shim) is
+tested through an injectable seam rather than against an installed `tsc`.
+
 ## Integration surfaces
 
 `.pre-commit-hooks.yaml` (with `scripts/pre-commit-hook.sh`), `action.yml` and

@@ -11,9 +11,14 @@ pub enum VerifyLevel {
     /// Re-parse and compare normalized ASTs / token streams.
     #[default]
     AstEquiv,
-    /// Reserved for additionally running external tooling (`py_compile`,
-    /// `rustc`). Not implemented yet: every backend currently treats this
-    /// level exactly like [`VerifyLevel::AstEquiv`].
+    /// Additionally run the language's own toolchain over the output.
+    ///
+    /// Implemented by the JavaScript/TypeScript backend, which runs
+    /// `tsc --noEmit` (falling back to `node --check`) on top of
+    /// [`VerifyLevel::AstEquiv`] and fails when neither tool is on PATH.
+    /// Python (`py_compile`) and Rust (`rustc --emit=metadata`) do not
+    /// implement it yet and treat this level exactly like
+    /// [`VerifyLevel::AstEquiv`].
     External,
 }
 

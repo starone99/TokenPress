@@ -39,7 +39,7 @@ inputs:
       Whitespace-separated files and/or directories to process, relative to the
       consumer's workspace. Directories are walked recursively by the CLI
       itself: the walk is `.gitignore`-aware and only picks up `.py`, `.rs` and
-      the experimental JavaScript/TypeScript set (`.js`, `.mjs`, `.cjs`,
+      the JavaScript/TypeScript set (`.js`, `.mjs`, `.cjs`,
       `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`), so pointing this at a mixed tree
       is safe. Subject to the shell's word splitting and globbing, so `src/*.py`
       works.

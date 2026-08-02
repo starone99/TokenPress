@@ -21,7 +21,7 @@ use tokenpress_rust::{RustFormatter, RustOptions};
 #[command(
     name = "tokenpress",
     version,
-    about = "Token-aware formatter for Python, Rust and (experimental) JavaScript/TypeScript"
+    about = "Token-aware formatter for Python, Rust and JavaScript/TypeScript"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -37,7 +37,7 @@ enum VerifyArg {
 
 #[derive(Args)]
 struct CommonOpts {
-    /// Files or directories to process: `.py`, `.rs`, and the experimental
+    /// Files or directories to process: `.py`, `.rs`, and the
     /// JavaScript/TypeScript set `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts`
     /// `.cts` `.tsx`.
     #[arg(required = true)]
@@ -318,13 +318,12 @@ const JS_EXTENSIONS: [&str; 8] = ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts",
 /// code generator, so no option can switch it off — hence a warning rather
 /// than a note attached to `--js-strip-comments`.
 const JS_CAVEAT_WARNING: &str = "\
-warning: JavaScript/TypeScript support is experimental, and its output is not
-  comment-preserving: trailing comments and comments in expression position
-  are always dropped when re-emitting, even without --js-strip-comments. Only
-  leading statement-level comments, jsdoc (`/** */`), annotation comments
-  (such as `#__PURE__`) and legal comments (`//!`, `/*!`, `@license`,
-  `@preserve`) survive. Verification cannot detect this: its canonical form is
-  comment-free by construction.
+warning: JavaScript/TypeScript output is not comment-preserving: trailing
+  comments and comments in expression position are always dropped when
+  re-emitting, even without --js-strip-comments. Only leading statement-level
+  comments, jsdoc (`/** */`), annotation comments (such as `#__PURE__`) and
+  legal comments (`//!`, `/*!`, `@license`, `@preserve`) survive. Verification
+  cannot detect this: its canonical form is comment-free by construction.
   In JSX/TSX, JSX text is never compressed -- whitespace inside element
   children is significant -- so savings there come from the surrounding
   JavaScript only, and a comment-only expression container `{/* c */}` becomes
@@ -343,20 +342,35 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
     }
 }
 
-/// `--verify external` is accepted but not yet backed by external tooling, so
-/// users must not read it as a stronger guarantee than `--verify ast`.
+/// `--verify external` is real for JavaScript/TypeScript but still equals
+/// `--verify ast` for Python and Rust, so a run containing files of those two
+/// languages must not read the level as a stronger guarantee than it is.
 const EXTERNAL_VERIFY_WARNING: &str = "\
-warning: external-tooling verification is not implemented yet: none of
-  `py_compile` (Python), `rustc --emit=metadata` (Rust) and `tsc --noEmit` /
-  `node --check` (JavaScript/TypeScript) is invoked. `--verify external`
-  currently behaves exactly like `--verify ast`, i.e. the output is re-parsed
-  and compared for AST / token-stream equivalence.";
+warning: external-tooling verification is implemented for JavaScript/TypeScript
+  only, where `--verify external` runs `tsc --noEmit` (falling back to
+  `node --check`) over the output and fails if neither tool is on PATH. It is
+  not implemented for Python and Rust: neither `py_compile` nor
+  `rustc --emit=metadata` is invoked, so for `.py` and `.rs` files this level
+  behaves exactly like `--verify ast`, i.e. the output is re-parsed and
+  compared for AST / token-stream equivalence.";
 
-/// Writes the external-verification warning to `err` at most once per run.
-/// Verification runs for every subcommand, so the warning is not restricted to
-/// the rewriting ones.
-fn warn_external_verify(common: &CommonOpts, err: &mut dyn Write) {
-    if matches!(common.verify, Some(VerifyArg::External)) {
+/// Extensions the warning above is about: the backends the external level does
+/// not reach yet.
+const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 2] = ["py", "rs"];
+
+/// Writes the external-verification warning to `err` at most once per run:
+/// only at `--verify external`, and only when the run contains a file of a
+/// language the level does not reach. Verification runs for every subcommand,
+/// so the warning is not restricted to the rewriting ones.
+fn warn_external_verify(common: &CommonOpts, files: &[PathBuf], err: &mut dyn Write) {
+    let any_affected = files.iter().any(|p| {
+        p.extension().is_some_and(|ext| {
+            NO_EXTERNAL_VERIFY_EXTENSIONS
+                .iter()
+                .any(|affected| ext == *affected)
+        })
+    });
+    if matches!(common.verify, Some(VerifyArg::External)) && any_affected {
         let _ = writeln!(err, "{EXTERNAL_VERIFY_WARNING}");
     }
 }
@@ -370,7 +384,7 @@ fn execute(
     let formatters = formatters(common);
     let options = format_options(common)?;
     let files = discover(&common.paths, &formatters)?;
-    warn_external_verify(common, err);
+    warn_external_verify(common, &files, err);
     warn_rust_caveats(&files, action, err);
     warn_js_caveats(&files, action, err);
 
@@ -1055,8 +1069,73 @@ mod tests {
         assert!(err.contains("py_compile"));
         assert!(err.contains("rustc"));
         assert!(err.contains("--verify ast"));
+        // ... and says which backend the level *is* implemented for.
+        assert!(err.contains("JavaScript/TypeScript"), "{err}");
         // stdout stays clean and pipeable.
         assert!(!out.contains("warning:"));
+    }
+
+    #[test]
+    fn external_verify_warning_is_scoped_to_the_backends_without_it() {
+        // JS/TS really does run external tooling at this level, so a run that
+        // touches no Python or Rust file must not be told otherwise. The JS
+        // caveat warning is the only one left.
+        let dir = Scratch::new();
+        let js = dir.file("a.js", "const a = 1;\n");
+        let (code, _, err) = run_cli_err(&["format", "--verify", "external", js.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(!err.contains("py_compile"), "{err}");
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("comment-preserving"), "{err}");
+        assert_eq!(std::fs::read_to_string(&js).unwrap(), "const a=1;");
+    }
+
+    #[test]
+    fn external_verify_warning_returns_for_a_mixed_run() {
+        // One Python file in the run is enough: the level is a no-op for it.
+        let dir = Scratch::new();
+        let js = dir.file("b.js", "const a = 1;\n");
+        let py = dir.file("b.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--verify",
+            "external",
+            js.to_str().unwrap(),
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("py_compile").count(), 1);
+    }
+
+    #[test]
+    fn external_verify_runs_the_real_checker_over_javascript() {
+        // End to end at the level that spawns `tsc`/`node`: the output is
+        // accepted, written, and stable on a second pass.
+        let dir = Scratch::new();
+        let js = dir.file("real.mjs", "export const add = ( a , b ) => a + b;\n");
+        let path = js.to_str().unwrap();
+        let (code, _, _) = run_cli_err(&["format", "--verify", "external", path]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&js).unwrap(),
+            "export const add=(a,b)=>a+b;"
+        );
+        let (code, out, _) = run_cli_err(&["check", "--verify", "external", path]);
+        assert_eq!(code, 0, "{out}");
+    }
+
+    #[test]
+    fn external_verify_does_not_blame_input_the_checker_already_rejects() {
+        // A `.cjs` file using ESM syntax: oxc parses it, `node --check`
+        // rejects it as CommonJS. The policy is that the external level is
+        // then satisfied by the built-in equivalence check alone, so the run
+        // succeeds instead of failing on the user's own input.
+        let dir = Scratch::new();
+        let cjs = dir.file("legacy.cjs", "export const a = 1;\n");
+        let (code, out, _) =
+            run_cli_err(&["format", "--verify", "external", cjs.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(std::fs::read_to_string(&cjs).unwrap(), "export const a=1;");
     }
 
     #[test]

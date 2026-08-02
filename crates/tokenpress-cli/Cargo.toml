@@ -1,6 +1,6 @@
 [package]
 name = "tokenpress-cli"
-description = "The tokenpress binary: token-aware formatting for Python, Rust and (experimental) JavaScript/TypeScript"
+description = "The tokenpress binary: token-aware formatting for Python, Rust and JavaScript/TypeScript"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

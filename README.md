@@ -1,8 +1,7 @@
 # TokenPress
 
-> A token-aware formatter for Python and Rust — plus experimental
-> JavaScript/TypeScript — that minimizes LLM token usage while preserving
-> behavior.
+> A token-aware formatter for Python, Rust and JavaScript/TypeScript that
+> minimizes LLM token usage while preserving behavior.
 
 TokenPress is a token-aware source code formatter for LLMs. Unlike a minifier that
 shrinks characters, TokenPress optimizes against an actual LLM tokenizer —
@@ -60,15 +59,29 @@ not a character minifier.
 |---|---|---|
 | Python | `.py` | Supported |
 | Rust | `.rs` | Supported (with the comment/macro caveats below) |
-| JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts` `.cts` `.tsx` | **Experimental** |
+| JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts` `.cts` `.tsx` | Supported (with the comment/JSX caveats below) |
 
-**JavaScript/TypeScript is experimental, not supported.** "Supported" here is
-a claim gated on an external-verification step (running the language's own
-toolchain over the output) that does not exist for JS/TS yet: `--verify
-external` currently falls back to the built-in AST-equivalence check, exactly
-as it does for Python and Rust. Until that step exists, treat JS/TS output as
-something to review rather than to trust, and do not point the CI gate at a
-JS/TS tree you cannot re-check by hand.
+**`--verify external` is real for JavaScript/TypeScript**, which is what
+"Supported" is gated on here: the output is handed to the language's own
+toolchain, on top of the built-in AST-equivalence check. It runs
+`tsc --noEmit --noCheck --skipLibCheck --allowJs --jsx preserve` over the
+candidate — one syntax-only command covering all eight extensions — and falls
+back to `node --check` when no `tsc` is on PATH. The fallback reads only
+`.js`, `.mjs` and `.cjs`; for a `.jsx`/`.ts`/`.mts`/`.cts`/`.tsx` file with no
+`tsc` available the run **fails naming the missing tool** rather than quietly
+checking less than you asked for, so `--verify external` requires `tsc` (or,
+for plain JavaScript, `node`) on PATH. The candidate is checked in a private
+temp file that carries the target's extension; nothing is written to your file
+until every check has passed. Python and Rust do not implement the level yet
+and still treat it as `--verify ast`; the CLI says so on stderr when a `.py` or
+`.rs` file is in the run.
+
+If your *input* does not pass the external checker (a file the toolchain
+already rejects — ESM syntax in a `.cjs`, a syntax newer than your `tsc`), the
+output is not checked against it and the file is accepted on the built-in
+equivalence check alone: TokenPress does not fail a run over a file that was
+already broken before it ran. Expect the level to be substantially slower than
+`--verify ast` — it spawns a probe and two checker processes per file.
 
 `.jsx` and `.tsx` are accepted, with one caveat that limits what they can save:
 **JSX text is never compressed.** Whitespace inside element children is
@@ -304,14 +317,15 @@ merge_imports     = true      # `false` is the config spelling of --py-no-merge-
 [rust]
 strip_doc_comments = false    # --rs-strip-doc-comments
 
-# Experimental. Covers TypeScript too — one backend, one option set.
+# Covers TypeScript too — one backend, one option set.
 [javascript]
 strip_comments = false        # --js-strip-comments
 ```
 
-That is the complete schema — there are no other keys. `verify = "external"` is
-accepted but not yet backed by external tooling: it currently behaves exactly
-like `"ast"` and says so on stderr.
+That is the complete schema — there are no other keys. `verify = "external"`
+runs the JavaScript/TypeScript toolchain over JS/TS output (see **Language
+support**); for `.py` and `.rs` files it still behaves exactly like `"ast"` and
+says so on stderr.
 
 **Discovery.** Without `--config`, the nearest `tokenpress.toml` found walking
 up from the current directory is used; the first one found wins, and having
@@ -380,7 +394,7 @@ Cargo workspace with a single distributed binary:
 | `tokenpress-core` | Formatter/Tokenizer traits, tokenizer backends (tiktoken, HF, Kimi ranks) |
 | `tokenpress-python` | Python: token-stream re-render + transform passes + verification |
 | `tokenpress-rust` | Rust: syn token-stream re-render + verification |
-| `tokenpress-js` | JavaScript/TypeScript (experimental): oxc parse + whitespace-minimal re-emit + verification |
+| `tokenpress-js` | JavaScript/TypeScript: oxc parse + whitespace-minimal re-emit + verification (built-in and `tsc`/`node`) |
 | `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
 | `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python + Rust, per-tokenizer token stats) |
 

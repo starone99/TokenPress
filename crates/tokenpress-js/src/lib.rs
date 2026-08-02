@@ -1,14 +1,13 @@
-//! TokenPress for JavaScript/TypeScript — **experimental**.
+//! TokenPress for JavaScript/TypeScript.
 //!
 //! Pipeline: parse the dialect implied by the file's extension (`parser`) →
-//! whitespace-minimal re-render (`emit`) → verification (`verify`) → token
-//! accounting.
+//! whitespace-minimal re-render (`emit`) → verification (`verify`, plus
+//! `external` at [`VerifyLevel::External`]) → token accounting.
 //!
 //! All dialects `parser::parse` can map from a path are accepted end to end,
-//! JSX and TSX included. The backend is still **experimental**: "supported"
-//! is gated on an external-verification step (`tsc --noEmit` / `node --check`)
-//! that does not exist yet, so nothing here should be treated as a supported
-//! language backend.
+//! JSX and TSX included. [`VerifyLevel::External`] hands the output to the
+//! language's own toolchain (`tsc --noEmit`, falling back to `node --check`);
+//! see [`external`] for what that covers and what it requires on PATH.
 //!
 //! # JSX reality
 //!
@@ -29,6 +28,7 @@
 //! comment-free by construction.
 
 pub mod emit;
+pub mod external;
 pub mod parser;
 pub mod verify;
 
@@ -91,12 +91,17 @@ impl Formatter for JsFormatter {
             VerifyLevel::Reparse => {
                 verify::reparse(path, &code)?;
             }
-            // External tooling (`tsc --noEmit` / `node --check`) is not wired
-            // up yet; both levels run the strongest built-in check.
             // `equivalent` re-parses the output itself, so no separate
-            // `reparse` call is needed here.
-            VerifyLevel::AstEquiv | VerifyLevel::External => {
+            // `reparse` call is needed at either level.
+            VerifyLevel::AstEquiv => {
                 verify::equivalent(&program, path, &code)?;
+            }
+            // External tooling runs *in addition to* the built-in check, and
+            // only after it: a candidate the equivalence check already
+            // rejected is not worth a process spawn.
+            VerifyLevel::External => {
+                verify::equivalent(&program, path, &code)?;
+                external::check(path, source, &code)?;
             }
         }
         let tokenizer = options.tokenizer.load()?;
@@ -229,7 +234,9 @@ mod tests {
     }
 
     #[test]
-    fn external_level_currently_behaves_like_ast_equiv() {
+    fn external_level_adds_the_external_checker() {
+        // Runs the real toolchain (`tsc`, else the `node --check` fallback):
+        // `.js` is a dialect both accept.
         let opts = FormatOptions {
             verify: VerifyLevel::External,
             ..FormatOptions::default()
