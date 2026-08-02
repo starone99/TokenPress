@@ -20,7 +20,12 @@ pub struct FileConfig {
     pub python: Option<PythonConfig>,
     pub rust: Option<RustConfig>,
     pub javascript: Option<JavaScriptConfig>,
+    #[cfg(feature = "ruby")]
     pub ruby: Option<RubyConfig>,
+    /// Without the `ruby` cargo feature the table stays in the schema but can
+    /// no longer be satisfied — see `NoRubySupport`.
+    #[cfg(not(feature = "ruby"))]
+    pub ruby: Option<NoRubySupport>,
 }
 
 /// `[python]` table.
@@ -54,10 +59,30 @@ pub struct JavaScriptConfig {
 /// `[ruby]` table. Named after `RubyFormatter::language()`, and it covers every
 /// path that backend claims — the `.rb`/`.rake`/`.gemspec`/`.ru` extensions as
 /// well as the extensionless `Gemfile` and `Rakefile`.
+#[cfg(feature = "ruby")]
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RubyConfig {
     pub strip_comments: Option<bool>,
+}
+
+/// Stand-in for the `[ruby]` table in a build without the `ruby` cargo
+/// feature: it never deserializes. Keeping the key in the schema and failing
+/// on it names the reason — dropping the field instead would let
+/// `deny_unknown_fields` blame the user's spelling for a property of the
+/// build, and accepting it would silently ignore a configured option.
+#[cfg(not(feature = "ruby"))]
+#[derive(Debug, PartialEq)]
+pub struct NoRubySupport;
+
+#[cfg(not(feature = "ruby"))]
+impl<'de> Deserialize<'de> for NoRubySupport {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "this tokenpress was built without the `ruby` feature, so the \
+             [ruby] table has nothing to configure",
+        ))
+    }
 }
 
 /// Verification level as spelled in the config file. The variants carry the
@@ -154,9 +179,17 @@ mod tests {
         assert_eq!(cfg.ruby, None);
     }
 
+    /// The `[ruby]` table as a build with the `ruby` feature spells it, and as
+    /// a build without it has to: there the table cannot be satisfied at all,
+    /// so a test covering the whole schema has to leave it out.
+    #[cfg(feature = "ruby")]
+    const RUBY_TABLE: &str = "[ruby]\nstrip_comments = true\n";
+    #[cfg(not(feature = "ruby"))]
+    const RUBY_TABLE: &str = "";
+
     #[test]
     fn full_config_parses_every_field() {
-        let cfg = parse(
+        let cfg = parse(&format!(
             "tokenizer = \"cl100k_base\"\n\
              verify = \"reparse\"\n\
              [python]\n\
@@ -168,9 +201,8 @@ mod tests {
              strip_doc_comments = true\n\
              [javascript]\n\
              strip_comments = true\n\
-             [ruby]\n\
-             strip_comments = true\n",
-        );
+             {RUBY_TABLE}"
+        ));
         assert_eq!(cfg.tokenizer.as_deref(), Some("cl100k_base"));
         assert_eq!(cfg.verify, Some(ConfigVerify::Reparse));
         assert_eq!(
@@ -194,6 +226,7 @@ mod tests {
                 strip_comments: Some(true)
             })
         );
+        #[cfg(feature = "ruby")]
         assert_eq!(
             cfg.ruby,
             Some(RubyConfig {
@@ -256,6 +289,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn ruby_table_alone_parses() {
         let cfg = parse("[ruby]\nstrip_comments = true\n");
@@ -272,7 +306,10 @@ mod tests {
 
     #[test]
     fn empty_tables_are_valid_and_leave_their_keys_unset() {
+        #[cfg(feature = "ruby")]
         let cfg = parse("[python]\n[rust]\n[javascript]\n[ruby]\n");
+        #[cfg(not(feature = "ruby"))]
+        let cfg = parse("[python]\n[rust]\n[javascript]\n");
         assert_eq!(
             cfg.python,
             Some(PythonConfig {
@@ -294,6 +331,7 @@ mod tests {
                 strip_comments: None
             })
         );
+        #[cfg(feature = "ruby")]
         assert_eq!(
             cfg.ruby,
             Some(RubyConfig {
@@ -347,10 +385,26 @@ mod tests {
         assert!(msg.contains("strip_jsdoc"), "{msg}");
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn unknown_ruby_key_is_an_error() {
         let msg = parse_err("[ruby]\nstrip_embdocs = true\n");
         assert!(msg.contains("strip_embdocs"), "{msg}");
+    }
+
+    #[cfg(not(feature = "ruby"))]
+    #[test]
+    fn a_ruby_table_names_the_missing_feature_rather_than_being_ignored() {
+        // Silently ignoring a configured option would be the worst outcome,
+        // and a bare `unknown field` would blame the key instead of the build.
+        for text in [
+            "[ruby]\n",
+            "[ruby]\nstrip_comments = true\n",
+            "[ruby]\nstrip_embdocs = true\n",
+        ] {
+            let msg = parse_err(text);
+            assert!(msg.contains("built without the `ruby` feature"), "{msg}");
+        }
     }
 
     #[test]

@@ -84,18 +84,29 @@ libclang; it is a different component.)
 If bindgen cannot find the library, the build fails with
 `Unable to find libclang`. Both hosted CI images ship LLVM already, but the
 workflows do not rely on that silently: every job that builds the workspace
-runs `.github/actions/libclang`, which checks and installs only if missing.
+runs `.github/actions/libclang`, which checks and installs only if missing —
+except the `no-ruby` job, which exists to prove the build below needs neither.
 
 This is **not** confined to the Ruby crate: `tokenpress-cli` depends on
-`tokenpress-ruby` unconditionally, so even a narrow `cargo build -p
+`tokenpress-ruby` in its default build, so even a narrow `cargo build -p
 tokenpress-cli` — which is exactly what the pre-commit hook
 (`scripts/pre-commit-hook.sh`) and the GitHub Action (`action.yml`) run on a
-*consumer's* machine — needs both. Shipping Ruby always-on in the default build
-is a deliberate decision for now; a default-on cargo feature to opt out of the
-backend is tracked as follow-up work. The consumer-facing prerequisites are
-stated in the README's **Integrations** section, and neither integration can
-install them for the consumer: a composite action cannot add a toolchain to the
-job that uses it.
+*consumer's* machine — needs both. The way out is the CLI's default-on `ruby`
+cargo feature, its only feature, so nothing else has to be re-enabled by hand:
+
+```bash
+cargo build -p tokenpress-cli --no-default-features  # no libclang, no cc
+cargo test -p tokenpress-cli --no-default-features   # suite must pass here too
+```
+
+That drops `tokenpress-ruby` from the dependency graph entirely; Ruby paths
+become unsupported paths, the `--ruby-strip-comments` flag does not exist, and
+a `[ruby]` table in `tokenpress.toml` is a config error naming the missing
+feature. The consumer-facing escape hatches are `TOKENPRESS_NO_RUBY=1` for the
+pre-commit hook and `ruby: 'false'` for the action, both documented in the
+README's **Integrations** section — neither integration can install a toolchain
+for the consumer: a composite action cannot add one to the job that uses it.
+Note the coverage gate measures the default build only.
 
 **`node` must be on PATH to run the suite.** `tokenpress-js` implements
 `--verify external` by running the real toolchain (`tsc --noEmit`, falling back

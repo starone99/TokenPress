@@ -14,16 +14,22 @@ path = "src/main.rs"
 name = "tokenpress_cli"
 path = "src/cli.rs"
 
+[features]
+default = ["ruby"]
+# The Ruby backend. On by default; switching it off drops `tokenpress-ruby`
+# from the dependency graph entirely, and with it the libclang + C compiler
+# build prerequisite that `ruby-prism-sys` (vendored prism C + bindgen)
+# imposes. This is the crate's only feature, so the opt-out is exactly
+# `cargo build -p tokenpress-cli --no-default-features` -- nothing else has to
+# be re-enabled by hand.
+ruby = ["dep:tokenpress-ruby"]
+
 [dependencies]
 tokenpress-core.workspace = true
 tokenpress-python.workspace = true
 tokenpress-rust.workspace = true
 tokenpress-js.workspace = true
-# Always on in the default build: there is no cargo feature to opt out of the
-# Ruby backend yet, so every `tokenpress` build needs libclang and a C compiler
-# for `ruby-prism-sys` (see that crate's manifest). A default-on feature to
-# switch it off is tracked as follow-up work.
-tokenpress-ruby.workspace = true
+tokenpress-ruby = { workspace = true, optional = true }
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
 # Config file parsing only: the writer (`display`) half stays out of the build.

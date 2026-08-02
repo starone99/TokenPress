@@ -33,6 +33,11 @@
 #   * `ruby` covers every Ruby path this hook matches: identify 2.6.19 tags
 #     `.rb`, `.rake`, `.gemspec`, `.ru`, `Gemfile` and `Rakefile` all as
 #     `ruby` (verified against that release), so no second tag is needed.
+#
+# `TOKENPRESS_NO_RUBY=1` in the environment makes the entry script build the
+# CLI without its default-on `ruby` cargo feature (no libclang, no C compiler).
+# The filters below are static, so a repository that has Ruby files *and* sets
+# that variable must exclude them itself with `exclude:` in its own config.
 
 - id: tokenpress-check
   name: tokenpress check

@@ -15,14 +15,21 @@ use tokenpress_core::{
 };
 use tokenpress_js::{JsFormatter, JsOptions};
 use tokenpress_python::{PythonFormatter, PythonOptions};
+#[cfg(feature = "ruby")]
 use tokenpress_ruby::{RubyFormatter, RubyOptions};
 use tokenpress_rust::{RustFormatter, RustOptions};
 
 #[derive(Parser)]
-#[command(
-    name = "tokenpress",
-    version,
-    about = "Token-aware formatter for Python, Rust, JavaScript/TypeScript and Ruby"
+#[command(name = "tokenpress", version)]
+// The `ruby` cargo feature is default-on; a build without it has no Ruby
+// backend at all, so nothing here may advertise one.
+#[cfg_attr(
+    feature = "ruby",
+    command(about = "Token-aware formatter for Python, Rust, JavaScript/TypeScript and Ruby")
+)]
+#[cfg_attr(
+    not(feature = "ruby"),
+    command(about = "Token-aware formatter for Python, Rust and JavaScript/TypeScript")
 )]
 struct Cli {
     #[command(subcommand)]
@@ -40,8 +47,17 @@ enum VerifyArg {
 struct CommonOpts {
     /// Files or directories to process: `.py`, `.rs`, the
     /// JavaScript/TypeScript set `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts`
-    /// `.cts` `.tsx`, and the Ruby set `.rb` `.rake` `.gemspec` `.ru` plus the
-    /// files named `Gemfile` and `Rakefile` (exact, case-sensitive names).
+    // Written as `doc` attributes rather than `///` so the Ruby half can be
+    // switched off with the backend itself; they concatenate in source order.
+    #[cfg_attr(
+        feature = "ruby",
+        doc = " `.cts` `.tsx`, and the Ruby set `.rb` `.rake` `.gemspec` `.ru` plus the"
+    )]
+    #[cfg_attr(
+        feature = "ruby",
+        doc = " files named `Gemfile` and `Rakefile` (exact, case-sensitive names)."
+    )]
+    #[cfg_attr(not(feature = "ruby"), doc = " `.cts` and `.tsx`.")]
     #[arg(required = true)]
     paths: Vec<PathBuf>,
     /// Config file to read. Without it the nearest `tokenpress.toml` found
@@ -82,6 +98,7 @@ struct CommonOpts {
     /// RBO1: strip Ruby comments and embdocs (kept by default — and, unlike
     /// Rust and JS/TS, nothing is dropped without this flag). The shebang and
     /// the leading magic-comment window survive either way.
+    #[cfg(feature = "ruby")]
     #[arg(long)]
     ruby_strip_comments: bool,
 }
@@ -177,6 +194,7 @@ fn apply_config(common: &mut CommonOpts, cfg: FileConfig) {
     if let Some(javascript) = cfg.javascript {
         common.js_strip_comments |= javascript.strip_comments.unwrap_or(false);
     }
+    #[cfg(feature = "ruby")]
     if let Some(ruby) = cfg.ruby {
         common.ruby_strip_comments |= ruby.strip_comments.unwrap_or(false);
     }
@@ -242,7 +260,10 @@ struct FileOutcome {
 }
 
 fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
-    vec![
+    // The list has a conditional tail, so it is built and then extended; the
+    // `mut` is only needed when the `ruby` feature is on.
+    #[cfg_attr(not(feature = "ruby"), allow(unused_mut))]
+    let mut formatters: Vec<Box<dyn Formatter>> = vec![
         Box::new(PythonFormatter::new(PythonOptions {
             strip_comments: common.py_strip_comments,
             strip_docstrings: common.py_strip_docstrings,
@@ -255,10 +276,12 @@ fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
         Box::new(JsFormatter::new(JsOptions {
             strip_comments: common.js_strip_comments,
         })),
-        Box::new(RubyFormatter::new(RubyOptions {
-            strip_comments: common.ruby_strip_comments,
-        })),
-    ]
+    ];
+    #[cfg(feature = "ruby")]
+    formatters.push(Box::new(RubyFormatter::new(RubyOptions {
+        strip_comments: common.ruby_strip_comments,
+    })));
+    formatters
 }
 
 fn format_options(common: &CommonOpts) -> Result<FormatOptions> {
@@ -355,15 +378,26 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
     }
 }
 
-/// `--verify external` is real for JavaScript/TypeScript and for Ruby but
-/// still equals `--verify ast` for Python and Rust, so a run containing files
-/// of those two languages must not read the level as a stronger guarantee
-/// than it is.
-const EXTERNAL_VERIFY_WARNING: &str = "\
+// `--verify external` is real for JavaScript/TypeScript and for Ruby but
+// still equals `--verify ast` for Python and Rust, so a run containing files
+// of those two languages must not read the level as a stronger guarantee than
+// it is. Only the first half — which backends do have it — depends on the
+// `ruby` feature, so the warning is a conditional head plus a shared tail,
+// written out as one block by `warn_external_verify`.
+#[cfg(feature = "ruby")]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
 warning: external-tooling verification is implemented for JavaScript/TypeScript,
   where `--verify external` runs `tsc --noEmit` (falling back to
   `node --check`), and for Ruby, where it runs `ruby -c`; both fail if the tool
-  they need is not on PATH. It is not implemented for Python and Rust: neither
+  they need is not on PATH.";
+
+#[cfg(not(feature = "ruby"))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for JavaScript/TypeScript,
+  where `--verify external` runs `tsc --noEmit` (falling back to
+  `node --check`); it fails if the tool it needs is not on PATH.";
+
+const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python and Rust: neither
   `py_compile` nor `rustc --emit=metadata` is invoked, so for `.py` and `.rs`
   this level behaves exactly like `--verify ast`, i.e. the output is re-parsed
   and compared for AST / token-stream equivalence.";
@@ -388,7 +422,10 @@ fn lacks_external_verify(path: &Path) -> bool {
 fn warn_external_verify(common: &CommonOpts, files: &[PathBuf], err: &mut dyn Write) {
     let any_affected = files.iter().any(|p| lacks_external_verify(p));
     if matches!(common.verify, Some(VerifyArg::External)) && any_affected {
-        let _ = writeln!(err, "{EXTERNAL_VERIFY_WARNING}");
+        let _ = writeln!(
+            err,
+            "{EXTERNAL_VERIFY_WARNING_HEAD}{EXTERNAL_VERIFY_WARNING_TAIL}"
+        );
     }
 }
 
@@ -627,18 +664,29 @@ mod tests {
         let (code, text) = run_cli(&["format", "--help"]);
         assert_eq!(code, 0);
         for ext in [
-            ".py", ".rs", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".rb",
-            ".rake", ".gemspec", ".ru",
+            ".py", ".rs", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx",
         ] {
             assert!(text.contains(ext), "{ext} missing from help:\n{text}");
         }
-        // Ruby is the only backend that also claims extensionless names, so
-        // the blurb has to spell them out.
-        for name in ["Gemfile", "Rakefile"] {
-            assert!(text.contains(name), "{name} missing from help:\n{text}");
-        }
         assert!(text.contains("--js-strip-comments"), "{text}");
-        assert!(text.contains("--ruby-strip-comments"), "{text}");
+        #[cfg(feature = "ruby")]
+        {
+            for ext in [".rb", ".rake", ".gemspec", ".ru"] {
+                assert!(text.contains(ext), "{ext} missing from help:\n{text}");
+            }
+            // Ruby is the only backend that also claims extensionless names,
+            // so the blurb has to spell them out.
+            for name in ["Gemfile", "Rakefile"] {
+                assert!(text.contains(name), "{name} missing from help:\n{text}");
+            }
+            assert!(text.contains("--ruby-strip-comments"), "{text}");
+        }
+        // A build without the `ruby` feature has no Ruby backend, so the help
+        // must not advertise one.
+        #[cfg(not(feature = "ruby"))]
+        for absent in [".rb", ".gemspec", "Gemfile", "Rakefile", "Ruby"] {
+            assert!(!text.contains(absent), "{absent} in help:\n{text}");
+        }
     }
 
     #[test]
@@ -1076,6 +1124,7 @@ mod tests {
         assert_eq!(err.matches("warning:").count(), 2);
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn format_rewrites_ruby_files() {
         let dir = Scratch::new();
@@ -1101,6 +1150,7 @@ mod tests {
         assert!(text.contains("2 files"));
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn every_ruby_path_including_the_extensionless_build_files_is_discovered() {
         let dir = Scratch::new();
@@ -1124,6 +1174,7 @@ mod tests {
         assert!(!text.contains("Gemfile.lock"), "{text}");
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn ruby_strip_comments_flag_is_forwarded() {
         let dir = Scratch::new();
@@ -1141,6 +1192,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn ruby_runs_emit_no_caveat_warning() {
         // There is deliberately no Ruby analogue of the Rust and JS/TS caveat
@@ -1160,6 +1212,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn external_verify_warning_is_absent_for_ruby_paths() {
         // Ruby's `External` level really runs `ruby -c`, so a Ruby-only run
@@ -1181,6 +1234,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&gemfile).unwrap(), "gem \"rake\"\n");
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn external_verify_runs_the_real_checker_over_ruby() {
         // End to end at the level that spawns `ruby -c`: the output is
@@ -1198,6 +1252,7 @@ mod tests {
         assert_eq!(code, 0, "{out}");
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn external_verify_does_not_blame_ruby_input_the_checker_already_rejects() {
         // `/[z-a]/` is a well-formed regexp literal to prism and an "empty
@@ -1541,6 +1596,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&js).unwrap(), "const a = 1;\n");
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn config_file_supplies_ruby_settings() {
         let dir = Scratch::new();
@@ -1556,6 +1612,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x = 1\n");
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn the_ruby_strip_flag_ors_with_the_config_file() {
         let dir = Scratch::new();
@@ -1586,6 +1643,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&b).unwrap(), "x = 1\n");
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn a_ruby_config_table_without_keys_keeps_the_built_in_defaults() {
         let dir = Scratch::new();
@@ -1601,6 +1659,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x = 1 # trailing\n");
     }
 
+    #[cfg(feature = "ruby")]
     #[test]
     fn unknown_ruby_config_key_is_an_error() {
         let dir = Scratch::new();
@@ -1704,6 +1763,76 @@ mod tests {
         assert!(err.contains("invalid config file"), "{err}");
         assert!(err.contains("strip_comment"), "{err}");
         assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    // What a build without the `ruby` cargo feature does with the three Ruby
+    // surfaces: the paths, the flag and the config table.
+
+    #[cfg(not(feature = "ruby"))]
+    #[test]
+    fn ruby_paths_are_unsupported_without_the_ruby_feature() {
+        // No special case: a Ruby path is exactly as unsupported as any other
+        // extension the build does not claim — an error when named
+        // explicitly, silently skipped by the directory walk.
+        let dir = Scratch::new();
+        let rb = dir.file("a.rb", "x  =  1\n");
+        let (code, text) = run_cli(&["format", rb.to_str().unwrap()]);
+        assert_eq!(code, 2);
+        assert!(text.contains("unsupported language"), "{text}");
+        assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x  =  1\n");
+
+        dir.file("Gemfile", "gem  \"rake\"\n");
+        let py = dir.file("keep.py", "x = 1\n");
+        let (code, text) = run_cli(&["stats", dir.0.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(text.contains("keep.py"), "{text}");
+        assert!(!text.contains("a.rb"), "{text}");
+        assert!(!text.contains("Gemfile"), "{text}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "ruby"))]
+    #[test]
+    fn the_ruby_strip_flag_does_not_exist_without_the_ruby_feature() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, text) = run_cli(&["format", "--ruby-strip-comments", py.to_str().unwrap()]);
+        assert_eq!(code, 2);
+        assert!(text.contains("--ruby-strip-comments"), "{text}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "ruby"))]
+    #[test]
+    fn a_ruby_config_table_names_the_missing_feature_without_the_ruby_feature() {
+        // A configured Ruby option must not be silently ignored: the run stops
+        // with a message about the build, before any file is touched.
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[ruby]\nstrip_comments = true\n");
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("invalid config file"), "{err}");
+        assert!(err.contains("built without the `ruby` feature"), "{err}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "ruby"))]
+    #[test]
+    fn the_external_verify_warning_does_not_promise_ruby_without_the_feature() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&["format", "--verify", "external", py.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("JavaScript/TypeScript"), "{err}");
+        assert!(!err.contains("ruby -c"), "{err}");
+        assert!(err.contains("py_compile"), "{err}");
     }
 
     #[test]

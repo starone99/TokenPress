@@ -39,6 +39,48 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+  # The opt-out configuration: `tokenpress-cli` without its default-on `ruby`
+  # feature. Deliberately no `.github/actions/libclang` step -- the whole point
+  # of the feature is that this build needs neither libclang nor a C compiler,
+  # and the first step below proves the prerequisite is gone by showing that
+  # `tokenpress-ruby` (and with it `ruby-prism-sys`) is not in the graph at all.
+  no-ruby:
+    name: Build without the ruby feature
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: The Ruby backend is out of the dependency graph
+        run: |
+          set -euo pipefail
+          tree=$(cargo tree -p tokenpress-cli --no-default-features)
+          if printf '%s\n' "$tree" | grep -E 'tokenpress-ruby|ruby-prism|bindgen'; then
+            echo '::error::the ruby backend is still reachable without the feature'
+            exit 1
+          fi
+          # ... while the rest of the default build is untouched: `ruby` is the
+          # CLI's only feature, so `--no-default-features` drops nothing else.
+          printf '%s\n' "$tree" | grep -q tokenizers \
+            || { echo '::error::--no-default-features dropped the HF tokenizer'; exit 1; }
+      - name: Build
+        run: cargo build -p tokenpress-cli --no-default-features
+      - name: Test
+        run: cargo test -p tokenpress-cli --no-default-features
+      - name: Create fixture
+        run: printf 'x=1' > no-ruby-fixture.py
+      # Both consumer integration surfaces build the CLI on the consumer's
+      # machine, so both need their own way through: an env var for the
+      # pre-commit hook, an input for the action.
+      - name: The pre-commit hook honors TOKENPRESS_NO_RUBY
+        env:
+          TOKENPRESS_NO_RUBY: '1'
+        run: sh scripts/pre-commit-hook.sh check no-ruby-fixture.py
+      - name: "The action honors ruby: false"
+        uses: ./
+        with:
+          ruby: 'false'
+          paths: no-ruby-fixture.py
+
   # Exercises `action.yml` end to end through `uses: ./`, which is the only way
   # to test a composite action: its steps only exist inside a real runner.
   # It lives in this workflow because the action has to be gated on exactly what

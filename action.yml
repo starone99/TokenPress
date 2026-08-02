@@ -53,6 +53,17 @@ inputs:
       --ruby-strip-comments`.
     required: false
     default: ''
+  ruby:
+    description: >-
+      `true` (default) builds the CLI with its default-on `ruby` cargo feature.
+      Set it to `false` on a runner without libclang and a C compiler: the
+      build then drops `tokenpress-ruby` (and with it `ruby-prism-sys`,
+      vendored prism C plus bindgen) from the dependency graph entirely. Ruby
+      paths become unsupported paths in that build -- skipped by the directory
+      walk, and an error (exit 2) when named explicitly. Any other value fails
+      the step with exit 2.
+    required: false
+    default: 'true'
 
 outputs:
   changed:
@@ -71,8 +82,23 @@ runs:
       env:
         ACTION_PATH: ${{ github.action_path }}
         ACTION_REF: ${{ github.action_ref }}
+        RUBY: ${{ inputs.ruby }}
       run: |
         set -euo pipefail
+
+        # The `ruby` input decides which cargo features the build gets, so it
+        # is resolved here -- before the cache is restored, because a binary
+        # built with a different feature set must not be reused under the same
+        # key. `ruby` is the CLI's only cargo feature, so switching it off is
+        # exactly `--no-default-features`.
+        case "$RUBY" in
+          true) build_flags=''; ruby_tag='ruby' ;;
+          false) build_flags='--no-default-features'; ruby_tag='noruby' ;;
+          *)
+            echo "::error::tokenpress: unknown ruby input '$RUBY' (expected 'true' or 'false')"
+            exit 2
+            ;;
+        esac
         # On Windows runners `github.action_path` is a backslash path; Git bash
         # is only reliable with forward slashes, so normalize once here and
         # reuse the result in every later step.
@@ -95,8 +121,9 @@ runs:
         {
           echo "action-path=$action_path"
           echo "bin=$action_path/target/release/tokenpress$ext"
-          echo "cache-key=tokenpress-action-$RUNNER_OS-$ref-$lock_hash"
-          echo "cache-prefix=tokenpress-action-$RUNNER_OS-"
+          echo "build-flags=$build_flags"
+          echo "cache-key=tokenpress-action-$RUNNER_OS-$ruby_tag-$ref-$lock_hash"
+          echo "cache-prefix=tokenpress-action-$RUNNER_OS-$ruby_tag-"
         } >>"$GITHUB_OUTPUT"
 
     - name: Restore the CLI build cache
@@ -114,6 +141,7 @@ runs:
       shell: bash
       env:
         ACTION_PATH: ${{ steps.setup.outputs.action-path }}
+        BUILD_FLAGS: ${{ steps.setup.outputs.build-flags }}
       run: |
         set -euo pipefail
         # Two things this build depends on, both easy to get wrong:
@@ -126,8 +154,11 @@ runs:
         # `-p tokenpress-cli` rather than `cargo install --path .`: the root
         # manifest is a virtual workspace manifest, which `cargo install`
         # refuses.
+        # `$BUILD_FLAGS` is deliberately unquoted: it is empty unless the
+        # `ruby` input switched the backend off, and an empty quoted argument
+        # would be passed to cargo as one.
         cd "$ACTION_PATH"
-        cargo build --release --locked --quiet \
+        cargo build --release --locked --quiet $BUILD_FLAGS \
           -p tokenpress-cli --target-dir "$ACTION_PATH/target"
 
     - name: Run TokenPress

@@ -279,6 +279,11 @@ Prerequisites for the consumer:
   **Ruby itself is not needed to build** — nothing in the build shells out to
   `ruby`. It is needed at *run* time only if you pass `--verify external`,
   which runs `ruby -c` over Ruby output; the hooks do not by default.
+  **Opt out with `TOKENPRESS_NO_RUBY=1`**: the hook then builds the CLI
+  without its default-on `ruby` cargo feature, which drops `tokenpress-ruby`
+  from the dependency graph and with it this whole prerequisite. Ruby paths
+  become unsupported paths in that build — the hooks' file filter still offers
+  them, so exclude them from `files:` if your repository has any.
 - **On Windows, `sh` on `PATH`** — the entry point is a `#!/usr/bin/env sh`
   script. Git for Windows provides one.
 
@@ -315,10 +320,11 @@ repository's own CI uses a local `.github/actions/libclang` composite action for
 exactly that, and consumers need their own equivalent). Ruby itself is not
 needed to build, and at run time only if `extra-args` selects
 `--verify external`, which runs `ruby -c` over Ruby output (GitHub-hosted
-runners preinstall Ruby). Shipping Ruby always-on in the default build is a
-deliberate decision
-for now; a default-on cargo feature to opt out of the backend (and with it the
-libclang requirement) is tracked as follow-up work.
+runners preinstall Ruby). **Or drop the requirement with `ruby: 'false'`**:
+the action then builds the CLI without its default-on `ruby` cargo feature, so
+`tokenpress-ruby` is not in the dependency graph and neither libclang nor a C
+compiler is needed. Ruby paths are unsupported paths in that build — skipped by
+the directory walk, an error (exit 2) when named explicitly.
 
 As a standalone gate workflow:
 
@@ -374,6 +380,7 @@ Inputs:
 | `mode` | `check` | `check` reports and fails, writing nothing. `format` rewrites in place and then fails if it had something to rewrite. Any other value fails the step with exit 2. |
 | `paths` | `.` | Whitespace-separated files and/or directories, relative to the workspace. Subject to the shell's word splitting and globbing, so `src/*.py` works. |
 | `extra-args` | *(empty)* | Extra `tokenpress` flags, passed through verbatim (whitespace-separated), e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments --ruby-strip-comments`. |
+| `ruby` | `true` | `false` builds the CLI without its default-on `ruby` cargo feature, dropping the Ruby backend and with it the libclang + C compiler build prerequisite. Ruby paths are then unsupported paths. Any other value fails the step with exit 2. |
 
 Output:
 
