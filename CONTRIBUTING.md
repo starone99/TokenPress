@@ -64,6 +64,28 @@ CI runs the build and test suite on both `ubuntu-latest` and `windows-latest`,
 so keep changes platform-neutral — in particular path handling and any
 path-string assertions in tests.
 
+### Build prerequisite: a C compiler and libclang
+
+`tokenpress-ruby` depends on `ruby-prism`, whose `-sys` crate compiles the
+vendored prism C sources with `cc` and generates its bindings with **bindgen**.
+Building the workspace therefore needs a **C compiler** and **libclang**.
+**Ruby itself is not needed at build time** — nothing in the build shells out
+to `ruby`. (`llvm-tools-preview` from `rust-toolchain.toml` does *not* provide
+libclang; it is a different component.)
+
+- **Linux**: `apt install libclang-dev` (or `clang`); the C compiler is `gcc`
+  or `clang`.
+- **macOS**: `xcode-select --install` — the Command Line Tools ship both, or
+  `brew install llvm`.
+- **Windows**: install LLVM (`choco install llvm`, or the llvm.org installer)
+  and point bindgen at it with `LIBCLANG_PATH=C:\Program Files\LLVM\bin`; the
+  C compiler comes from the MSVC build tools.
+
+If bindgen cannot find the library, the build fails with
+`Unable to find libclang`. Both hosted CI images ship LLVM already, but the
+workflows do not rely on that silently: every job that builds the workspace
+runs `.github/actions/libclang`, which checks and installs only if missing.
+
 **`node` must be on PATH to run the suite.** `tokenpress-js` implements
 `--verify external` by running the real toolchain (`tsc --noEmit`, falling back
 to `node --check`), and its tests exercise that against real processes. Only

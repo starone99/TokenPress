@@ -22,6 +22,8 @@ jobs:
       - uses: actions/checkout@v4
       # rustup installs the toolchain pinned in rust-toolchain.toml on first use
       - uses: Swatinem/rust-cache@v2
+      # ruby-prism-sys needs libclang (bindgen) + a C compiler
+      - uses: ./.github/actions/libclang
       - name: Build
         run: cargo build --workspace
       - name: Test
@@ -44,6 +46,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
+      # ruby-prism-sys needs libclang (bindgen) + a C compiler. The released
+      # binary does not link the Ruby backend yet, but it will as soon as the
+      # formatter is registered in the CLI -- and a release that fails at the
+      # tag is the worst place to discover that.
+      - uses: ./.github/actions/libclang
       - name: Build release binary
         run: cargo build --release -p tokenpress-cli --target ${{ matrix.target }}
 

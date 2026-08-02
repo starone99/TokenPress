@@ -1,0 +1,28 @@
+[package]
+name = "tokenpress-ruby"
+description = "TokenPress for Ruby: token-minimizing formatter with parse-format-parse verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["hf-tokenizer"]
+# Forwarded to tokenpress-core; see its manifest.
+hf-tokenizer = ["tokenpress-core/hf-tokenizer"]
+
+[dependencies]
+# Path dependency, not `workspace = true`: `default-features = false` is
+# ignored on an inherited dependency, and the `hf-tokenizer` feature has to be
+# switchable by any consumer that cannot build it.
+tokenpress-core = { path = "../tokenpress-core", default-features = false }
+# ruby-prism is pre-1.0 with no semver guarantees and declares no
+# `rust-version` at all, so there is no MSRV signal to read: pin the exact
+# version and treat any bump as a toolchain decision. All ruby-prism API
+# access is confined to src/parser.rs, exactly as CLAUDE.md requires for the
+# ruff pin in tokenpress-python and the oxc pin in tokenpress-js.
+#
+# Build prerequisite: ruby-prism-sys compiles the vendored prism C sources
+# with `cc` and generates its bindings with bindgen, so building this crate
+# needs a C compiler and libclang. Ruby itself is *not* needed at build time.
+ruby-prism = "=1.9.0"

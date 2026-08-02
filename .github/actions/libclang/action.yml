@@ -1,0 +1,44 @@
+# ruby-prism-sys needs libclang (bindgen) + a C compiler.
+#
+# tokenpress-ruby depends on ruby-prism, whose -sys crate compiles the vendored
+# prism C sources with `cc` and generates its bindings with bindgen. Every
+# runner that builds the workspace therefore needs a C compiler (preinstalled
+# on both hosted images) and libclang. Ruby itself is NOT needed at build time.
+#
+# The GitHub-hosted ubuntu-latest and windows-latest images do ship LLVM, but
+# this step exists so that is not relied on silently: it checks, and installs
+# only if the check fails. Internal to this repository -- the consumer-facing
+# composite action is the root action.yml.
+name: Ensure libclang
+description: Makes libclang available to bindgen on Linux and Windows runners.
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure libclang (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        if ls /usr/lib/llvm-*/lib/libclang.so* /usr/lib/*/libclang*.so* \
+             >/dev/null 2>&1; then
+          echo "libclang is already present"
+        else
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev
+        fi
+
+    - name: Ensure libclang (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # bindgen locates the DLL through LIBCLANG_PATH, which is exported for
+        # every later step in the job.
+        $llvm = 'C:\Program Files\LLVM\bin'
+        if (-not (Test-Path "$llvm\libclang.dll")) {
+          choco install llvm --no-progress --yes
+        }
+        if (-not (Test-Path "$llvm\libclang.dll")) {
+          Write-Error "libclang.dll not found at $llvm"
+          exit 1
+        }
+        "LIBCLANG_PATH=$llvm" | Out-File -FilePath $env:GITHUB_ENV -Append

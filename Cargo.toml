@@ -4,6 +4,7 @@ members = [
     "crates/tokenpress-core",
     "crates/tokenpress-python",
     "crates/tokenpress-js",
+    "crates/tokenpress-ruby",
     "crates/tokenpress-rust",
     "crates/tokenpress-cli",
     "crates/tokenpress-wasm",
@@ -20,6 +21,7 @@ tokenpress-core = { path = "crates/tokenpress-core" }
 tokenpress-python = { path = "crates/tokenpress-python" }
 tokenpress-rust = { path = "crates/tokenpress-rust" }
 tokenpress-js = { path = "crates/tokenpress-js" }
+tokenpress-ruby = { path = "crates/tokenpress-ruby" }
 thiserror = "2"
 tiktoken-rs = "0.12"
 wasm-bindgen = "0.2"
