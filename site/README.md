@@ -1,9 +1,18 @@
 # TokenPress demo page
 
-A static, dependency-free page that runs the Python and Rust formatters in the
-browser through `crates/tokenpress-wasm`. Paste source in, pick the language
-and flags, and see the formatted output plus the token savings under both
-embedded tokenizers (`o200k_base`, `cl100k_base`).
+A static, dependency-free page that runs the Python, Rust and
+JavaScript/TypeScript formatters in the browser through
+`crates/tokenpress-wasm`. Paste source in, pick the language and flags, and see
+the formatted output plus the token savings under both embedded tokenizers
+(`o200k_base`, `cl100k_base`).
+
+The language selector has six entries: Python, Rust, and the four
+JavaScript/TypeScript dialects (JavaScript, JSX, TypeScript, TSX). The last
+four all call `formatJs`, which takes the dialect in its options object —
+there is no file behind the boundary for the formatter to read an extension
+from. Verification in the browser is internal only (re-parse plus canonical
+re-emit equivalence): WebAssembly cannot spawn processes, so the CLI's
+`--verify external` (`tsc --noEmit` / `node --check`) has no counterpart here.
 
 No framework, no bundler, no CDN: `index.html`, `style.css` and `app.js` are
 served as-is, and everything else is the wasm-bindgen output. Once built, the

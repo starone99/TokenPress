@@ -1,17 +1,24 @@
 //! WebAssembly bindings for TokenPress.
 //!
-//! The Python and Rust formatters are exposed. Each `#[wasm_bindgen]` export
-//! ([`format_python_json`], [`format_rust_json`]) is a JSON-in/JSON-out
-//! delegation; every decision lives in the plain functions below, so the whole
-//! crate is exercised — and covered — by ordinary host tests.
+//! The Python, Rust and JavaScript/TypeScript formatters are exposed. Each
+//! `#[wasm_bindgen]` export ([`format_python_json`], [`format_rust_json`],
+//! [`format_js_json`]) is a JSON-in/JSON-out delegation; every decision lives
+//! in the plain functions below, so the whole crate is exercised — and
+//! covered — by ordinary host tests.
 //!
 //! The core invariant is preserved across the boundary: when a formatter
 //! refuses output (parse failure, or output that fails verification) the
 //! caller receives a structured `{"kind", "message"}` error and no code at
 //! all. Partial or unverified output is never returned.
 //!
+//! Verification here is always *internal* ([`VERIFY`]): a wasm module cannot
+//! spawn processes, so the external level — which hands the output to the
+//! language's own toolchain — is never selected.
+//!
 //! Rust output carries the documented MVP caveats of `tokenpress-rust`
-//! (non-doc `//` comments are dropped, macro-body whitespace is minimized).
+//! (non-doc `//` comments are dropped, macro-body whitespace is minimized),
+//! and JavaScript/TypeScript output those of `tokenpress-js` (trailing and
+//! expression-position comments are dropped, JSX text is never compressed).
 //! The library reports no warnings, so neither does this boundary; callers
 //! state the caveats themselves.
 
@@ -20,7 +27,8 @@ use std::path::Path;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use tokenpress_core::{Error, FormatOptions, FormatResult, Formatter, TokenizerKind};
+use tokenpress_core::{Error, FormatOptions, FormatResult, Formatter, TokenizerKind, VerifyLevel};
+use tokenpress_js::{JsFormatter, JsOptions};
 use tokenpress_python::{PythonFormatter, PythonOptions};
 use tokenpress_rust::{RustFormatter, RustOptions};
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -31,6 +39,17 @@ const REPORTED_TOKENIZERS: [(&str, TokenizerKind); 2] = [
     ("o200k_base", TokenizerKind::O200kBase),
     ("cl100k_base", TokenizerKind::Cl100kBase),
 ];
+
+/// The verification level every export runs at, spelled out rather than left
+/// to `FormatOptions::default()`.
+///
+/// It must never become [`VerifyLevel::External`]: that level runs the
+/// language's own toolchain in a child process (`tsc --noEmit`, falling back
+/// to `node --check`, for JavaScript/TypeScript), and a wasm module cannot
+/// spawn processes — every call would fail. [`VerifyLevel::AstEquiv`] is the
+/// strongest level that is purely in-process: the output is re-parsed and
+/// compared with the input for equivalence.
+const VERIFY: VerifyLevel = VerifyLevel::AstEquiv;
 
 /// Python formatting flags accepted at the boundary.
 ///
@@ -95,6 +114,79 @@ impl From<&WasmRustOptions> for RustOptions {
     fn from(options: &WasmRustOptions) -> Self {
         Self {
             strip_doc_comments: options.strip_doc_comments,
+        }
+    }
+}
+
+/// Which JavaScript/TypeScript dialect the source is parsed and re-emitted as.
+///
+/// `tokenpress-js` takes its dialect from the file's extension, and there is
+/// no file system behind this boundary, so the caller names the dialect and it
+/// is mapped to a synthetic path here. The variants are exactly the extensions
+/// the formatter accepts, so module kind (`mjs` = ESM, `cjs` = script) is
+/// selectable as well as the four syntax dialects.
+///
+/// Deserialized from a lowercase string; an unrecognised name is rejected with
+/// a message naming every accepted value, matching the `deny_unknown_fields`
+/// strictness of the options objects.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum WasmJsDialect {
+    /// Plain JavaScript — the default, so `"{}"` means `.js` and TypeScript or
+    /// JSX syntax has to be asked for explicitly rather than guessed at.
+    #[default]
+    Js,
+    Mjs,
+    Cjs,
+    Jsx,
+    Ts,
+    Mts,
+    Cts,
+    Tsx,
+}
+
+impl WasmJsDialect {
+    /// The synthetic path that selects this dialect. Never touched on disk.
+    fn path(self) -> &'static Path {
+        Path::new(match self {
+            Self::Js => "input.js",
+            Self::Mjs => "input.mjs",
+            Self::Cjs => "input.cjs",
+            Self::Jsx => "input.jsx",
+            Self::Ts => "input.ts",
+            Self::Mts => "input.mts",
+            Self::Cts => "input.cts",
+            Self::Tsx => "input.tsx",
+        })
+    }
+}
+
+/// JavaScript/TypeScript formatting flags accepted at the boundary.
+///
+/// Deserialized like [`WasmPythonOptions`]: every field optional, unknown
+/// fields rejected. `dialect` is the boundary's own field — it has no library
+/// counterpart because the library reads the dialect from the path.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WasmJsOptions {
+    pub strip_comments: bool,
+    pub dialect: WasmJsDialect,
+}
+
+impl Default for WasmJsOptions {
+    fn default() -> Self {
+        let JsOptions { strip_comments } = JsOptions::default();
+        Self {
+            strip_comments,
+            dialect: WasmJsDialect::default(),
+        }
+    }
+}
+
+impl From<&WasmJsOptions> for JsOptions {
+    fn from(options: &WasmJsOptions) -> Self {
+        Self {
+            strip_comments: options.strip_comments,
         }
     }
 }
@@ -230,7 +322,11 @@ fn run(
     path: &Path,
     source: &str,
 ) -> Result<WasmFormatOutput, WasmError> {
-    let result = formatter.format(path, source, &FormatOptions::default())?;
+    let options = FormatOptions {
+        verify: VERIFY,
+        ..FormatOptions::default()
+    };
+    let result = formatter.format(path, source, &options)?;
     let tokens = REPORTED_TOKENIZERS
         .iter()
         .map(|(name, kind)| WasmTokenStats::measure(name, kind, source, &result.code))
@@ -259,6 +355,18 @@ pub fn format_rust(source: &str, options: &WasmRustOptions) -> Result<WasmFormat
     run(
         &RustFormatter::new(options.into()),
         Path::new("input.rs"),
+        source,
+    )
+}
+
+/// Formats JavaScript/TypeScript source with the given flags.
+///
+/// The dialect in `options` picks the synthetic path, so the caller cannot
+/// select a dialect the formatter would not apply.
+pub fn format_js(source: &str, options: &WasmJsOptions) -> Result<WasmFormatOutput, WasmError> {
+    run(
+        &JsFormatter::new(options.into()),
+        options.dialect.path(),
         source,
     )
 }
@@ -296,6 +404,31 @@ pub fn format_rust_json(source: &str, options_json: &str) -> Result<String, Stri
     to_json_result(parse_options(options_json).and_then(|options| format_rust(source, &options)))
 }
 
+/// Formats JavaScript/TypeScript source.
+///
+/// `options_json` is a JSON object with the optional boolean flag
+/// `strip_comments` and the optional string `dialect`, one of `js`, `mjs`,
+/// `cjs`, `jsx`, `ts`, `mts`, `cts` or `tsx`; pass `"{}"` for the defaults
+/// (`js`, comments kept). An unknown dialect is refused with `kind`
+/// `options`, like any other malformed flag. Resolves and rejects exactly
+/// like [`format_python_json`].
+///
+/// Verification is **internal only** — re-parse plus canonical re-emit
+/// equivalence. A wasm module cannot spawn processes, so the external level
+/// (`tsc --noEmit` / `node --check`, which the CLI offers as
+/// `--verify external`) is not available here and is never used; see
+/// [`VERIFY`].
+///
+/// Comments: output is not comment-preserving. Only leading statement-level,
+/// jsdoc, annotation and legal comments survive; trailing and
+/// expression-position comments are always dropped, and `strip_comments`
+/// removes everything except legal and annotation comments. JSX text is
+/// emitted verbatim, so `.jsx`/`.tsx` saves tokens only around the markup.
+#[wasm_bindgen(js_name = formatJs)]
+pub fn format_js_json(source: &str, options_json: &str) -> Result<String, String> {
+    to_json_result(parse_options(options_json).and_then(|options| format_js(source, &options)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,6 +440,17 @@ mod tests {
 
     fn format_rs(source: &str, options: WasmRustOptions) -> WasmFormatOutput {
         format_rust(source, &options).expect("formatting succeeds")
+    }
+
+    fn format_js_ok(source: &str, options: WasmJsOptions) -> WasmFormatOutput {
+        format_js(source, &options).expect("formatting succeeds")
+    }
+
+    fn js_dialect(dialect: WasmJsDialect) -> WasmJsOptions {
+        WasmJsOptions {
+            dialect,
+            ..WasmJsOptions::default()
+        }
     }
 
     fn stats<'a>(output: &'a WasmFormatOutput, tokenizer: &str) -> &'a WasmTokenStats {
@@ -461,6 +605,8 @@ mod tests {
         for json in [
             format_python_json("import os\nimport sys\n", "{}").expect("formatting succeeds"),
             format_rust_json("fn f() {\n    let x = 1;\n}\n", "{}").expect("formatting succeeds"),
+            format_js_json("function f() {\n    const x = 1;\n    return x;\n}\n", "{}")
+                .expect("formatting succeeds"),
         ] {
             let value = parsed(&json);
             for name in ["o200k_base", "cl100k_base"] {
@@ -502,6 +648,11 @@ mod tests {
         assert!(format!("{:?}", options.clone()).contains("merge_imports"));
         let rust_options = WasmRustOptions::default();
         assert!(format!("{:?}", rust_options.clone()).contains("strip_doc_comments"));
+        let js_options = WasmJsOptions::default();
+        let debugged = format!("{:?}", js_options.clone());
+        assert!(debugged.contains("strip_comments"), "{debugged}");
+        assert!(debugged.contains("Js"), "{debugged}");
+        assert_eq!(js_options.dialect, WasmJsDialect::default());
         let output = WasmFormatOutput {
             code: "x=1".into(),
             changed: true,
@@ -621,6 +772,7 @@ mod tests {
         for out in [
             format("x = f(a, b)\n", WasmPythonOptions::default()),
             format_rs("fn f() { g(a, b); }\n", WasmRustOptions::default()),
+            format_js_ok("function f() { g(a, b); }\n", WasmJsOptions::default()),
         ] {
             let names: Vec<_> = out.tokens.iter().map(|stats| stats.tokenizer).collect();
             assert_eq!(names, ["o200k_base", "cl100k_base"]);
@@ -631,9 +783,11 @@ mod tests {
     fn token_counts_match_the_tokenizer_api() {
         let python = "import os\nimport sys\n\nx = f(a, b)\n";
         let rust = "fn add(a: i32, b: i32) -> i32 {\n    let sum = a + b;\n    sum\n}\n";
+        let js = "function add(a, b) {\n    const sum = a + b;\n    return sum;\n}\n";
         for (source, out) in [
             (python, format(python, WasmPythonOptions::default())),
             (rust, format_rs(rust, WasmRustOptions::default())),
+            (js, format_js_ok(js, WasmJsOptions::default())),
         ] {
             for (name, kind) in [
                 ("o200k_base", TokenizerKind::O200kBase),
@@ -656,6 +810,7 @@ mod tests {
         for out in [
             format("", WasmPythonOptions::default()),
             format_rs("", WasmRustOptions::default()),
+            format_js_ok("", WasmJsOptions::default()),
         ] {
             assert_eq!(out.code, "");
             assert!(!out.changed);
@@ -690,5 +845,217 @@ mod tests {
             .code,
             "import os\nimport sys"
         );
+    }
+
+    #[test]
+    fn wasm_verifies_internally_and_never_externally() {
+        // The boundary's standing constraint: a wasm module cannot spawn
+        // `tsc`/`node`, so the external level must never be selected here.
+        assert_eq!(VERIFY, VerifyLevel::AstEquiv);
+        assert_ne!(VERIFY, VerifyLevel::External);
+    }
+
+    #[test]
+    fn js_default_options_minimize_whitespace_and_keep_leading_comments() {
+        let out = format_js_ok(
+            "// note\nfunction add( a , b ) {\n    return a + b;\n}\n",
+            WasmJsOptions::default(),
+        );
+        assert_eq!(out.code, "// note\nfunction add(a,b){return a+b}");
+        assert!(out.changed);
+    }
+
+    #[test]
+    fn js_already_minimal_source_is_reported_as_unchanged() {
+        let out = format_js_ok("const a=1;", WasmJsOptions::default());
+        assert_eq!(out.code, "const a=1;");
+        assert!(!out.changed);
+    }
+
+    #[test]
+    fn js_strip_comments_toggles_comment_removal() {
+        let source = "// note\nconst a = 1;\n";
+        assert_eq!(
+            format_js_ok(source, WasmJsOptions::default()).code,
+            "// note\nconst a=1;"
+        );
+        assert_eq!(
+            format_js_ok(
+                source,
+                WasmJsOptions {
+                    strip_comments: true,
+                    ..WasmJsOptions::default()
+                }
+            )
+            .code,
+            "const a=1;"
+        );
+    }
+
+    #[test]
+    fn js_trailing_comments_are_dropped_even_when_kept() {
+        // The comment reality the demo page states as a caveat, pinned at the
+        // boundary that page calls.
+        assert_eq!(
+            format_js_ok(
+                "function f(a, b) {\n    return a + b; // tail\n}\n",
+                WasmJsOptions::default()
+            )
+            .code,
+            "function f(a,b){return a+b}"
+        );
+    }
+
+    #[test]
+    fn every_js_dialect_maps_to_its_synthetic_path() {
+        let cases = [
+            (WasmJsDialect::Js, "input.js"),
+            (WasmJsDialect::Mjs, "input.mjs"),
+            (WasmJsDialect::Cjs, "input.cjs"),
+            (WasmJsDialect::Jsx, "input.jsx"),
+            (WasmJsDialect::Ts, "input.ts"),
+            (WasmJsDialect::Mts, "input.mts"),
+            (WasmJsDialect::Cts, "input.cts"),
+            (WasmJsDialect::Tsx, "input.tsx"),
+        ];
+        for (dialect, path) in cases {
+            assert_eq!(dialect.path(), Path::new(path), "{dialect:?}");
+        }
+    }
+
+    #[test]
+    fn every_js_dialect_formats_its_own_syntax() {
+        let cases = [
+            (WasmJsDialect::Js, "const a = 1;\n", "const a=1;"),
+            (
+                WasmJsDialect::Mjs,
+                "export const a = 1;\n",
+                "export const a=1;",
+            ),
+            (
+                WasmJsDialect::Cjs,
+                "const a = require( \"b\" );\n",
+                "const a=require(\"b\");",
+            ),
+            (
+                WasmJsDialect::Jsx,
+                "const a = <div>hi</div>;\n",
+                "const a=<div>hi</div>;",
+            ),
+            (
+                WasmJsDialect::Ts,
+                "let x : number = 1;\n",
+                "let x:number=1;",
+            ),
+            (
+                WasmJsDialect::Mts,
+                "export let x : number = 1;\n",
+                "export let x:number=1;",
+            ),
+            (
+                WasmJsDialect::Cts,
+                "let x : number = 1;\n",
+                "let x:number=1;",
+            ),
+            (
+                WasmJsDialect::Tsx,
+                "const a : JSX.Element = <div>hi</div>;\n",
+                "const a:JSX.Element=<div>hi</div>;",
+            ),
+        ];
+        for (dialect, source, expected) in cases {
+            assert_eq!(
+                format_js_ok(source, js_dialect(dialect)).code,
+                expected,
+                "{dialect:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_js_dialect_is_plain_javascript() {
+        // Documented default: `{}` means plain `.js`, so TypeScript syntax
+        // needs the dialect spelled out rather than being guessed at.
+        let err = format_js("let x: number = 1;\n", &WasmJsOptions::default())
+            .expect_err("TypeScript is not plain JavaScript");
+        assert_eq!(err.kind, "parse");
+        assert!(err.message.contains("input.js"), "{}", err.message);
+        assert_eq!(
+            format_js_ok("let x: number = 1;\n", js_dialect(WasmJsDialect::Ts)).code,
+            "let x:number=1;"
+        );
+    }
+
+    #[test]
+    fn invalid_js_returns_a_structured_error_and_no_output() {
+        let err = format_js("function (", &WasmJsOptions::default())
+            .expect_err("invalid JavaScript cannot be formatted");
+        assert_eq!(err.kind, "parse");
+        assert!(!err.message.is_empty());
+        // As for the other languages: a refusal carries no code at all.
+        assert_eq!(
+            err.to_json(),
+            format!(
+                "{{\"kind\":\"parse\",\"message\":{}}}",
+                serde_json::Value::from(err.message.clone())
+            )
+        );
+    }
+
+    #[test]
+    fn json_boundary_formats_js() {
+        let json = format_js_json("function f( a ) {\n    return a;\n}\n", "{}")
+            .expect("formatting succeeds");
+        let value = parsed(&json);
+        assert_eq!(value["changed"], serde_json::json!(true));
+        assert_eq!(value["code"], serde_json::json!("function f(a){return a}"));
+    }
+
+    #[test]
+    fn json_boundary_reads_js_option_flags() {
+        let json = format_js_json(
+            "// note\ninterface Shape {\n    name : string ;\n}\n",
+            "{\"dialect\":\"ts\",\"strip_comments\":true}",
+        )
+        .expect("formatting succeeds");
+        assert_eq!(
+            parsed(&json)["code"],
+            serde_json::json!("interface Shape{name:string;}")
+        );
+    }
+
+    #[test]
+    fn json_boundary_reports_js_failures_as_structured_json() {
+        let err = format_js_json("function (", "{}").expect_err("invalid JavaScript is refused");
+        assert!(
+            err.starts_with("{\"kind\":\"parse\",\"message\":\""),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn json_boundary_rejects_malformed_js_option_objects() {
+        for options in [
+            "",
+            "{\"nope\":true}",
+            "{\"strip_comments\":\"yes\"}",
+            "{\"dialect\":\"coffee\"}",
+            "{\"dialect\":true}",
+        ] {
+            let err = format_js_json("const a=1;", options).expect_err("bad options are refused");
+            assert!(
+                err.starts_with("{\"kind\":\"options\",\"message\":\""),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_js_dialect_names_the_accepted_values() {
+        let err = format_js_json("const a=1;", "{\"dialect\":\"coffee\"}")
+            .expect_err("an unknown dialect is refused");
+        for name in ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"] {
+            assert!(err.contains(&format!("`{name}`")), "{err}");
+        }
     }
 }

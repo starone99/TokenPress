@@ -1,11 +1,25 @@
 // Demo page wiring. Everything runs in the browser: the formatters and both
 // tokenizer vocabularies live in the WebAssembly bundle under pkg/, so no
 // source ever leaves the page and no network request is made after load.
-import init, { formatPython, formatRust } from "./pkg/tokenpress_wasm.js";
+import init, {
+  formatPython,
+  formatRust,
+  formatJs,
+} from "./pkg/tokenpress_wasm.js";
 
 // Indirection so the rendering paths can be exercised without the wasm bundle
 // (see window.tokenpressDemo at the bottom of this file).
-const backend = { formatPython, formatRust };
+const backend = { formatPython, formatRust, formatJs };
+
+// The four JavaScript/TypeScript entries are one backend with one dialect
+// each: formatJs has no file to read an extension from, so the dialect is
+// passed in the options object.
+const JS_DIALECTS = {
+  javascript: "js",
+  jsx: "jsx",
+  typescript: "ts",
+  tsx: "tsx",
+};
 
 const SAMPLES = {
   python: `import os
@@ -42,6 +56,54 @@ fn main() {
     println!("{}", counts["a"]);
 }
 `,
+  javascript: `// A running total is clearer than reduce() here.
+export function total(values, start = 0) {
+  let result = start; // Trailing comments like this one are always dropped.
+  for (const value of values) {
+    result = result + value;
+  }
+  return result;
+}
+
+console.log(total([1, 2, 3], 10));
+`,
+  jsx: `// Only leading comments like this one survive.
+export function Greeting({ name, items }) {
+  return (
+    <section className="greeting">
+      <h1>Hello, {name}!</h1>
+      <ul>
+        {items.map((item) => (
+          <li key={item.id}>{item.label}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+`,
+  typescript: `interface Point {
+  x: number;
+  y: number;
+}
+
+/** Distance between two points. */
+export function distance(a: Point, b: Point): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+`,
+  tsx: `interface Props {
+  name: string;
+  count?: number;
+}
+
+export const Badge = ({ name, count = 0 }: Props): JSX.Element => (
+  <span className="badge" title={name}>
+    {name}: {count}
+  </span>
+);
+`,
 };
 
 // Report order. The boundary emits the tokenizer stats as a JSON object,
@@ -60,6 +122,7 @@ const dom = {
   status: el("status"),
   pythonOptions: el("python-options"),
   rustOptions: el("rust-options"),
+  jsOptions: el("js-options"),
   result: el("result"),
   placeholder: el("placeholder"),
   changed: el("changed"),
@@ -78,6 +141,12 @@ function currentOptions(language) {
   if (language === "rust") {
     return { strip_doc_comments: el("rs-strip-doc-comments").checked };
   }
+  if (language in JS_DIALECTS) {
+    return {
+      dialect: JS_DIALECTS[language],
+      strip_comments: el("js-strip-comments").checked,
+    };
+  }
   return {
     strip_comments: el("py-strip-comments").checked,
     strip_docstrings: el("py-strip-docstrings").checked,
@@ -86,10 +155,18 @@ function currentOptions(language) {
   };
 }
 
+function backendFor(language) {
+  if (language === "rust") {
+    return backend.formatRust;
+  }
+  return language in JS_DIALECTS ? backend.formatJs : backend.formatPython;
+}
+
 function syncLanguage() {
-  const rust = currentLanguage() === "rust";
-  dom.pythonOptions.hidden = rust;
-  dom.rustOptions.hidden = !rust;
+  const language = currentLanguage();
+  dom.pythonOptions.hidden = language !== "python";
+  dom.rustOptions.hidden = language !== "rust";
+  dom.jsOptions.hidden = !(language in JS_DIALECTS);
 }
 
 function percent(ratio) {
@@ -168,7 +245,7 @@ function asError(thrown) {
 function format() {
   const language = currentLanguage();
   const options = JSON.stringify(currentOptions(language));
-  const run = language === "rust" ? backend.formatRust : backend.formatPython;
+  const run = backendFor(language);
   try {
     showResult(JSON.parse(run(dom.source.value, options)));
   } catch (thrown) {

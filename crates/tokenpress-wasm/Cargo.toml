@@ -1,6 +1,6 @@
 [package]
 name = "tokenpress-wasm"
-description = "WebAssembly bindings for TokenPress: the Python and Rust formatters behind a thin wasm-bindgen boundary"
+description = "WebAssembly bindings for TokenPress: the Python, Rust and JavaScript/TypeScript formatters behind a thin wasm-bindgen boundary"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -21,6 +21,7 @@ crate-type = ["cdylib", "rlib"]
 tokenpress-core = { path = "../tokenpress-core", default-features = false }
 tokenpress-python = { path = "../tokenpress-python", default-features = false }
 tokenpress-rust = { path = "../tokenpress-rust", default-features = false }
+tokenpress-js = { path = "../tokenpress-js", default-features = false }
 wasm-bindgen.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

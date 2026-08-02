@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TokenPress — interactive demo</title>
-<meta name="description" content="Paste Python or Rust source and see how many LLM tokens TokenPress saves.">
+<meta name="description" content="Paste Python, Rust, JavaScript or TypeScript source and see how many LLM tokens TokenPress saves.">
 <!-- Inline data URI: the page must not fetch anything at runtime. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231f6feb'/%3E%3Cpath d='M4 5h8M8 5v7' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
@@ -13,9 +13,9 @@
 <header class="site-header">
   <h1>TokenPress</h1>
   <p class="tagline">
-    A token-aware formatter for Python and Rust that minimizes LLM token usage
-    while preserving behavior. Paste code below, pick the flags, and see what
-    the output costs.
+    A token-aware formatter for Python, Rust and JavaScript/TypeScript that
+    minimizes LLM token usage while preserving behavior. Paste code below, pick
+    the flags, and see what the output costs.
   </p>
   <p class="invariant">
     Output that fails verification (re-parse + equivalence) is never shown —
@@ -36,6 +36,22 @@
       <label class="lang-option">
         <input type="radio" name="language" value="rust">
         <span>Rust</span>
+      </label>
+      <label class="lang-option">
+        <input type="radio" name="language" value="javascript">
+        <span>JavaScript</span>
+      </label>
+      <label class="lang-option">
+        <input type="radio" name="language" value="jsx">
+        <span>JSX</span>
+      </label>
+      <label class="lang-option">
+        <input type="radio" name="language" value="typescript">
+        <span>TypeScript</span>
+      </label>
+      <label class="lang-option">
+        <input type="radio" name="language" value="tsx">
+        <span>TSX</span>
       </label>
     </fieldset>
 
@@ -84,9 +100,50 @@
       </div>
     </fieldset>
 
+    <fieldset class="options" id="js-options" hidden>
+      <legend>JavaScript/TypeScript options</legend>
+      <label><input type="checkbox" id="js-strip-comments"> Strip comments <span class="hint">(everything but legal and annotation comments)</span></label>
+      <div class="caveats" id="js-caveats">
+        <h3>JavaScript/TypeScript is not context-lossless, even with no flags</h3>
+        <ul>
+          <li>
+            <strong>Trailing and inline comments are always dropped.</strong>
+            <code>return a + b; // tail</code> re-emits as
+            <code>return a+b</code> with no flag set, and so does any comment
+            in expression position. Only <em>leading, statement-level</em>
+            comments survive, plus jsdoc (<code>/** */</code>), annotation
+            comments (<code>#__PURE__</code>) and legal comments
+            (<code>//!</code>, <code>/*!</code>, <code>@license</code>,
+            <code>@preserve</code>). Verification cannot detect this: its
+            canonical form is comment-free by construction.
+          </li>
+          <li>
+            <strong>Stripping removes everything else.</strong> With the option
+            above, only legal and annotation comments remain — not even leading
+            comments or jsdoc.
+          </li>
+          <li>
+            <strong>JSX text is never compressed.</strong> Whitespace inside
+            element children is semantically significant, so it is emitted
+            verbatim: JSX/TSX saves tokens on the surrounding JavaScript only.
+            A comment-only expression container <code>{/* c */}</code> becomes
+            <code>{}</code> when stripping — valid JSX that renders
+            identically.
+          </li>
+        </ul>
+      </div>
+      <p class="note">
+        In the browser, verification is internal only (re-parse plus canonical
+        re-emit equivalence): WebAssembly cannot spawn processes, so the
+        command-line tool's <code>--verify external</code>, which runs
+        <code>tsc --noEmit</code> or <code>node --check</code> over the output,
+        is not available here.
+      </p>
+    </fieldset>
+
     <label class="source-label" for="source">Source code</label>
     <textarea id="source" spellcheck="false" rows="16"
-      placeholder="Paste Python or Rust source here…"></textarea>
+      placeholder="Paste Python, Rust, JavaScript or TypeScript source here…"></textarea>
 
     <div class="actions">
       <button type="button" id="format" disabled>Loading…</button>
