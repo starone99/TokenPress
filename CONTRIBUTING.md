@@ -104,6 +104,14 @@ to `node --check`), and its tests exercise that against real processes. Only
 around it (probe order, the missing-tool error, the Windows `tsc.cmd` shim) is
 tested through an injectable seam rather than against an installed `tsc`.
 
+**`ruby` must be on PATH to run the suite too** — for the *tests*, not the
+build: `tokenpress-ruby` implements `--verify external` by running `ruby -c`,
+and its tests exercise that against real processes, exactly as the JavaScript
+backend's do. `ruby` is present on both CI runners. Everything the installed
+interpreter cannot be made to do on demand (a machine with no `ruby` at all, a
+process that fails to spawn) is tested through the same injectable `Tools`
+seam.
+
 ## Integration surfaces
 
 `.pre-commit-hooks.yaml` (with `scripts/pre-commit-hook.sh`), `action.yml` and

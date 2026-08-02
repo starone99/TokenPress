@@ -1,10 +1,11 @@
 //! TokenPress for Ruby — the Ruby backend, built on `ruby-prism`.
 //!
 //! Pipeline: parse ([`parser`]) → whitespace-minimal re-emit over the source
-//! bytes ([`emit`]) → verification ([`verify`]) → token accounting. The
-//! path is only used to decide whether this backend claims the file
-//! ([`paths`]); prism has no dialect, filepath or version selector, so
-//! [`RubyFormatter::format`] never reads it.
+//! bytes ([`emit`]) → verification ([`verify`], plus [`external`] at
+//! [`VerifyLevel::External`]) → token accounting. The path is only used to
+//! decide whether this backend claims the file ([`paths`]); prism has no
+//! dialect, filepath or version selector, so [`RubyFormatter::format`] never
+//! reads it.
 //!
 //! # Comment reality
 //!
@@ -45,10 +46,10 @@
 //!
 //! `Reparse` re-parses the output; `AstEquiv` compares the comparable
 //! artifacts of input and output (which re-parses the output too, so no
-//! separate re-parse is needed). `External` has no Ruby implementation yet —
-//! `ruby -c` lands in a later step — and runs exactly the `AstEquiv` check.
-//! Output that fails is discarded with [`Error::Verification`] and never
-//! returned.
+//! separate re-parse is needed). `External` runs the `AstEquiv` check and
+//! then hands the output to Ruby itself (`ruby -c`), which must be on PATH;
+//! see [`external`] for what that covers and what it requires. Output that
+//! fails is discarded with [`Error::Verification`] and never returned.
 //!
 //! # Parser boundary
 //!
@@ -72,6 +73,7 @@
 
 pub mod comparable;
 pub mod emit;
+pub mod external;
 pub mod parser;
 pub mod paths;
 pub mod verify;
@@ -145,10 +147,16 @@ impl Formatter for RubyFormatter {
                 verify::reparse(code.as_bytes())?;
             }
             // `equivalent` re-parses the output itself, so no separate
-            // `reparse` call is needed. External verification (`ruby -c`) is
-            // not wired up yet; both levels run the strongest built-in check.
-            VerifyLevel::AstEquiv | VerifyLevel::External => {
+            // `reparse` call is needed at either level.
+            VerifyLevel::AstEquiv => {
                 verify::equivalent(bytes, code.as_bytes())?;
+            }
+            // External tooling runs *in addition to* the built-in check, and
+            // only after it: a candidate the equivalence check already
+            // rejected is not worth a process spawn.
+            VerifyLevel::External => {
+                verify::equivalent(bytes, code.as_bytes())?;
+                external::check(source, &code)?;
             }
         }
         let tokenizer = options.tokenizer.load()?;
@@ -310,23 +318,39 @@ mod tests {
         assert_eq!(r.code, "x = 1 + 2\n");
     }
 
-    #[test]
-    fn external_level_falls_back_to_ast_equivalence() {
-        // `ruby -c` is a later sub-task; until then `External` runs exactly
-        // the `AstEquiv` check rather than silently doing less.
-        let opts = FormatOptions {
+    fn external() -> FormatOptions {
+        FormatOptions {
             verify: VerifyLevel::External,
             ..FormatOptions::default()
-        };
+        }
+    }
+
+    #[test]
+    fn external_level_adds_the_ruby_syntax_check() {
+        // Runs the real interpreter (`ruby -c`) on top of the built-in check.
         let r = RubyFormatter::default()
-            .format(Path::new("a.rb"), "x  =  1 + 2\n", &opts)
+            .format(Path::new("a.rb"), "x  =  1 + 2\n", &external())
             .unwrap();
         assert_eq!(r.code, "x = 1 + 2\n");
-        // And it refuses what `AstEquiv` refuses, so it is not a downgrade.
+        // And it still refuses what `AstEquiv` refuses, so it is not a
+        // downgrade of the built-in level but an addition to it.
         let err = RubyFormatter::default()
-            .format(Path::new("a.rb"), "a[1,\n  2]\n", &opts)
+            .format(Path::new("a.rb"), "a[1,\n  2]\n", &external())
             .unwrap_err();
         assert!(matches!(err, Error::Verification(_)), "{err}");
+    }
+
+    #[test]
+    fn external_level_does_not_blame_input_ruby_already_rejects() {
+        // `/[z-a]/` is a well-formed regexp literal to prism and an
+        // "empty range in char class" SyntaxError to MRI, which compiles it.
+        // The external level is then satisfied by the built-in equivalence
+        // check alone, so the file is still formatted instead of the run
+        // failing on the user's own input.
+        let r = RubyFormatter::default()
+            .format(Path::new("a.rb"), "x  =  /[z-a]/\n", &external())
+            .unwrap();
+        assert_eq!(r.code, "x = /[z-a]/\n");
     }
 
     #[test]

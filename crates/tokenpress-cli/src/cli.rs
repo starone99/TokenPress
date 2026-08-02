@@ -355,24 +355,21 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
     }
 }
 
-/// `--verify external` is real for JavaScript/TypeScript but still equals
-/// `--verify ast` for Python, Rust and Ruby, so a run containing files of
-/// those three languages must not read the level as a stronger guarantee than
-/// it is.
+/// `--verify external` is real for JavaScript/TypeScript and for Ruby but
+/// still equals `--verify ast` for Python and Rust, so a run containing files
+/// of those two languages must not read the level as a stronger guarantee
+/// than it is.
 const EXTERNAL_VERIFY_WARNING: &str = "\
-warning: external-tooling verification is implemented for JavaScript/TypeScript
-  only, where `--verify external` runs `tsc --noEmit` (falling back to
-  `node --check`) over the output and fails if neither tool is on PATH. It is
-  not implemented for Python, Rust and Ruby: none of `py_compile`,
-  `rustc --emit=metadata` or `ruby -c` is invoked -- `ruby -c` is planned but
-  not wired up yet -- so for `.py`, `.rs` and the Ruby paths this level behaves
-  exactly like `--verify ast`, i.e. the output is re-parsed and compared for
-  AST / token-stream equivalence.";
+warning: external-tooling verification is implemented for JavaScript/TypeScript,
+  where `--verify external` runs `tsc --noEmit` (falling back to
+  `node --check`), and for Ruby, where it runs `ruby -c`; both fail if the tool
+  they need is not on PATH. It is not implemented for Python and Rust: neither
+  `py_compile` nor `rustc --emit=metadata` is invoked, so for `.py` and `.rs`
+  this level behaves exactly like `--verify ast`, i.e. the output is re-parsed
+  and compared for AST / token-stream equivalence.";
 
 /// Extensions the warning above is about: the backends the external level does
-/// not reach yet. Ruby is affected too but cannot be listed here, because its
-/// paths include the extensionless `Gemfile` and `Rakefile`; that backend's own
-/// path predicate is asked instead.
+/// not reach yet.
 const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 2] = ["py", "rs"];
 
 /// True when `path` belongs to a backend the external level does not reach.
@@ -381,7 +378,7 @@ fn lacks_external_verify(path: &Path) -> bool {
         NO_EXTERNAL_VERIFY_EXTENSIONS
             .iter()
             .any(|affected| ext == *affected)
-    }) || tokenpress_ruby::paths::supports_path(path)
+    })
 }
 
 /// Writes the external-verification warning to `err` at most once per run:
@@ -1164,10 +1161,10 @@ mod tests {
     }
 
     #[test]
-    fn external_verify_warning_covers_ruby_paths() {
-        // Ruby's `External` level falls back to the AST-equivalence check, so
-        // a Ruby run must be told the same thing a Python or Rust run is —
-        // including for the extensionless build files.
+    fn external_verify_warning_is_absent_for_ruby_paths() {
+        // Ruby's `External` level really runs `ruby -c`, so a Ruby-only run
+        // must not be told the level is a no-op — including for the
+        // extensionless build files, which no extension check would catch.
         let dir = Scratch::new();
         let rb = dir.file("a.rb", "x  =  1\n");
         let gemfile = dir.file("Gemfile", "gem  \"rake\"\n");
@@ -1178,11 +1175,41 @@ mod tests {
             rb.to_str().unwrap(),
             gemfile.to_str().unwrap(),
         ]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(err, "");
+        assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x = 1\n");
+        assert_eq!(std::fs::read_to_string(&gemfile).unwrap(), "gem \"rake\"\n");
+    }
+
+    #[test]
+    fn external_verify_runs_the_real_checker_over_ruby() {
+        // End to end at the level that spawns `ruby -c`: the output is
+        // accepted, written, and stable on a second pass.
+        let dir = Scratch::new();
+        let rb = dir.file("real.rb", "def add(a, b)\n    a  +  b\nend\n");
+        let path = rb.to_str().unwrap();
+        let (code, _, _) = run_cli_err(&["format", "--verify", "external", path]);
         assert_eq!(code, 0);
-        assert_eq!(err.matches("warning:").count(), 1);
-        assert!(err.contains("ruby -c"), "{err}");
-        assert!(err.contains("--verify ast"), "{err}");
-        assert!(!out.contains("warning:"));
+        assert_eq!(
+            std::fs::read_to_string(&rb).unwrap(),
+            "def add(a, b)\na + b\nend\n"
+        );
+        let (code, out, _) = run_cli_err(&["check", "--verify", "external", path]);
+        assert_eq!(code, 0, "{out}");
+    }
+
+    #[test]
+    fn external_verify_does_not_blame_ruby_input_the_checker_already_rejects() {
+        // `/[z-a]/` is a well-formed regexp literal to prism and an "empty
+        // range in char class" SyntaxError to MRI, which compiles it. The
+        // policy is that the external level is then satisfied by the built-in
+        // equivalence check alone, so the run succeeds instead of failing on
+        // the user's own input.
+        let dir = Scratch::new();
+        let rb = dir.file("range.rb", "x  =  /[z-a]/\n");
+        let (code, out, _) = run_cli_err(&["format", "--verify", "external", rb.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x = /[z-a]/\n");
     }
 
     #[test]

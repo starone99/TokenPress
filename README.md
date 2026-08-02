@@ -1,7 +1,7 @@
 # TokenPress
 
 > A token-aware formatter for Python, Rust, JavaScript/TypeScript and Ruby
-> (experimental) that minimizes LLM token usage while preserving behavior.
+> that minimizes LLM token usage while preserving behavior.
 
 TokenPress is a token-aware source code formatter for LLMs. Unlike a minifier that
 shrinks characters, TokenPress optimizes against an actual LLM tokenizer —
@@ -78,28 +78,41 @@ not a character minifier.
 | Python | `.py` | Supported |
 | Rust | `.rs` | Supported (with the comment/macro caveats below) |
 | JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts` `.cts` `.tsx` | Supported (with the comment/JSX caveats below) |
-| Ruby | `.rb` `.rake` `.gemspec` `.ru`, plus the exact file names `Gemfile` and `Rakefile` | **Experimental** (see below) |
+| Ruby | `.rb` `.rake` `.gemspec` `.ru`, plus the exact file names `Gemfile` and `Rakefile` | Supported (context-lossless at default settings; see below) |
 
-**`--verify external` is real for JavaScript/TypeScript**, which is what
-"Supported" is gated on here: the output is handed to the language's own
-toolchain, on top of the built-in AST-equivalence check. It runs
+**`--verify external` is real for JavaScript/TypeScript and Ruby**, which is
+what "Supported" is gated on here: the output is handed to the language's own
+toolchain, on top of the built-in AST-equivalence check.
+
+For JavaScript/TypeScript it runs
 `tsc --noEmit --noCheck --skipLibCheck --allowJs --jsx preserve` over the
 candidate — one syntax-only command covering all eight extensions — and falls
 back to `node --check` when no `tsc` is on PATH. The fallback reads only
 `.js`, `.mjs` and `.cjs`; for a `.jsx`/`.ts`/`.mts`/`.cts`/`.tsx` file with no
 `tsc` available the run **fails naming the missing tool** rather than quietly
 checking less than you asked for, so `--verify external` requires `tsc` (or,
-for plain JavaScript, `node`) on PATH. The candidate is checked in a private
-temp file that carries the target's extension; nothing is written to your file
-until every check has passed. Python, Rust and Ruby do not implement the level
-yet and still treat it as `--verify ast`; the CLI says so on stderr when a
-`.py`, `.rs` or Ruby path is in the run.
+for plain JavaScript, `node`) on PATH.
+
+For Ruby it runs `ruby -c` — the interpreter's own syntax check, which
+compiles the file and stops, so nothing in your code runs (`BEGIN`/`END`
+blocks included). The verdict is the exit status alone: `ruby -c` prints
+warnings for files that are perfectly valid, and those never fail a run.
+`--verify external` therefore requires `ruby` on PATH for Ruby paths, and
+**fails naming it** when it is missing rather than quietly checking less.
+
+The candidate is checked in a private temp file — carrying the target's
+extension for JS/TS, always `.rb` for Ruby, which is what makes the
+extensionless `Gemfile` and `Rakefile` checkable at all; nothing is written to
+your file until every check has passed. Python and Rust do not implement the
+level yet and still treat it as `--verify ast`; the CLI says so on stderr when
+a `.py` or `.rs` path is in the run.
 
 If your *input* does not pass the external checker (a file the toolchain
-already rejects — ESM syntax in a `.cjs`, a syntax newer than your `tsc`), the
-output is not checked against it and the file is accepted on the built-in
-equivalence check alone: TokenPress does not fail a run over a file that was
-already broken before it ran. Expect the level to be substantially slower than
+already rejects — ESM syntax in a `.cjs`, a syntax newer than your `tsc`, a
+regexp literal prism parses and MRI refuses to compile), the output is not
+checked against it and the file is accepted on the built-in equivalence check
+alone: TokenPress does not fail a run over a file that was already broken
+before it ran. Expect the level to be substantially slower than
 `--verify ast` — it spawns a probe and two checker processes per file.
 
 `.jsx` and `.tsx` are accepted, with one caveat that limits what they can save:
@@ -122,12 +135,11 @@ construct the strip flag reaches is a comment-only expression container:
 renders identically. The CLI prints these caveats on stderr once per run that
 touches a JS/TS file.
 
-**Ruby is experimental, not "supported".** The label is gated on the
-external-verification paragraph above: `--verify external` has no Ruby
-implementation yet — `ruby -c` is planned — so for a Ruby path the level falls
-back to the built-in AST-equivalence check, and the CLI says so on stderr.
-Everything else is in place: the backend parses with prism, re-emits, verifies,
-and refuses to write anything that fails. Ruby is the one backend that also
+**Ruby is supported.** The backend parses with prism, re-emits, verifies, and
+refuses to write anything that fails; `--verify external` hands the output to
+`ruby -c` as described above, which is what the label was gated on. Default
+settings are whitespace-only and keep every comment;
+`--ruby-strip-comments` is the lossy opt-in. Ruby is the one backend that also
 claims file names without an extension: `Gemfile` and `Rakefile` are matched
 exactly and **case-sensitively** (`gemfile` is not Ruby, and `Gemfile.lock` is
 not Ruby at all). No measured-savings numbers are published for Ruby yet —
@@ -250,7 +262,9 @@ Prerequisites for the consumer:
   `Unable to find libclang`. On Linux `apt install libclang-dev` (plus `gcc` or
   `clang`); on macOS `xcode-select --install`; on Windows install LLVM
   (`choco install llvm`) and set `LIBCLANG_PATH=C:\Program Files\LLVM\bin`.
-  **Ruby itself is not needed** — nothing shells out to `ruby`.
+  **Ruby itself is not needed to build** — nothing in the build shells out to
+  `ruby`. It is needed at *run* time only if you pass `--verify external`,
+  which runs `ruby -c` over Ruby output; the hooks do not by default.
 - **On Windows, `sh` on `PATH`** — the entry point is a `#!/usr/bin/env sh`
   script. Git for Windows provides one.
 
@@ -284,8 +298,11 @@ generally ship both; Windows runners may need LLVM installed
 cannot install toolchain prerequisites into the job that uses it, so this
 action does not try to — provide your own step if your runner lacks them (this
 repository's own CI uses a local `.github/actions/libclang` composite action for
-exactly that, and consumers need their own equivalent). Ruby itself is never
-needed. Shipping Ruby always-on in the default build is a deliberate decision
+exactly that, and consumers need their own equivalent). Ruby itself is not
+needed to build, and at run time only if `extra-args` selects
+`--verify external`, which runs `ruby -c` over Ruby output (GitHub-hosted
+runners preinstall Ruby). Shipping Ruby always-on in the default build is a
+deliberate decision
 for now; a default-on cargo feature to opt out of the backend (and with it the
 libclang requirement) is tracked as follow-up work.
 
@@ -399,9 +416,9 @@ strip_comments = false        # --ruby-strip-comments
 ```
 
 That is the complete schema — there are no other keys. `verify = "external"`
-runs the JavaScript/TypeScript toolchain over JS/TS output (see **Language
-support**); for `.py`, `.rs` and the Ruby paths it still behaves exactly like
-`"ast"` and says so on stderr.
+runs the JavaScript/TypeScript toolchain over JS/TS output and `ruby -c` over
+Ruby output (see **Language support**); for `.py` and `.rs` it still behaves
+exactly like `"ast"` and says so on stderr.
 
 **Discovery.** Without `--config`, the nearest `tokenpress.toml` found walking
 up from the current directory is used; the first one found wins, and having
