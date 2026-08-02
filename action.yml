@@ -39,9 +39,9 @@ inputs:
       Whitespace-separated files and/or directories to process, relative to the
       consumer's workspace. Directories are walked recursively by the CLI
       itself: the walk is `.gitignore`-aware and only picks up `.py`, `.rs` and
-      the experimental JavaScript/TypeScript set (`.js`, `.mjs`, `.cjs`, `.ts`,
-      `.mts`, `.cts` -- not `.jsx`/`.tsx`), so pointing this at a mixed tree is
-      safe. Subject to the shell's word splitting and globbing, so `src/*.py`
+      the experimental JavaScript/TypeScript set (`.js`, `.mjs`, `.cjs`,
+      `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`), so pointing this at a mixed tree
+      is safe. Subject to the shell's word splitting and globbing, so `src/*.py`
       works.
     required: false
     default: .
@@ -164,10 +164,10 @@ runs:
             # An explicitly named file is *not* filtered by the CLI -- an
             # unsupported one is an error (exit 2). Drop those here so that a
             # glob over a mixed tree does not abort the run.
-            # Mirrors the CLI's supported extensions exactly; `.jsx`/`.tsx`
-            # are absent because the JS/TS backend does not accept them yet.
+            # Mirrors the CLI's supported extensions exactly. `.jsx` and
+            # `.tsx` need their own patterns: `*.ts` does not match `.tsx`.
             case "$path" in
-              *.py | *.rs | *.js | *.mjs | *.cjs | *.ts | *.mts | *.cts)
+              *.py | *.rs | *.js | *.mjs | *.cjs | *.jsx | *.ts | *.mts | *.cts | *.tsx)
                 set -- "$@" "$path"
                 ;;
               *) skipped="$skipped $path" ;;

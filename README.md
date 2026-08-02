@@ -60,7 +60,7 @@ not a character minifier.
 |---|---|---|
 | Python | `.py` | Supported |
 | Rust | `.rs` | Supported (with the comment/macro caveats below) |
-| JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.ts` `.mts` `.cts` | **Experimental** |
+| JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts` `.cts` `.tsx` | **Experimental** |
 
 **JavaScript/TypeScript is experimental, not supported.** "Supported" here is
 a claim gated on an external-verification step (running the language's own
@@ -70,10 +70,12 @@ as it does for Python and Rust. Until that step exists, treat JS/TS output as
 something to review rather than to trust, and do not point the CI gate at a
 JS/TS tree you cannot re-check by hand.
 
-`.jsx` and `.tsx` are **not accepted**: the parser handles them, but the
-emitter is not validated for JSX, so naming one explicitly is an
-"unsupported language for path" error (exit 2) and a directory walk skips it.
-`.d.ts` is covered by `.ts`.
+`.jsx` and `.tsx` are accepted, with one caveat that limits what they can save:
+**JSX text is never compressed.** Whitespace inside element children is
+semantically significant, so it is re-emitted verbatim — a JSX file saves
+tokens only on the JavaScript/TypeScript around its markup. A round trip that
+did squeeze that whitespace out would fail the equivalence check and never be
+written. `.d.ts` is covered by `.ts`.
 
 **JS/TS output is not comment-preserving, even at default settings** — the
 same honesty class as the Rust `//` comment loss above. Trailing comments and
@@ -82,8 +84,11 @@ or without `--js-strip-comments`. Only leading statement-level comments, jsdoc
 (`/** */`), annotation comments (such as `#__PURE__`) and legal comments
 (`//!`, `/*!`, `@license`, `@preserve`) survive. That is a property of the code
 generator, not an option, and verification cannot detect it because its
-canonical form is comment-free by construction. The CLI prints this caveat on
-stderr once per run that touches a JS/TS file.
+canonical form is comment-free by construction. In JSX the one comment
+construct the strip flag reaches is a comment-only expression container:
+`{/* c */}` becomes `{}` under `--js-strip-comments`, which is valid JSX and
+renders identically. The CLI prints these caveats on stderr once per run that
+touches a JS/TS file.
 
 ## Usage
 
@@ -159,10 +164,10 @@ on rewritten files" rule as the Action's `mode: format`. Exit 2 (a parse or
 verification failure, or an unsupported path) fails the hook too, and nothing
 that fails verification is ever written.
 
-Both hooks declare `files: \.(py|rs|js|mjs|cjs|ts|mts|cts)$` alongside
-`types_or: [python, rust, javascript, ts]`, so only files the CLI accepts ever
-reach it — `.jsx`/`.tsx` are excluded, since the JS/TS backend does not accept
-them yet. The regex is the authority; `types_or` is a coarse pre-filter.
+Both hooks declare `files: \.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx)$` alongside
+`types_or: [python, rust, javascript, jsx, ts, tsx]`, so only files the CLI
+accepts ever reach it. The regex is the authority; `types_or` is a coarse
+pre-filter.
 Extension-less scripts with a Python shebang are excluded on purpose: an
 explicitly named unsupported path makes the CLI exit 2. Both are
 `require_serial: true` — every invocation runs a `cargo build` first, and
@@ -265,8 +270,9 @@ Output:
 
 **Directories and explicitly named files are treated differently.** A directory
 is handed to the CLI as-is: its walk is `.gitignore`-aware and picks up only
-the supported extensions (`.py`, `.rs`, `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`,
-`.cts`), so pointing `paths` at a mixed tree is safe. An explicitly named file
+the supported extensions (`.py`, `.rs`, `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
+`.mts`, `.cts`, `.tsx`), so pointing `paths` at a mixed tree is safe. An
+explicitly named file
 is *not* filtered by the CLI — an unsupported one is an error (exit 2) — so the
 action drops files with any other extension from the argument list itself and
 logs which ones it skipped. A glob over a mixed tree therefore does not abort

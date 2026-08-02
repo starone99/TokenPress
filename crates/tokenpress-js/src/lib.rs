@@ -4,9 +4,19 @@
 //! whitespace-minimal re-render (`emit`) → verification (`verify`) → token
 //! accounting.
 //!
-//! JS/TS support is not yet wired into the CLI, and JSX/TSX are deliberately
-//! not accepted by [`JsFormatter::supports`] yet (see the note there), so
-//! nothing here should be treated as a supported language backend.
+//! All dialects `parser::parse` can map from a path are accepted end to end,
+//! JSX and TSX included. The backend is still **experimental**: "supported"
+//! is gated on an external-verification step (`tsc --noEmit` / `node --check`)
+//! that does not exist yet, so nothing here should be treated as a supported
+//! language backend.
+//!
+//! # JSX reality
+//!
+//! Whitespace inside JSX element children is semantically significant, so it
+//! is emitted **verbatim** — a `.jsx`/`.tsx` file saves tokens only on the
+//! JavaScript around its markup. The one JSX construct the comment policy
+//! touches is a comment-only expression container: with `strip_comments` it
+//! becomes `{}`, which is valid JSX and renders identically.
 //!
 //! # Comment reality
 //!
@@ -60,14 +70,12 @@ impl Formatter for JsFormatter {
     }
 
     fn supports(&self, path: &Path) -> bool {
-        // `.d.ts` comes along via `.ts`. `.jsx`/`.tsx` are deliberately
-        // absent even though `parser::parse` accepts them: the emitter is not
-        // yet validated for JSX, so enabling those dialects end to end is a
-        // later sub-task.
+        // Exactly the extensions `parser::parse` can map to a dialect, minus
+        // none: `.d.ts` comes along via `.ts`.
         path.extension().is_some_and(|e| {
             matches!(
                 e.to_str(),
-                Some("js" | "mjs" | "cjs" | "ts" | "mts" | "cts")
+                Some("js" | "mjs" | "cjs" | "jsx" | "ts" | "mts" | "cts" | "tsx")
             )
         })
     }
@@ -124,11 +132,12 @@ mod tests {
     #[test]
     fn supports_the_javascript_and_typescript_extensions() {
         let f = JsFormatter::default();
-        for name in ["a.js", "a.mjs", "a.cjs", "a.ts", "a.mts", "a.cts", "a.d.ts"] {
+        for name in [
+            "a.js", "a.mjs", "a.cjs", "a.jsx", "a.ts", "a.mts", "a.cts", "a.tsx", "a.d.ts",
+        ] {
             assert!(f.supports(Path::new(name)), "{name} should be supported");
         }
-        // `.jsx`/`.tsx` parse fine but are not enabled end to end yet.
-        for name in ["a.py", "a.rs", "a.jsx", "a.tsx", "a.txt", "js", "a."] {
+        for name in ["a.py", "a.rs", "a.txt", "js", "a."] {
             assert!(!f.supports(Path::new(name)), "{name} should be rejected");
         }
     }
@@ -262,6 +271,81 @@ mod tests {
     }
 
     #[test]
+    fn the_path_selects_the_jsx_dialect() {
+        // One case for all of it: a fragment, a string attribute, an
+        // expression-container attribute, a spread attribute, a nested
+        // expression container — and JSX text (`text  here`) whose double
+        // space survives while `const x = 1;` next to it is minimized.
+        let source = "function App( p ) {\n    const x = 1;\n    return <>\n        <div a=\"1\" b={ x } { ...p }><span>text  here</span>{ x + 1 }</div>\n    </>;\n}\n";
+        assert_eq!(
+            fmt("a.jsx", source),
+            "function App(p){const x=1;return<>\n        <div a=\"1\" b={x}{...p}><span>text  here</span>{x+1}</div>\n    </>}"
+        );
+    }
+
+    #[test]
+    fn the_path_selects_the_tsx_dialect() {
+        // TypeScript *and* JSX in one file: an interface, a return-type
+        // annotation and a generic function whose `<T>` must be emitted as
+        // `<T,>` to stay unambiguous against a JSX element.
+        let source = "interface Props {\n    name : string ;\n}\n\nconst Greet = ( p : Props ) : JSX.Element => <span title={ p.name }>Hi, { p.name }!</span>;\n\nfunction List< T >( items : T[] ) {\n    return <ul>{ items.map( ( i ) => <li>{ String( i ) }</li> ) }</ul>;\n}\n";
+        assert_eq!(
+            fmt("a.tsx", source),
+            "interface Props{name:string;}const Greet=(p:Props):JSX.Element=><span title={p.name}>Hi, {p.name}!</span>;function List<T,>(items:T[]){return<ul>{items.map(i=><li>{String(i)}</li>)}</ul>}"
+        );
+    }
+
+    #[test]
+    fn jso1_empties_a_comment_only_container_when_stripping() {
+        let source = "const a = <div>{/* c */}</div>;\n";
+        // The default keeps it: a JSX expression container's leading comment
+        // is one of the classes oxc_codegen preserves.
+        assert_eq!(fmt("a.jsx", source), "const a=<div>{/* c */}</div>;");
+        // Stripped, the container stays — `{}` is valid JSX and renders
+        // exactly like `{/* c */}` did.
+        assert_eq!(
+            fmt_with(
+                "a.jsx",
+                source,
+                JsOptions {
+                    strip_comments: true
+                }
+            ),
+            "const a=<div>{}</div>;"
+        );
+    }
+
+    #[test]
+    fn jsx_trailing_comments_are_dropped_even_when_kept() {
+        // Pins the same reality as `trailing_comments_are_dropped_even_when_kept`
+        // for JSX: the container's leading comment survives, a trailing one
+        // inside a container does not.
+        assert_eq!(
+            fmt(
+                "a.jsx",
+                "const a = <div>\n  {/* keep */}\n  {x /* tail */}\n</div>;\n"
+            ),
+            "const a=<div>\n  {/* keep */}\n  {x}\n</div>;"
+        );
+    }
+
+    #[test]
+    fn invalid_jsx_is_a_parse_error_and_yields_no_output() {
+        let err = JsFormatter::default()
+            .format(
+                Path::new("broken.jsx"),
+                "const a = <div>hi;\n",
+                &FormatOptions::default(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::Parse(_)), "{err}");
+        assert!(
+            err.to_string().starts_with("parse error: broken.jsx:"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn formatting_is_idempotent() {
         let sources = [
             (
@@ -271,6 +355,14 @@ mod tests {
             ("a.js", "// note\nconst a = 1;\n"),
             ("a.ts", "enum Color {\n    Red = 1 ,\n    Green ,\n}\n"),
             ("a.mjs", "export const a = 1;\n"),
+            (
+                "a.jsx",
+                "const el = <>\n  <div className=\"box\" id={ id } { ...rest }>hi  there</div>\n  {/* c */}\n</>;\n",
+            ),
+            (
+                "a.tsx",
+                "const Greet = ( p : { name : string } ) => <span title={ p.name }>Hi, { p.name }!</span>;\n",
+            ),
         ];
         for (name, src) in sources {
             let once = fmt(name, src);

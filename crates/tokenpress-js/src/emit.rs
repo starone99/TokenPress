@@ -15,6 +15,17 @@
 //! `strip_comments == false`. That is a property of the code generator, not
 //! a choice made here; the tests below pin it so the limitation is never
 //! silently claimed away.
+//!
+//! # JSX reality
+//!
+//! JSX text is emitted **verbatim**: whitespace inside element children is
+//! semantically significant, so `oxc_codegen` never compresses it and a
+//! `.jsx`/`.tsx` file saves tokens only on the JavaScript around its markup.
+//! The single comment class the JSX dialect adds is a comment-only expression
+//! container: `{/* c */}` survives at the default settings and collapses to
+//! `{}` when comments are stripped — valid JSX that renders identically. In
+//! the `.tsx` dialect a bare type-parameter list would be ambiguous with a JSX
+//! element, so `<T>` is emitted as `<T,>`. All three are pinned below.
 
 use oxc_codegen::{Codegen, CodegenOptions, CommentOptions};
 
@@ -151,5 +162,81 @@ mod tests {
         // leading statement-level comments survive.
         let source = "function f(a, b) {\n    return a + b; // tail\n}\n";
         assert_eq!(keep("a.js", source), "function f(a,b){return a+b}");
+    }
+
+    #[test]
+    fn jsx_text_is_verbatim_while_the_code_around_it_is_minified() {
+        // Whitespace inside element children is semantically significant, so
+        // oxc_codegen never compresses it. The same input minifies the
+        // surrounding JavaScript, which is what makes this one case a proof
+        // of both halves at once.
+        let source = "function App() {\n    const x = 1;\n    return <div a=\"1\" b={ x } { ...p }><span>text  here</span>{ x + 1 }</div>;\n}\n";
+        assert_eq!(
+            keep("a.jsx", source),
+            "function App(){const x=1;return<div a=\"1\" b={x}{...p}><span>text  here</span>{x+1}</div>}"
+        );
+    }
+
+    #[test]
+    fn jsx_fragments_and_nested_containers_round_trip() {
+        let source =
+            "const el = <>\n  <p>a  b</p>\n  { items.map( ( i ) => <li>{ i }</li> ) }\n</>;\n";
+        assert_eq!(
+            keep("a.jsx", source),
+            "const el=<>\n  <p>a  b</p>\n  {items.map(i=><li>{i}</li>)}\n</>;"
+        );
+    }
+
+    #[test]
+    fn jsx_whitespace_only_children_survive() {
+        assert_eq!(
+            keep("a.jsx", "const a = <div>   </div>;\n"),
+            "const a=<div>   </div>;"
+        );
+        assert_eq!(
+            keep("a.jsx", "const a = <div>\n\n  x\n\n</div>;\n"),
+            "const a=<div>\n\n  x\n\n</div>;"
+        );
+    }
+
+    #[test]
+    fn a_comment_only_expression_container_becomes_empty_when_stripped() {
+        // `{}` is valid JSX and renders identically to `{/* c */}`, so
+        // stripping comments cannot break the element.
+        let source = "const a = <div>{/* c */}</div>;\n";
+        assert_eq!(keep("a.jsx", source), "const a=<div>{/* c */}</div>;");
+        assert_eq!(render("a.jsx", source, true), "const a=<div>{}</div>;");
+    }
+
+    #[test]
+    fn a_trailing_comment_inside_a_container_is_dropped_even_when_kept() {
+        // Same class as `trailing_comments_are_dropped_even_when_kept`: the
+        // container's own leading comment survives, the trailing one does not.
+        let source = "const a = <div>\n  {/* inner */}\n  {x /* tail */}\n</div>;\n";
+        assert_eq!(
+            keep("a.jsx", source),
+            "const a=<div>\n  {/* inner */}\n  {x}\n</div>;"
+        );
+    }
+
+    #[test]
+    fn minifies_a_typed_tsx_component() {
+        let source = "interface Props {\n    name : string ;\n}\n\nconst Greet = ( p : Props ) : JSX.Element => <span title={ p.name }>Hi, { p.name }!</span>;\n";
+        assert_eq!(
+            keep("a.tsx", source),
+            "interface Props{name:string;}const Greet=(p:Props):JSX.Element=><span title={p.name}>Hi, {p.name}!</span>;"
+        );
+    }
+
+    #[test]
+    fn tsx_type_parameters_keep_a_disambiguating_trailing_comma() {
+        // In the `.tsx` dialect a bare `<T>` would re-parse as a JSX element,
+        // so oxc_codegen emits `<T,>`. Pinned because it is the one place the
+        // JSX dialect changes non-JSX output.
+        let source = "function List< T >( items : T[] ) {\n    return <ul>{ items.map( ( i ) => <li>{ String( i ) }</li> ) }</ul>;\n}\n";
+        assert_eq!(
+            keep("a.tsx", source),
+            "function List<T,>(items:T[]){return<ul>{items.map(i=><li>{String(i)}</li>)}</ul>}"
+        );
     }
 }

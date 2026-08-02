@@ -15,12 +15,14 @@
 # instead, so a working `cargo` is the only prerequisite.
 #
 # Only the extensions the CLI accepts are matched: any other path makes the
-# CLI exit 2 with "unsupported language for path". `.jsx`/`.tsx` are therefore
-# absent -- the JS/TS backend does not accept them yet.
+# CLI exit 2 with "unsupported language for path".
 #
 # The `files` regex is the authority; `types_or` is only a coarse pre-filter
 # (an identify release that does not yet tag `.mts`/`.cts` as `ts` skips those
-# files, which is a conservative miss, never a wrong rewrite).
+# files, which is a conservative miss, never a wrong rewrite). `jsx` is listed
+# because identify tags `.jsx` as `jsx` and not as `javascript`; `.tsx` is
+# tagged `ts` + `tsx`, so it is already covered by `ts`, and `tsx` is listed
+# alongside it for the same conservative-miss reason.
 
 - id: tokenpress-check
   name: tokenpress check
@@ -29,8 +31,8 @@
     TokenPress-normalized form. Writes nothing.
   entry: scripts/pre-commit-hook.sh check
   language: script
-  files: \.(py|rs|js|mjs|cjs|ts|mts|cts)$
-  types_or: [python, rust, javascript, ts]
+  files: \.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx)$
+  types_or: [python, rust, javascript, jsx, ts, tsx]
   # One process at a time: every invocation runs `cargo build` first, and
   # parallel builds would only contend for the same cargo lock.
   require_serial: true
@@ -44,7 +46,7 @@
     as failed whenever it had something to rewrite.
   entry: scripts/pre-commit-hook.sh format
   language: script
-  files: \.(py|rs|js|mjs|cjs|ts|mts|cts)$
-  types_or: [python, rust, javascript, ts]
+  files: \.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx)$
+  types_or: [python, rust, javascript, jsx, ts, tsx]
   require_serial: true
   minimum_pre_commit_version: '2.9.0'

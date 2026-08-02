@@ -126,4 +126,58 @@ mod tests {
         // comment is invisible here. Comment policy lives in the emitter.
         assert!(check("a.js", "// note\nconst a = 1;\n", "const a=1;").is_ok());
     }
+
+    #[test]
+    fn jsx_formatting_only_differences_are_equivalent() {
+        assert!(check(
+            "a.jsx",
+            "const el = <>\n  <div className=\"box\" id={ id } { ...rest }>hi  there</div>\n</>;\n",
+            "const el=<>\n  <div className=\"box\" id={id}{...rest}>hi  there</div>\n</>;",
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn a_changed_jsx_attribute_is_rejected() {
+        let err = check(
+            "a.jsx",
+            "const a = <div id={ x } />;\n",
+            "const a=<div id={y}/>;",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("differs from input"), "{err}");
+    }
+
+    #[test]
+    fn compressed_jsx_text_is_rejected() {
+        // The canonical re-emit keeps JSX text verbatim, so an output that
+        // squeezed the significant whitespace out of element children fails
+        // verification and is never written.
+        let err = check(
+            "a.jsx",
+            "const a = <div>a  b</div>;\n",
+            "const a=<div>a b</div>;",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("differs from input"), "{err}");
+    }
+
+    #[test]
+    fn emptying_a_comment_only_container_passes_the_equivalence_check() {
+        // Same documented hole as `comment_loss_is_not_caught_by_the_verifier`:
+        // the canonical form of `{/* c */}` is already `{}`, so the strip is
+        // invisible here. It is safe because `{}` renders identically.
+        assert!(check(
+            "a.jsx",
+            "const a = <div>{/* c */}</div>;\n",
+            "const a=<div>{}</div>;"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn tsx_reparse_rejects_invalid_jsx_output() {
+        let err = reparse(Path::new("a.tsx"), "const a=<div>hi;").unwrap_err();
+        assert!(err.to_string().contains("failed to re-parse"), "{err}");
+    }
 }

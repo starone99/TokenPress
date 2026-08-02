@@ -38,8 +38,8 @@ enum VerifyArg {
 #[derive(Args)]
 struct CommonOpts {
     /// Files or directories to process: `.py`, `.rs`, and the experimental
-    /// JavaScript/TypeScript set `.js` `.mjs` `.cjs` `.ts` `.mts` `.cts`
-    /// (JSX/TSX are not accepted yet).
+    /// JavaScript/TypeScript set `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts`
+    /// `.cts` `.tsx`.
     #[arg(required = true)]
     paths: Vec<PathBuf>,
     /// Config file to read. Without it the nearest `tokenpress.toml` found
@@ -312,7 +312,7 @@ fn warn_rust_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
 /// Extensions the JS/TS backend claims. Kept next to the caveat warning
 /// because that is the only place the CLI has to recognize them by name;
 /// `JsFormatter::supports` remains the authority for dispatch.
-const JS_EXTENSIONS: [&str; 6] = ["js", "mjs", "cjs", "ts", "mts", "cts"];
+const JS_EXTENSIONS: [&str; 8] = ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"];
 
 /// Caveat that applies to every rewritten JS/TS file. It is a property of the
 /// code generator, so no option can switch it off — hence a warning rather
@@ -324,7 +324,11 @@ warning: JavaScript/TypeScript support is experimental, and its output is not
   leading statement-level comments, jsdoc (`/** */`), annotation comments
   (such as `#__PURE__`) and legal comments (`//!`, `/*!`, `@license`,
   `@preserve`) survive. Verification cannot detect this: its canonical form is
-  comment-free by construction.";
+  comment-free by construction.
+  In JSX/TSX, JSX text is never compressed -- whitespace inside element
+  children is significant -- so savings there come from the surrounding
+  JavaScript only, and a comment-only expression container `{/* c */}` becomes
+  `{}` under --js-strip-comments (valid JSX, renders identically).";
 
 /// Writes the shared JS/TS caveat warning to `err` at most once per run: only
 /// for the commands that rewrite code, and only if a JS/TS file is processed.
@@ -591,13 +595,12 @@ mod tests {
     fn help_lists_every_supported_extension_and_no_unsupported_one() {
         let (code, text) = run_cli(&["format", "--help"]);
         assert_eq!(code, 0);
-        for ext in [".py", ".rs", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"] {
+        for ext in [
+            ".py", ".rs", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx",
+        ] {
             assert!(text.contains(ext), "{ext} missing from help:\n{text}");
         }
         assert!(text.contains("--js-strip-comments"), "{text}");
-        // JSX/TSX are not accepted yet and must not be advertised.
-        assert!(!text.contains(".jsx"), "{text}");
-        assert!(!text.contains(".tsx"), "{text}");
     }
 
     #[test]
@@ -893,24 +896,68 @@ mod tests {
     }
 
     #[test]
-    fn every_javascript_extension_is_discovered_but_jsx_and_tsx_are_not() {
+    fn every_javascript_extension_including_jsx_and_tsx_is_discovered() {
         let dir = Scratch::new();
-        for name in ["a.js", "a.mjs", "a.cjs", "a.ts", "a.mts", "a.cts"] {
+        for name in [
+            "a.js", "a.mjs", "a.cjs", "a.jsx", "a.ts", "a.mts", "a.cts", "a.tsx",
+        ] {
             dir.file(name, "const a = 1;\n");
         }
-        // Not accepted yet: the emitter is not validated for JSX.
-        dir.file("a.jsx", "const a = 1;\n");
-        dir.file("a.tsx", "const a = 1;\n");
         let (code, text) = run_cli(&["stats", dir.0.to_str().unwrap()]);
         assert_eq!(code, 0);
-        assert!(text.contains("6 files"), "{text}");
-        assert!(!text.contains(".jsx"), "{text}");
-        assert!(!text.contains(".tsx"), "{text}");
-        // …and naming one explicitly is still an error.
-        let jsx = dir.0.join("a.jsx");
+        assert!(text.contains("8 files"), "{text}");
+        assert!(text.contains("a.jsx"), "{text}");
+        assert!(text.contains("a.tsx"), "{text}");
+    }
+
+    #[test]
+    fn format_rewrites_jsx_and_tsx_files() {
+        let dir = Scratch::new();
+        let jsx = dir.file(
+            "a.jsx",
+            "const el = <div a=\"1\" { ...p }>keep  me</div>;\nconst x = 1;\n",
+        );
+        let tsx = dir.file(
+            "b.tsx",
+            "const Greet = ( n : string ) => <span>Hi, { n }!</span>;\n",
+        );
+        let (code, text) = run_cli(&["format", jsx.to_str().unwrap(), tsx.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        // JSX text keeps its double space; the statement next to it does not.
+        assert_eq!(
+            std::fs::read_to_string(&jsx).unwrap(),
+            "const el=<div a=\"1\"{...p}>keep  me</div>;const x=1;"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&tsx).unwrap(),
+            "const Greet=(n:string)=><span>Hi, {n}!</span>;"
+        );
+        assert!(text.contains("2 files"));
+    }
+
+    #[test]
+    fn the_js_strip_comments_flag_reaches_jsx_containers() {
+        let dir = Scratch::new();
+        let jsx = dir.file("a.jsx", "const a = <div>{/* c */}</div>;\n");
+        let (code, _) = run_cli(&["format", "--js-strip-comments", jsx.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&jsx).unwrap(),
+            "const a=<div>{}</div>;"
+        );
+    }
+
+    #[test]
+    fn invalid_jsx_is_reported_and_nothing_is_written() {
+        let dir = Scratch::new();
+        let jsx = dir.file("a.jsx", "const a = <div>hi;\n");
         let (code, text) = run_cli(&["format", jsx.to_str().unwrap()]);
         assert_eq!(code, 2);
-        assert!(text.contains("unsupported language"), "{text}");
+        assert!(text.contains("parse error"), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(&jsx).unwrap(),
+            "const a = <div>hi;\n"
+        );
     }
 
     #[test]
@@ -943,6 +990,18 @@ mod tests {
         assert!(err.contains("@license"), "{err}");
         // stdout stays clean and pipeable.
         assert!(!out.contains("warning:"));
+    }
+
+    #[test]
+    fn js_caveat_warning_covers_jsx_and_states_the_jsx_caveats() {
+        let dir = Scratch::new();
+        let jsx = dir.file("a.jsx", "const a = <div>hi</div>;\n");
+        let tsx = dir.file("b.tsx", "const b = <p>hi</p>;\n");
+        let (code, _, err) = run_cli_err(&["format", jsx.to_str().unwrap(), tsx.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("JSX text"), "{err}");
+        assert!(err.contains("{/* c */}"), "{err}");
     }
 
     #[test]
