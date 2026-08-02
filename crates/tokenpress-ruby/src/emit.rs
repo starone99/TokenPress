@@ -24,7 +24,8 @@
 //!   elements would leave that separator in a rewritable gap;
 //! - heredoc bodies and terminators (below);
 //! - comments and embdocs, from [`ParseResult::comments`]. They are invisible
-//!   to the AST, and an embdoc's `=begin`/`=end` must stay at column 0;
+//!   to the AST, and an embdoc's `=begin`/`=end` must stay at column 0. This
+//!   is the one entry a policy may opt out of; see the comment policy below;
 //! - the `__END__` data section, from [`ParseResult::data_loc`], which is
 //!   likewise invisible to the AST.
 //!
@@ -56,11 +57,13 @@
 //!
 //! # Policy stages
 //!
-//! [`rewrite`] takes the policy as a parameter. [`keep`] is the identity one,
-//! so [`identity`] reproduces its input byte for byte; [`minimize`] is the
-//! whitespace policy, so [`minimize_source`] is the comments-kept
-//! configuration. The `strip_comments` policy lands in a later sub-task as a
-//! change to span collection, not to either policy.
+//! [`rewrite`] takes the gap policy as a parameter. [`keep`] is the identity
+//! one, so [`identity`] reproduces its input byte for byte; [`minimize`] is
+//! the whitespace policy, so [`minimize_source`] is the comments-kept
+//! configuration. Comment stripping is *not* a gap policy — it is a
+//! classification of the spans themselves, [`strip_comments_plan`], applied by
+//! [`strip_comments`]; [`strip_comments_source`] composes it with [`minimize`]
+//! and is the comments-stripped configuration.
 //!
 //! # The whitespace policy
 //!
@@ -123,6 +126,94 @@
 //! costs a saving, never correctness. Measured over the 1650 `.rb` files
 //! shipped with ruby 3.3.6 it is the *only* source of disagreement, and it
 //! hits 6 of them.
+//!
+//! # The comment policy
+//!
+//! Comment stripping cannot be a gap policy. Comments are *collected into* the
+//! protected spans, so by the time a gap policy runs, a comment is one of the
+//! bytes it is forbidden to touch. It is instead a second classification of
+//! the same spans — [`strip_comments_plan`] sorts every comment into the ones
+//! that stay protected and the ones that are deleted outright — and
+//! [`strip_comments`] removes the deleted ones before handing what is left to
+//! [`rewrite`], so the bytes on either side of a vanished comment arrive at
+//! the gap policy as **one** gap rather than two.
+//!
+//! A comment survives when either of these holds:
+//!
+//! - it starts inside the **magic-comment window** (below);
+//! - it overlaps a protected code span, which means it is not a comment at all
+//!   but text inside a literal — `"a#{1 # c\n}b"`, a heredoc body, the
+//!   `__END__` data section. Deleting those bytes would edit the program.
+//!
+//! Nothing else is preserved, and the `__END__` section in particular is never
+//! deleted: it is program-readable data through `DATA`, not commentary. It is
+//! collected with the code spans, not with the comments, so no comment policy
+//! can reach it.
+//!
+//! ## The magic-comment window
+//!
+//! Magic comments — `# frozen_string_literal: true`, `# encoding: …`,
+//! `# shareable_constant_value: …` — change how the program is interpreted,
+//! and Ruby only honours them ahead of the code. Everything before the **first
+//! code token** is therefore kept, whatever it says.
+//!
+//! The window's end is read from the root node's location, which is exactly
+//! its statements' and so starts at the first byte of code however many
+//! comments and blank lines precede it. It is deliberately *not* read from
+//! [`ParseResult::magic_comments`]: that is a purely lexical scan which
+//! reports any `# key: value` line anywhere in the file (`crate::comparable`
+//! documents the same trap), so it cannot say where the window ends.
+//!
+//! Consequences worth stating:
+//!
+//! - the **shebang** needs no special case. It sits at byte 0, so no window
+//!   can exclude it;
+//! - a file with **no code at all** — only comments, or only comments and an
+//!   `__END__` section — has no first code token, so the window is the whole
+//!   file and every comment survives;
+//! - blank lines inside the window change nothing, and the window ends at the
+//!   first code *token*, not at the first line that carries code: a comment
+//!   trailing that first statement is already outside it;
+//! - **embdocs in the window are kept too**. An `=begin` block cannot carry a
+//!   magic comment, so deleting one would be safe, but the window is defined
+//!   on position alone rather than on comment kind — one rule, no
+//!   kind-dependent edge cases, and the cost is bounded by the leading licence
+//!   block of a file.
+//!
+//! ## The line a comment leaves empty
+//!
+//! A deleted span is more than the comment: it also takes the horizontal
+//! whitespace in front of it, and — when that whitespace is all that shares
+//! its line — the line terminator that ends it. A line that held only a
+//! comment therefore vanishes completely instead of leaving a blank line
+//! behind, including where [`minimize`] could not have cleaned it up (a
+//! comment line right after a heredoc terminator opens its gap, and a gap's
+//! first newline is always kept). A trailing comment leaves its code line
+//! otherwise untouched: `x = 1  # note` becomes `x = 1`.
+//!
+//! An inline comment's span swallows the `\r` of a CRLF terminator, so it is
+//! handed back before either decision is taken — a surviving line keeps its
+//! CRLF, a deleted line takes both bytes with it.
+//!
+//! ## Composition
+//!
+//! Deletion leaves whitespace behind — the indentation of a comment line that
+//! also carried code, the blank lines that used to separate comment blocks —
+//! so [`strip_comments_source`] runs [`minimize`] over the result. The two
+//! stages compose in one direction only: stripping first, then minimizing.
+//! [`strip_comments`] takes the gap policy as a parameter like [`rewrite`]
+//! does, so the deletion half stays testable on its own with [`keep`].
+//!
+//! ## The over-refusal this policy adds
+//!
+//! Because `magic_comments()` is lexical, `crate::comparable`'s prelude
+//! records a semantic-looking `# encoding: …` line *wherever* it appears —
+//! including inside prose documentation deep in a file. Deleting that comment
+//! changes the artifact, and the verifier refuses the file. Measured over the
+//! 996 `.rb` files of the ruby 3.3.6 stdlib: 992 stripped and equivalent, 0
+//! parse failures, 4 refusals (2 of them this new class: `csv.rb` and
+//! `erb.rb`), **−45.8 % bytes**, and every written output also passed
+//! `ruby -c`.
 
 use std::ops::Range;
 
@@ -140,16 +231,23 @@ pub type Span = Range<usize>;
 /// overlap are merged: the gap between two touching spans is empty, so
 /// keeping them apart would only hand the policy nothing to do.
 pub fn protected_spans(parsed: &ParseResult<'_>) -> Vec<Span> {
+    let mut spans = code_spans(parsed);
+    // Comments and embdocs are not in the tree at all.
+    spans.extend(parsed.comments().map(|comment| span(&comment.location())));
+    merge(spans)
+}
+
+/// The protected spans a comment policy may choose about: everything
+/// [`protected_spans`] returns except the comments, sorted and merged.
+fn code_spans(parsed: &ParseResult<'_>) -> Vec<Span> {
     let mut collector = Collector {
         source: parsed.source(),
         spans: Vec::new(),
     };
     collector.visit(&parsed.node());
     let mut spans = collector.spans;
-
-    // Comments and embdocs are not in the tree at all.
-    spans.extend(parsed.comments().map(|comment| span(&comment.location())));
-    // Neither is anything after `__END__`.
+    // Anything after `__END__` is not in the tree either, but it is program
+    // data rather than commentary: no policy may delete it.
     if let Some(data) = parsed.data_loc() {
         spans.push(span(&data));
     }
@@ -249,6 +347,155 @@ pub fn minimize_source(source: &[u8]) -> Result<Vec<u8>> {
     let parsed = parser::parse(source)?;
     let spans = protected_spans(&parsed);
     Ok(rewrite(source, &spans, minimize))
+}
+
+/// What a comment-stripping run does with the bytes it has classified: which
+/// spans survive verbatim, and which vanish.
+///
+/// Both lists are sorted and non-overlapping, and no `deleted` span overlaps a
+/// `protected` one — the precondition [`strip_comments`] is documented to
+/// need. [`strip_comments_plan`] produces plans that satisfy it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct StripPlan {
+    /// Byte ranges copied verbatim: what [`protected_spans`] returns, minus
+    /// the comments that `deleted` removes.
+    pub protected: Vec<Span>,
+    /// Byte ranges removed outright: a comment or embdoc, the horizontal
+    /// whitespace in front of it, and the line terminator that ends it when
+    /// nothing else shares its line.
+    pub deleted: Vec<Span>,
+}
+
+/// Classifies `parsed`'s source for comment stripping: every comment and
+/// embdoc is deleted, except the ones in the magic-comment window and the ones
+/// that live inside a protected literal.
+///
+/// See the module docs for the window and for what a deleted span covers.
+pub fn strip_comments_plan(parsed: &ParseResult<'_>) -> StripPlan {
+    let source = parsed.source();
+    let code = code_spans(parsed);
+    let window_end = magic_comment_window_end(parsed);
+
+    let mut protected = code.clone();
+    let mut deleted = Vec::new();
+    for comment in parsed.comments() {
+        let comment = span(&comment.location());
+        // Inside the window a comment is semantic; inside a literal it is not
+        // a comment at all, only text that happens to look like one.
+        if comment.start < window_end || code.iter().any(|literal| overlaps(literal, &comment)) {
+            protected.push(comment);
+        } else {
+            deleted.push(with_its_line(source, comment));
+        }
+    }
+
+    StripPlan {
+        protected: merge(protected),
+        deleted: merge(deleted),
+    }
+}
+
+/// Rebuilds `source` under `plan`: the deleted spans are dropped, the
+/// protected spans are copied verbatim, and every gap between them — one
+/// contiguous gap across each deletion, never two — goes through `policy`.
+///
+/// `plan` must satisfy the invariants [`StripPlan`] documents, which is what
+/// [`strip_comments_plan`] returns.
+pub fn strip_comments(
+    source: &[u8],
+    plan: &StripPlan,
+    policy: impl FnMut(&[u8]) -> Vec<u8>,
+) -> Vec<u8> {
+    let (kept, spans) = delete(source, plan);
+    rewrite(&kept, &spans, policy)
+}
+
+/// Parses `source`, plans its comment stripping and rewrites what is left with
+/// [`minimize`]: the comments-stripped emitter.
+///
+/// Returns [`tokenpress_core::Error::Parse`] for a source prism reports
+/// errors for.
+pub fn strip_comments_source(source: &[u8]) -> Result<Vec<u8>> {
+    let parsed = parser::parse(source)?;
+    let plan = strip_comments_plan(&parsed);
+    Ok(strip_comments(source, &plan, minimize))
+}
+
+/// Removes `plan.deleted` from `source` and remaps `plan.protected` onto the
+/// bytes that are left.
+///
+/// A deleted span never overlaps a protected one, so a protected span only
+/// ever moves: both of its ends shift by the number of bytes deleted before
+/// it.
+fn delete(source: &[u8], plan: &StripPlan) -> (Vec<u8>, Vec<Span>) {
+    let mut kept = Vec::with_capacity(source.len());
+    let mut cursor = 0;
+    for span in &plan.deleted {
+        kept.extend_from_slice(&source[cursor..span.start]);
+        cursor = span.end;
+    }
+    kept.extend_from_slice(&source[cursor..]);
+
+    let mut spans = Vec::with_capacity(plan.protected.len());
+    let mut removed = 0;
+    let mut next = 0;
+    for span in &plan.protected {
+        while next < plan.deleted.len() && plan.deleted[next].end <= span.start {
+            removed += plan.deleted[next].len();
+            next += 1;
+        }
+        spans.push(span.start - removed..span.end - removed);
+    }
+    (kept, spans)
+}
+
+/// The end of the magic-comment window: the offset of the first code token, or
+/// the length of the source when there is no code at all.
+///
+/// The root node's location is exactly its statements', so it starts at the
+/// first byte of code however many comments and blank lines precede it, and it
+/// is empty — start equal to end — when the file holds no statement to locate.
+fn magic_comment_window_end(parsed: &ParseResult<'_>) -> usize {
+    let program = parsed.node().location();
+    if program.start_offset() == program.end_offset() {
+        parsed.source().len()
+    } else {
+        program.start_offset()
+    }
+}
+
+/// Grows a comment's span over the bytes deleting it would otherwise leave
+/// behind: the horizontal whitespace in front of it and, when that whitespace
+/// is all that shares its line, the line terminator that ends it.
+///
+/// The backward scan cannot walk into a protected span: every one of them ends
+/// with a delimiter, a terminator line or the end of the file, never with the
+/// horizontal whitespace this would have to cross.
+fn with_its_line(source: &[u8], comment: Span) -> Span {
+    let mut start = comment.start;
+    while start > 0 && is_horizontal(source[start - 1]) {
+        start -= 1;
+    }
+
+    // An inline comment's span swallows the `\r` of a CRLF terminator. Hand it
+    // back, so that a surviving line keeps its CRLF and a deleted line takes
+    // both bytes with it.
+    let mut end = comment.end;
+    if source[..end].ends_with(b"\r") && source[end..].starts_with(b"\n") {
+        end -= 1;
+    }
+
+    if start == 0 || source[start - 1] == b'\n' {
+        // The comment is the whole line, so the line goes with it — a comment
+        // that ends the file has no terminator to take.
+        end += newline_len(&source[end..]).unwrap_or(0);
+    }
+    start..end
+}
+
+/// Whether two spans share at least one byte.
+fn overlaps(left: &Span, right: &Span) -> bool {
+    left.start < right.end && right.start < left.end
 }
 
 /// The whitespace a run is made of. Only spaces and tabs: every other byte
@@ -825,6 +1072,238 @@ mod tests {
     fn every_hazard_stays_equivalent_under_minimization() {
         for (name, source) in HAZARDS {
             let out = minimize_source(source).unwrap();
+            let equivalent = crate::comparable::equivalent(source, &out).unwrap();
+            assert!(equivalent, "{name}: {}", String::from_utf8_lossy(&out));
+        }
+    }
+
+    fn plan_of(source: &[u8]) -> StripPlan {
+        let parsed = parser::parse(source).unwrap();
+        strip_comments_plan(&parsed)
+    }
+
+    /// Comment stripping with the identity gap policy: only the comments and
+    /// the bytes they leave behind move, so the assertion is byte-exact.
+    fn stripped(source: &[u8]) -> Vec<u8> {
+        strip_comments(source, &plan_of(source), keep)
+    }
+
+    #[test]
+    fn a_plan_deletes_a_comment_with_the_whitespace_in_front_of_it() {
+        let source = b"x = 1 # c\n# d\ny = \"s\" # e\n";
+        let plan = plan_of(source);
+        // Only the string literal is protected: every comment sits after the
+        // first code token.
+        assert_eq!(plan.protected, vec![18..21]);
+        assert_eq!(plan.deleted, vec![5..9, 10..14, 21..25]);
+        // The trailing comments take their leading space but not their
+        // newline; the full-line comment takes its newline and no more.
+        assert_eq!(&source[5..9], b" # c");
+        assert_eq!(&source[10..14], b"# d\n");
+        assert_eq!(&source[21..25], b" # e");
+    }
+
+    #[test]
+    fn stripping_a_trailing_comment_leaves_the_code_line_intact() {
+        assert_eq!(stripped(b"x = 1  # note\ny = 2\n"), b"x = 1\ny = 2\n");
+        // No trailing newline to take, either.
+        assert_eq!(stripped(b"x = 1  # note"), b"x = 1");
+    }
+
+    #[test]
+    fn stripping_a_full_line_comment_removes_the_line_it_leaves_empty() {
+        assert_eq!(stripped(b"x = 1\n  # c\ny = 2\n"), b"x = 1\ny = 2\n");
+        // Several in a row, and one that ends the file.
+        assert_eq!(
+            stripped(b"x = 1\n# a\n# b\ny = 2\n# c\n"),
+            b"x = 1\ny = 2\n"
+        );
+    }
+
+    #[test]
+    fn stripping_a_comment_line_after_a_heredoc_leaves_no_blank_line() {
+        // The heredoc region ends with the terminator's newline, so the
+        // comment line starts right after a protected span.
+        assert_eq!(
+            stripped(b"x = <<~A\nb\nA\n# c\ny = 2\n"),
+            b"x = <<~A\nb\nA\ny = 2\n"
+        );
+    }
+
+    #[test]
+    fn the_shebang_survives_stripping() {
+        assert_eq!(
+            stripped(b"#!/usr/bin/env ruby\nx = 1 # c\n"),
+            b"#!/usr/bin/env ruby\nx = 1\n"
+        );
+    }
+
+    #[test]
+    fn magic_comments_before_the_first_code_token_survive_stripping() {
+        let source = b"#!/usr/bin/env ruby\n\
+                       # frozen_string_literal: true\n\
+                       # encoding: utf-8\n\
+                       x = 1 # gone\n";
+        assert_eq!(
+            stripped(source),
+            b"#!/usr/bin/env ruby\n\
+              # frozen_string_literal: true\n\
+              # encoding: utf-8\n\
+              x = 1\n"
+        );
+    }
+
+    #[test]
+    fn the_window_survives_blank_lines_between_magic_comments() {
+        let source = b"# frozen_string_literal: true\n\n# encoding: utf-8\n\nx = 1 # gone\n";
+        assert_eq!(
+            stripped(source),
+            b"# frozen_string_literal: true\n\n# encoding: utf-8\n\nx = 1\n"
+        );
+    }
+
+    #[test]
+    fn the_window_ends_at_the_first_code_token_not_the_first_line() {
+        // Same text on both sides of the first code token: the one in the
+        // window is semantic, the one after it is not.
+        let source = b"# frozen_string_literal: true\nx = 1\n# frozen_string_literal: true\n";
+        assert_eq!(stripped(source), b"# frozen_string_literal: true\nx = 1\n");
+    }
+
+    #[test]
+    fn a_file_of_only_comments_keeps_every_comment() {
+        // No code token at all, so the window is the whole file.
+        assert_eq!(stripped(b"# a\n\n# b\n"), b"# a\n\n# b\n");
+        assert_eq!(
+            stripped(b"=begin\nlicense\n=end\n"),
+            b"=begin\nlicense\n=end\n"
+        );
+    }
+
+    #[test]
+    fn an_embdoc_after_the_first_code_token_is_deleted_whole() {
+        assert_eq!(
+            stripped(b"x = 1\n=begin\ndoc\n=end\ny = 2\n"),
+            b"x = 1\ny = 2\n"
+        );
+        // An embdoc that ends the file, with no newline after `=end`.
+        assert_eq!(stripped(b"x = 1\n=begin\ndoc\n=end"), b"x = 1\n");
+    }
+
+    #[test]
+    fn an_embdoc_before_the_first_code_token_survives() {
+        assert_eq!(
+            stripped(b"=begin\ndoc\n=end\nx = 1 # gone\n"),
+            b"=begin\ndoc\n=end\nx = 1\n"
+        );
+    }
+
+    #[test]
+    fn the_data_section_survives_stripping_byte_for_byte() {
+        assert_eq!(
+            stripped(b"x = 1 # c\n__END__\n# not a comment\ndata   here\n"),
+            b"x = 1\n__END__\n# not a comment\ndata   here\n"
+        );
+    }
+
+    #[test]
+    fn a_comment_inside_a_literal_is_protected_not_deleted() {
+        // It lives inside the string's span, so deleting it would edit the
+        // literal.
+        assert_eq!(
+            stripped(b"x = \"a#{1 # c\n}b\" # gone\n"),
+            b"x = \"a#{1 # c\n}b\"\n"
+        );
+    }
+
+    #[test]
+    fn a_comment_on_a_heredoc_marker_line_is_deleted() {
+        assert_eq!(
+            stripped(b"x = <<~A # note\n  body\nA\n"),
+            b"x = <<~A\n  body\nA\n"
+        );
+    }
+
+    #[test]
+    fn stripping_keeps_crlf_line_endings() {
+        // The comment span swallows the `\r` of its CRLF terminator: a line
+        // that survives keeps both bytes, a line that goes takes both.
+        assert_eq!(stripped(b"x = 1 # c\r\ny = 2\r\n"), b"x = 1\r\ny = 2\r\n");
+        assert_eq!(
+            stripped(b"x = 1\r\n# c\r\ny = 2\r\n"),
+            b"x = 1\r\ny = 2\r\n"
+        );
+    }
+
+    #[test]
+    fn non_utf8_comments_are_stripped_and_kept_like_any_other() {
+        // In the window it survives; after the first code token it goes, and
+        // the bytes of the file around it are untouched either way.
+        assert_eq!(stripped(b"# \xe9\nx = 1\n"), b"# \xe9\nx = 1\n");
+        assert_eq!(stripped(b"x = 1 # \xe9\n"), b"x = 1\n");
+        assert_eq!(
+            stripped(b"# encoding: binary\nx = \"\xff\xfe\" # c\n"),
+            b"# encoding: binary\nx = \"\xff\xfe\"\n"
+        );
+    }
+
+    #[test]
+    fn strip_comments_source_also_minimizes_the_gaps() {
+        // The headline configuration: comments gone *and* whitespace
+        // minimized, so blank-line runs left behind collapse too.
+        assert_eq!(
+            strip_comments_source(b"def f(a,   b)\n\n  # c\n\n    a  +  b\nend\n").unwrap(),
+            b"def f(a, b)\na + b\nend\n"
+        );
+    }
+
+    #[test]
+    fn strip_comments_source_reports_a_parse_error() {
+        let err = strip_comments_source(b"def ; end").unwrap_err();
+        assert!(matches!(err, Error::Parse(_)), "{err}");
+    }
+
+    #[test]
+    fn every_hazard_yields_a_disjoint_in_bounds_strip_plan() {
+        for (name, source) in HAZARDS {
+            let plan = plan_of(source);
+            for spans in [&plan.protected, &plan.deleted] {
+                let mut previous = 0;
+                for span in spans {
+                    assert!(span.start >= previous, "{name}: {span:?} out of order");
+                    assert!(span.start < span.end, "{name}: {span:?} empty");
+                    assert!(span.end <= source.len(), "{name}: {span:?} out of bounds");
+                    previous = span.end;
+                }
+            }
+            for deleted in &plan.deleted {
+                for protected in &plan.protected {
+                    assert!(
+                        deleted.end <= protected.start || protected.end <= deleted.start,
+                        "{name}: {deleted:?} overlaps {protected:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_hazard_keeps_its_protected_bytes_under_stripping() {
+        for (name, source) in HAZARDS {
+            let plan = plan_of(source);
+            let out = stripped(source);
+            for span in &plan.protected {
+                let bytes = &source[span.clone()];
+                let kept = out.windows(bytes.len()).any(|window| window == bytes);
+                assert!(kept, "{name}: {span:?} lost");
+            }
+        }
+    }
+
+    #[test]
+    fn every_hazard_stays_equivalent_under_comment_stripping() {
+        for (name, source) in HAZARDS {
+            let out = strip_comments_source(source).unwrap();
             let equivalent = crate::comparable::equivalent(source, &out).unwrap();
             assert!(equivalent, "{name}: {}", String::from_utf8_lossy(&out));
         }

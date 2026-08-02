@@ -2,10 +2,10 @@
 //!
 //! This crate is being assembled in stages; today it holds the parser
 //! boundary ([`parser`]), the path-support decision ([`paths`]), the
-//! AST-equivalence artifact ([`comparable`]) and the emitter's protected-span
-//! machinery plus its whitespace policy ([`emit`]). The
-//! `tokenpress_core::Formatter` implementation, the `strip_comments` policy
-//! and the verifier land in later steps, so nothing here is wired into the
+//! AST-equivalence artifact ([`comparable`]) and the whole emitter — its
+//! protected-span machinery, its whitespace policy and its comment-stripping
+//! policy ([`emit`]). The `tokenpress_core::Formatter` implementation and the
+//! verifier land in later steps, so nothing here is wired into the
 //! CLI yet. Modules
 //! are declared `pub` from the moment they land — the same arrangement
 //! `tokenpress-js` uses — so an as-yet-unwired module is covered by its own
