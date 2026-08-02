@@ -2,11 +2,11 @@
 //!
 //! This crate is being assembled in stages; today it holds the parser
 //! boundary ([`parser`]), the path-support decision ([`paths`]), the
-//! AST-equivalence artifact ([`comparable`]) and the whole emitter — its
+//! AST-equivalence artifact ([`comparable`]), the whole emitter — its
 //! protected-span machinery, its whitespace policy and its comment-stripping
-//! policy ([`emit`]). The `tokenpress_core::Formatter` implementation and the
-//! verifier land in later steps, so nothing here is wired into the
-//! CLI yet. Modules
+//! policy ([`emit`]) — and the verifier ([`verify`]). The
+//! `tokenpress_core::Formatter` implementation lands in a later step, so
+//! nothing here is wired into the CLI yet. Modules
 //! are declared `pub` from the moment they land — the same arrangement
 //! `tokenpress-js` uses — so an as-yet-unwired module is covered by its own
 //! unit tests instead of tripping dead-code warnings.
@@ -35,5 +35,6 @@ pub mod comparable;
 pub mod emit;
 pub mod parser;
 pub mod paths;
+pub mod verify;
 
 pub use tokenpress_core::{Error, Result};
