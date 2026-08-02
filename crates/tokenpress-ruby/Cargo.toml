@@ -26,3 +26,10 @@ tokenpress-core = { path = "../tokenpress-core", default-features = false }
 # with `cc` and generates its bindings with bindgen, so building this crate
 # needs a C compiler and libclang. Ruby itself is *not* needed at build time.
 ruby-prism = "=1.9.0"
+# A *direct* dependency on the -sys crate, pinned to the same exact version,
+# because `src/comparable.rs` hand-declares three symbols
+# (`pm_prettyprint`, `pm_buffer_init`, `pm_buffer_free`) that are compiled
+# into the `libprism.a` this crate links but are outside the -sys crate's
+# bindgen allowlist. That is a deliberate, tested coupling to this exact
+# vendored prism build; see the module doc in `src/comparable.rs`.
+ruby-prism-sys = "=1.9.0"

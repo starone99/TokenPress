@@ -1,7 +1,8 @@
 //! TokenPress for Ruby — the Ruby backend, built on `ruby-prism`.
 //!
 //! This crate is being assembled in stages; today it holds the parser
-//! boundary ([`parser`]) and the path-support decision ([`paths`]). The
+//! boundary ([`parser`]), the path-support decision ([`paths`]) and the
+//! AST-equivalence artifact ([`comparable`]). The
 //! `tokenpress_core::Formatter` implementation, the emitter and the verifier
 //! land in later steps, so nothing here is wired into the CLI yet. Modules
 //! are declared `pub` from the moment they land — the same arrangement
@@ -28,6 +29,7 @@
 //! bindings with bindgen, so building this crate needs a C compiler **and**
 //! libclang. Ruby itself is not needed at build time.
 
+pub mod comparable;
 pub mod parser;
 pub mod paths;
 
