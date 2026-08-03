@@ -1819,6 +1819,7 @@ dependencies = [
  "similar",
  "thiserror",
  "tokenpress-core",
+ "tokenpress-go",
  "tokenpress-js",
  "tokenpress-python",
  "tokenpress-ruby",

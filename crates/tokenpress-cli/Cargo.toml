@@ -1,6 +1,6 @@
 [package]
 name = "tokenpress-cli"
-description = "The tokenpress binary: token-aware formatting for Python, Rust, JavaScript/TypeScript and Ruby"
+description = "The tokenpress binary: token-aware formatting for Python, Rust, JavaScript/TypeScript, Ruby and Go"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,14 +15,31 @@ name = "tokenpress_cli"
 path = "src/cli.rs"
 
 [features]
-default = ["ruby"]
-# The Ruby backend. On by default; switching it off drops `tokenpress-ruby`
-# from the dependency graph entirely, and with it the libclang + C compiler
-# build prerequisite that `ruby-prism-sys` (vendored prism C + bindgen)
-# imposes. This is the crate's only feature, so the opt-out is exactly
-# `cargo build -p tokenpress-cli --no-default-features` -- nothing else has to
-# be re-enabled by hand.
+default = ["ruby", "go"]
+# The two native backends, both on by default, and independent of each other:
+# each one carries a build prerequisite the pure-Rust backends do not have, so
+# each one has to be switchable on its own.
+#
+#   * `ruby` pulls in `tokenpress-ruby` -> `ruby-prism-sys` (vendored prism C
+#     compiled with `cc`, bindings generated with bindgen), which needs a C
+#     compiler *and* libclang.
+#   * `go` pulls in `tokenpress-go` -> `tokenpress-treesitter` and
+#     `tree-sitter-go`, which compile the tree-sitter runtime and the grammar's
+#     generated `parser.c` with `cc`: a C compiler, no bindgen and so no
+#     libclang.
+#
+# `--no-default-features` therefore no longer means "without Ruby": it is now
+# the both-off build, the only one that needs no C toolchain at all. Turning
+# off exactly one backend means naming the other:
+#
+#   cargo build -p tokenpress-cli --no-default-features --features go   # no ruby
+#   cargo build -p tokenpress-cli --no-default-features --features ruby # no go
+#
+# Whatever is dropped, its paths become unsupported paths, its flag stops
+# existing and its `tokenpress.toml` table becomes a config error naming the
+# missing feature.
 ruby = ["dep:tokenpress-ruby"]
+go = ["dep:tokenpress-go"]
 
 [dependencies]
 tokenpress-core.workspace = true
@@ -30,6 +47,7 @@ tokenpress-python.workspace = true
 tokenpress-rust.workspace = true
 tokenpress-js.workspace = true
 tokenpress-ruby = { workspace = true, optional = true }
+tokenpress-go = { workspace = true, optional = true }
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
 # Config file parsing only: the writer (`display`) half stays out of the build.

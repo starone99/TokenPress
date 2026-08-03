@@ -1,6 +1,6 @@
 # TokenPress
 
-> A token-aware formatter for Python, Rust, JavaScript/TypeScript and Ruby
+> A token-aware formatter for Python, Rust, JavaScript/TypeScript, Ruby and Go
 > that minimizes LLM token usage while preserving behavior.
 
 TokenPress is a token-aware source code formatter for LLMs. Unlike a minifier that
@@ -81,10 +81,13 @@ not a character minifier.
 | Rust | `.rs` | Supported (with the comment/macro caveats below) |
 | JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts` `.cts` `.tsx` | Supported (with the comment/JSX caveats below) |
 | Ruby | `.rb` `.rake` `.gemspec` `.ru`, plus the exact file names `Gemfile` and `Rakefile` | Supported (context-lossless at default settings; see below) |
+| Go | `.go` | **Experimental** until external verification lands (see below) |
 
 **`--verify external` is real for JavaScript/TypeScript and Ruby**, which is
 what "Supported" is gated on here: the output is handed to the language's own
-toolchain, on top of the built-in AST-equivalence check.
+toolchain, on top of the built-in AST-equivalence check. Go is the language
+that does not have it yet, which is exactly what "experimental" means in the
+table above.
 
 For JavaScript/TypeScript it runs
 `tsc --noEmit --noCheck --skipLibCheck --allowJs --jsx preserve` over the
@@ -105,9 +108,9 @@ warnings for files that are perfectly valid, and those never fail a run.
 The candidate is checked in a private temp file — carrying the target's
 extension for JS/TS, always `.rb` for Ruby, which is what makes the
 extensionless `Gemfile` and `Rakefile` checkable at all; nothing is written to
-your file until every check has passed. Python and Rust do not implement the
-level yet and still treat it as `--verify ast`; the CLI says so on stderr when
-a `.py` or `.rs` path is in the run.
+your file until every check has passed. Python, Rust and Go do not implement
+the level yet and still treat it as `--verify ast`; the CLI says so on stderr
+when a `.py`, `.rs` or `.go` path is in the run.
 
 If your *input* does not pass the external checker (a file the toolchain
 already rejects — ESM syntax in a `.cjs`, a syntax newer than your `tsc`, a
@@ -173,6 +176,35 @@ Ruby caveat warning on stderr: there is nothing to warn about. Context-lossless
 here is about *comments*, not line numbers — those no backend preserves, Ruby
 included (see **What it never touches** below).
 
+**Go is experimental.** The backend parses with tree-sitter, re-emits
+whitespace-minimally over the source bytes, verifies with re-parse plus
+AST-equivalence, and refuses to write anything that fails — the same core
+invariant as every other backend. What it does *not* have yet is external
+verification: `--verify external` currently behaves exactly like
+`--verify ast` for `.go` paths (`gofmt -e` is not invoked), and the CLI says
+so on stderr. That gate is what the other backends' "Supported" label is
+gated on, so Go carries **experimental** until it lands. Everything else is
+in place: `.go` is the whole path set (`go.mod` and `go.sum` are not Go
+source), and measured over the Go 1.24.7 standard library (7,117 files,
+79 MB) the savings are **-7.2%** at default settings and **-23.6%** with
+`--go-strip-comments`, both on `o200k_base`, with zero verification refusals.
+
+**Go, like Ruby, is context-lossless at default settings** — and it defends
+what Go puts *in* comments. Every comment survives byte for byte unless
+`--go-strip-comments` is passed, and even then the comments the toolchain
+reads as instructions are kept: `//go:` directives, `/*line*/`, and build
+constraints (`//go:build` and the legacy `// +build`). Three further rules
+apply at **both** settings, because they are whitespace rules rather than
+deletion rules: an indented directive-shaped comment is never moved to
+column 0 (where `go generate` or the compiler would start obeying it), a
+build-constraint prologue is reproduced verbatim including the blank line a
+legacy `// +build` needs to keep working, and a file that imports `"C"` is
+left byte for byte identical — cgo preambles are C source that is compiled,
+so a cgo file reports no savings at all. There is therefore no Go caveat
+warning on stderr, for the same reason there is no Ruby one: nothing is
+dropped behind your back. Go is also CLI-only for now: the browser demo does
+not offer it.
+
 ## Usage
 
 ```bash
@@ -196,6 +228,7 @@ tokenpress format . --py-no-merge-imports    # keep adjacent imports separate
 tokenpress format . --rs-strip-doc-comments  # drop ///+//! doc comments (and doctests)
 tokenpress format . --js-strip-comments      # drop the JS/TS comments that survive at all
 tokenpress format . --ruby-strip-comments    # drop Ruby comments/embdocs (shebang + magic comments kept)
+tokenpress format . --go-strip-comments      # drop Go comments (//go: directives, build constraints and cgo preambles kept)
 ```
 
 Exit codes: `0` ok · `1` check found changes · `2` error (parse/verification
@@ -249,13 +282,14 @@ verification failure, or an unsupported path) fails the hook too, and nothing
 that fails verification is ever written.
 
 Both hooks declare
-`files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru)$|(^|/)(Gemfile|Rakefile)$)`
-alongside `types_or: [python, rust, javascript, jsx, ts, tsx, ruby]`, so only
+`files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru|go)$|(^|/)(Gemfile|Rakefile)$)`
+alongside `types_or: [python, rust, javascript, jsx, ts, tsx, ruby, go]`, so only
 files the CLI accepts ever reach it. pre-commit ANDs the two: a path has to
 match the regex *and* carry one of the tags. The regex is the authority;
 `types_or` is a coarse pre-filter, so a tag an older `identify` release does not
 emit only means a skipped file, never a wrong rewrite. The second regex branch
-is what picks up Ruby's extensionless `Gemfile`/`Rakefile`.
+is what picks up Ruby's extensionless `Gemfile`/`Rakefile`; `.go` needs no such
+branch (`identify` tags it `go`, and `go.mod`/`go.sum` are not Go source).
 Extension-less scripts with a Python shebang are excluded on purpose: an
 explicitly named unsupported path makes the CLI exit 2. Both are
 `require_serial: true` — every invocation runs a `cargo build` first, and
@@ -270,20 +304,24 @@ Prerequisites for the consumer:
   so `rust-toolchain.toml` pins the compiler (rustup then installs it on first
   use). The first hook run therefore pays one release build; later runs reuse
   that clone's `target/`.
-- **libclang and a C compiler** — the CLI now builds the Ruby backend, whose
-  `ruby-prism-sys` dependency compiles vendored prism C sources and generates
-  its bindings with bindgen. Without libclang the build fails with
+- **libclang and a C compiler** — the CLI now builds two native backends. The
+  Ruby one's `ruby-prism-sys` dependency compiles vendored prism C sources and
+  generates its bindings with bindgen (libclang *and* a C compiler); the Go
+  one compiles the tree-sitter runtime and the Go grammar with `cc` (a C
+  compiler, no bindgen). Without libclang the build fails with
   `Unable to find libclang`. On Linux `apt install libclang-dev` (plus `gcc` or
   `clang`); on macOS `xcode-select --install`; on Windows install LLVM
   (`choco install llvm`) and set `LIBCLANG_PATH=C:\Program Files\LLVM\bin`.
-  **Ruby itself is not needed to build** — nothing in the build shells out to
-  `ruby`. It is needed at *run* time only if you pass `--verify external`,
-  which runs `ruby -c` over Ruby output; the hooks do not by default.
-  **Opt out with `TOKENPRESS_NO_RUBY=1`**: the hook then builds the CLI
-  without its default-on `ruby` cargo feature, which drops `tokenpress-ruby`
-  from the dependency graph and with it this whole prerequisite. Ruby paths
-  become unsupported paths in that build — the hooks' file filter still offers
-  them, so exclude them from `files:` if your repository has any.
+  **Neither `ruby` nor the Go toolchain is needed to build** — nothing in the
+  build shells out to either. `ruby` is needed at *run* time only if you pass
+  `--verify external`, which runs `ruby -c` over Ruby output; the hooks do not
+  by default. **Opt out with `TOKENPRESS_NO_RUBY=1` and/or
+  `TOKENPRESS_NO_GO=1`**: the hook then builds the CLI without that backend's
+  default-on cargo feature, dropping it from the dependency graph. Setting
+  just `TOKENPRESS_NO_RUBY=1` removes the libclang requirement; setting both
+  removes the C compiler too. The dropped backend's paths become unsupported
+  paths — the hooks' file filter still offers them, so exclude them from
+  `files:` if your repository has any.
 - **On Windows, `sh` on `PATH`** — the entry point is a `#!/usr/bin/env sh`
   script. Git for Windows provides one.
 
@@ -310,8 +348,9 @@ installed first:
 ```
 
 **The runner needs libclang and a C compiler.** The action builds the CLI from
-its own checkout, and that build now includes the Ruby backend
-(`ruby-prism-sys`: vendored C + bindgen). GitHub-hosted Ubuntu runners
+its own checkout, and that build now includes both native backends: the Ruby
+one (`ruby-prism-sys`: vendored C + bindgen) and the Go one (the tree-sitter
+runtime and grammar: C via `cc`). GitHub-hosted Ubuntu runners
 generally ship both; Windows runners may need LLVM installed
 (`choco install llvm`, with `LIBCLANG_PATH` pointing at it). A composite action
 cannot install toolchain prerequisites into the job that uses it, so this
@@ -320,11 +359,13 @@ repository's own CI uses a local `.github/actions/libclang` composite action for
 exactly that, and consumers need their own equivalent). Ruby itself is not
 needed to build, and at run time only if `extra-args` selects
 `--verify external`, which runs `ruby -c` over Ruby output (GitHub-hosted
-runners preinstall Ruby). **Or drop the requirement with `ruby: 'false'`**:
-the action then builds the CLI without its default-on `ruby` cargo feature, so
-`tokenpress-ruby` is not in the dependency graph and neither libclang nor a C
-compiler is needed. Ruby paths are unsupported paths in that build — skipped by
-the directory walk, an error (exit 2) when named explicitly.
+runners preinstall Ruby), and the Go toolchain is never needed at all. **Or
+drop the requirement with `ruby: 'false'` and/or `go: 'false'`**: the action
+then builds the CLI without that backend's default-on cargo feature, so it is
+not in the dependency graph. `ruby: 'false'` alone drops the libclang
+requirement; both together drop the C compiler as well, leaving a pure-Rust
+build. The dropped backend's paths are unsupported paths in that build —
+skipped by the directory walk, an error (exit 2) when named explicitly.
 
 As a standalone gate workflow:
 
@@ -379,8 +420,9 @@ Inputs:
 |---|---|---|
 | `mode` | `check` | `check` reports and fails, writing nothing. `format` rewrites in place and then fails if it had something to rewrite. Any other value fails the step with exit 2. |
 | `paths` | `.` | Whitespace-separated files and/or directories, relative to the workspace. Subject to the shell's word splitting and globbing, so `src/*.py` works. |
-| `extra-args` | *(empty)* | Extra `tokenpress` flags, passed through verbatim (whitespace-separated), e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments --ruby-strip-comments`. |
-| `ruby` | `true` | `false` builds the CLI without its default-on `ruby` cargo feature, dropping the Ruby backend and with it the libclang + C compiler build prerequisite. Ruby paths are then unsupported paths. Any other value fails the step with exit 2. |
+| `extra-args` | *(empty)* | Extra `tokenpress` flags, passed through verbatim (whitespace-separated), e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments --ruby-strip-comments --go-strip-comments`. |
+| `ruby` | `true` | `false` builds the CLI without its default-on `ruby` cargo feature, dropping the Ruby backend and with it the libclang build prerequisite. Ruby paths are then unsupported paths. Any other value fails the step with exit 2. |
+| `go` | `true` | `false` builds the CLI without its default-on `go` cargo feature, dropping the Go backend (tree-sitter runtime + grammar, both compiled with `cc`). `.go` paths are then unsupported paths. Independent of `ruby`: only with both `false` does the build need no C toolchain at all. Any other value fails the step with exit 2. |
 
 Output:
 
@@ -391,8 +433,8 @@ Output:
 **Directories and explicitly named files are treated differently.** A directory
 is handed to the CLI as-is: its walk is `.gitignore`-aware and picks up only
 the supported paths (`.py`, `.rs`, `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
-`.mts`, `.cts`, `.tsx`, `.rb`, `.rake`, `.gemspec`, `.ru`, and files named
-`Gemfile` or `Rakefile`), so pointing `paths` at a mixed tree is safe. An
+`.mts`, `.cts`, `.tsx`, `.rb`, `.rake`, `.gemspec`, `.ru`, `.go`, and files
+named `Gemfile` or `Rakefile`), so pointing `paths` at a mixed tree is safe. An
 explicitly named file
 is *not* filtered by the CLI — an unsupported one is an error (exit 2) — so the
 action drops every other path from the argument list itself and logs which ones
@@ -434,12 +476,20 @@ strip_comments = false        # --js-strip-comments
 # Covers every Ruby path: .rb/.rake/.gemspec/.ru plus Gemfile and Rakefile.
 [ruby]
 strip_comments = false        # --ruby-strip-comments
+
+# Covers .go, which is the Go backend's whole path set.
+[go]
+strip_comments = false        # --go-strip-comments
 ```
 
 That is the complete schema — there are no other keys. `verify = "external"`
 runs the JavaScript/TypeScript toolchain over JS/TS output and `ruby -c` over
-Ruby output (see **Language support**); for `.py` and `.rs` it still behaves
-exactly like `"ast"` and says so on stderr.
+Ruby output (see **Language support**); for `.py`, `.rs` and `.go` it still
+behaves exactly like `"ast"` and says so on stderr.
+
+A `[ruby]` or `[go]` table is a config error naming the missing feature in a
+build that switched that backend off (see **Cargo features** below), rather
+than being silently ignored.
 
 **Discovery.** Without `--config`, the nearest `tokenpress.toml` found walking
 up from the current directory is used; the first one found wins, and having
@@ -454,14 +504,45 @@ flags are presence-only booleans, so the command line can only turn them *on*:
 the config file is the project baseline, and `strip_comments = false` there
 cannot cancel a `--py-strip-comments` passed on the command line (nor can the
 command line re-enable import merging that `merge_imports = false` turned off).
-The same holds for `[javascript] strip_comments`/`--js-strip-comments` and
-`[ruby] strip_comments`/`--ruby-strip-comments`.
+The same holds for `[javascript] strip_comments`/`--js-strip-comments`,
+`[ruby] strip_comments`/`--ruby-strip-comments` and
+`[go] strip_comments`/`--go-strip-comments`.
 
 **Config problems fail loudly**, like every other linter-style tool: an unknown
 key, a wrong value type, malformed TOML, or an unknown `tokenizer`/`verify`
 value is an error naming the offending key, reported before any file is read —
 exit 2, nothing written. A discovered config that does not parse fails exactly
 as hard as an explicit one.
+
+### Cargo features
+
+Two of the five backends are native and carry a build prerequisite the others
+do not, so each is a default-on cargo feature of `tokenpress-cli` that can be
+switched off on its own:
+
+| Feature | Default | Drops | Prerequisite removed |
+|---|---|---|---|
+| `ruby` | on | `tokenpress-ruby` → `ruby-prism-sys` (vendored prism C + bindgen) | libclang (and its C compiler) |
+| `go` | on | `tokenpress-go` → `tokenpress-treesitter` + `tree-sitter-go` (C via `cc`) | the C compiler for the grammar |
+
+```bash
+cargo build -p tokenpress-cli                                        # both (default)
+cargo build -p tokenpress-cli --no-default-features --features go    # no Ruby
+cargo build -p tokenpress-cli --no-default-features --features ruby  # no Go
+cargo build -p tokenpress-cli --no-default-features                  # neither: pure Rust
+```
+
+Because there are two independent features, `--no-default-features` is the
+*both-off* build, not the Ruby opt-out — whichever backend you want to keep has
+to be named. Dropping a backend removes it completely: its paths become
+unsupported paths (skipped by the directory walk, exit 2 when named
+explicitly), its `--ruby-strip-comments`/`--go-strip-comments` flag stops
+existing, and its `[ruby]`/`[go]` config table becomes an error naming the
+missing feature rather than a silently ignored setting.
+
+The consumer-facing equivalents are `TOKENPRESS_NO_RUBY=1` / `TOKENPRESS_NO_GO=1`
+for the pre-commit hook and `ruby: 'false'` / `go: 'false'` for the Action, both
+described above; each maps onto exactly the cargo invocation in the table.
 
 ## What it never touches
 
@@ -479,11 +560,13 @@ behavior" claim at the top of this page.
 
 **Line numbers are never preserved, by any backend, at any settings.** Deleting
 blank lines and re-flowing whitespace is the core of what TokenPress does, so
-every line below a removal moves — in Python and Ruby exactly as in Rust and
-JS/TS. No flag turns this off. Code whose behavior depends on physical line
+every line below a removal moves — in Python, Ruby and Go exactly as in Rust
+and JS/TS. No flag turns this off. Code whose behavior depends on physical line
 numbers can therefore change behavior after formatting: Ruby `__LINE__` and
 `caller`, Rust `line!()` and `std::panic::Location`, Python `inspect` and
-traceback line numbers, JavaScript `Error.stack`, and any test that asserts on
+traceback line numbers, JavaScript `Error.stack`, Go `runtime.Caller` (a
+`//line` directive is the one case that is protected, because it is a comment
+the toolchain reads), and any test that asserts on
 a traceback or a stack trace.
 
 Format-time verification cannot detect this **by construction**: the canonical
@@ -538,6 +621,8 @@ Cargo workspace with a single distributed binary:
 | `tokenpress-rust` | Rust: syn token-stream re-render + verification |
 | `tokenpress-js` | JavaScript/TypeScript: oxc parse + whitespace-minimal re-emit + verification (built-in and `tsc`/`node`) |
 | `tokenpress-ruby` | Ruby: prism parse + whitespace-minimal re-emit over the source bytes + verification |
+| `tokenpress-treesitter` | The grammar-agnostic tree-sitter engine: parse gate, equivalence artifact, protected spans, whitespace rewriter |
+| `tokenpress-go` | Go: the grammar configuration, path set and comment policy the engine is driven with |
 | `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
 | `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python, Rust and JavaScript/TypeScript — not Ruby, per-tokenizer token stats) |
 

@@ -15,8 +15,8 @@
 # *there* and not in the consumer's workspace.
 name: TokenPress
 description: >-
-  Fail CI when Python, Rust, JavaScript/TypeScript or Ruby sources are not in
-  TokenPress-normalized, token-minimized form (or rewrite them in place).
+  Fail CI when Python, Rust, JavaScript/TypeScript, Ruby or Go sources are not
+  in TokenPress-normalized, token-minimized form (or rewrite them in place).
 author: TokenPress contributors
 
 branding:
@@ -39,18 +39,18 @@ inputs:
       Whitespace-separated files and/or directories to process, relative to the
       consumer's workspace. Directories are walked recursively by the CLI
       itself: the walk is `.gitignore`-aware and only picks up `.py`, `.rs`,
-      the JavaScript/TypeScript set (`.js`, `.mjs`, `.cjs`,
-      `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`) and the Ruby set (`.rb`, `.rake`,
-      `.gemspec`, `.ru`, plus files named `Gemfile` or `Rakefile`), so pointing
-      this at a mixed tree is safe. Subject to the shell's word splitting and
-      globbing, so `src/*.py` works.
+      the JavaScript/TypeScript set (`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
+      `.mts`, `.cts`, `.tsx`), the Ruby set (`.rb`, `.rake`, `.gemspec`, `.ru`,
+      plus files named `Gemfile` or `Rakefile`) and `.go`, so pointing this at
+      a mixed tree is safe. Subject to the shell's word splitting and globbing,
+      so `src/*.py` works.
     required: false
     default: .
   extra-args:
     description: >-
       Extra `tokenpress` flags, passed through verbatim (whitespace-separated),
       e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments
-      --ruby-strip-comments`.
+      --ruby-strip-comments --go-strip-comments`.
     required: false
     default: ''
   ruby:
@@ -61,6 +61,19 @@ inputs:
       vendored prism C plus bindgen) from the dependency graph entirely. Ruby
       paths become unsupported paths in that build -- skipped by the directory
       walk, and an error (exit 2) when named explicitly. Any other value fails
+      the step with exit 2.
+    required: false
+    default: 'true'
+  go:
+    description: >-
+      `true` (default) builds the CLI with its default-on `go` cargo feature.
+      Set it to `false` on a runner without a C compiler: the build then drops
+      `tokenpress-go` (and with it `tokenpress-treesitter` and the
+      `tree-sitter-go` grammar, both of which compile C with `cc`) from the
+      dependency graph entirely. `.go` paths become unsupported paths in that
+      build -- skipped by the directory walk, and an error (exit 2) when named
+      explicitly. Independent of the `ruby` input: only with *both* set to
+      `false` does the build need no C toolchain at all. Any other value fails
       the step with exit 2.
     required: false
     default: 'true'
@@ -83,21 +96,37 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
         ACTION_REF: ${{ github.action_ref }}
         RUBY: ${{ inputs.ruby }}
+        GO: ${{ inputs.go }}
       run: |
         set -euo pipefail
 
-        # The `ruby` input decides which cargo features the build gets, so it
-        # is resolved here -- before the cache is restored, because a binary
-        # built with a different feature set must not be reused under the same
-        # key. `ruby` is the CLI's only cargo feature, so switching it off is
-        # exactly `--no-default-features`.
+        # The `ruby` and `go` inputs decide which cargo features the build
+        # gets, so they are resolved here -- before the cache is restored,
+        # because a binary built with a different feature set must not be
+        # reused under the same key. The two features are independent, so
+        # neither input alone means `--no-default-features`: that is the
+        # both-off build, and anything left on has to be named explicitly.
+        features=''
         case "$RUBY" in
-          true) build_flags=''; ruby_tag='ruby' ;;
-          false) build_flags='--no-default-features'; ruby_tag='noruby' ;;
+          true) features='ruby'; ruby_tag='ruby' ;;
+          false) ruby_tag='noruby' ;;
           *)
             echo "::error::tokenpress: unknown ruby input '$RUBY' (expected 'true' or 'false')"
             exit 2
             ;;
+        esac
+        case "$GO" in
+          true) features="${features:+$features,}go"; go_tag='go' ;;
+          false) go_tag='nogo' ;;
+          *)
+            echo "::error::tokenpress: unknown go input '$GO' (expected 'true' or 'false')"
+            exit 2
+            ;;
+        esac
+        case "$features" in
+          'ruby,go') build_flags='' ;;
+          '') build_flags='--no-default-features' ;;
+          *) build_flags="--no-default-features --features $features" ;;
         esac
         # On Windows runners `github.action_path` is a backslash path; Git bash
         # is only reliable with forward slashes, so normalize once here and
@@ -122,8 +151,8 @@ runs:
           echo "action-path=$action_path"
           echo "bin=$action_path/target/release/tokenpress$ext"
           echo "build-flags=$build_flags"
-          echo "cache-key=tokenpress-action-$RUNNER_OS-$ruby_tag-$ref-$lock_hash"
-          echo "cache-prefix=tokenpress-action-$RUNNER_OS-$ruby_tag-"
+          echo "cache-key=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-$ref-$lock_hash"
+          echo "cache-prefix=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-"
         } >>"$GITHUB_OUTPUT"
 
     - name: Restore the CLI build cache
@@ -155,8 +184,9 @@ runs:
         # manifest is a virtual workspace manifest, which `cargo install`
         # refuses.
         # `$BUILD_FLAGS` is deliberately unquoted: it is empty unless the
-        # `ruby` input switched the backend off, and an empty quoted argument
-        # would be passed to cargo as one.
+        # `ruby`/`go` inputs switched a backend off, an empty quoted argument
+        # would be passed to cargo as one, and when it is not empty its two or
+        # three words have to reach cargo as separate arguments.
         cd "$ACTION_PATH"
         cargo build --release --locked --quiet $BUILD_FLAGS \
           -p tokenpress-cli --target-dir "$ACTION_PATH/target"
@@ -202,9 +232,11 @@ runs:
             # claims two extensionless names, and a glob cannot express "this
             # basename": `*Gemfile` would match `myGemfile` too, so the file
             # name is taken off the path first and compared exactly (the CLI
-            # matches `Gemfile`/`Rakefile` case-sensitively).
+            # matches `Gemfile`/`Rakefile` case-sensitively). `*.go` is just an
+            # extension -- `go.mod` and `go.sum` are not Go source and do not
+            # match it.
             case "$path" in
-              *.py | *.rs | *.js | *.mjs | *.cjs | *.jsx | *.ts | *.mts | *.cts | *.tsx | *.rb | *.rake | *.gemspec | *.ru)
+              *.py | *.rs | *.js | *.mjs | *.cjs | *.jsx | *.ts | *.mts | *.cts | *.tsx | *.rb | *.rake | *.gemspec | *.ru | *.go)
                 set -- "$@" "$path"
                 ;;
               *)

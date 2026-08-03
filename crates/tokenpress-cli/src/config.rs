@@ -26,6 +26,12 @@ pub struct FileConfig {
     /// no longer be satisfied — see `NoRubySupport`.
     #[cfg(not(feature = "ruby"))]
     pub ruby: Option<NoRubySupport>,
+    #[cfg(feature = "go")]
+    pub go: Option<GoConfig>,
+    /// The `go` cargo feature is switchable exactly as `ruby` is, so its table
+    /// gets the same treatment — see `NoGoSupport`.
+    #[cfg(not(feature = "go"))]
+    pub go: Option<NoGoSupport>,
 }
 
 /// `[python]` table.
@@ -81,6 +87,32 @@ impl<'de> Deserialize<'de> for NoRubySupport {
         Err(serde::de::Error::custom(
             "this tokenpress was built without the `ruby` feature, so the \
              [ruby] table has nothing to configure",
+        ))
+    }
+}
+
+/// `[go]` table. Named after `GoFormatter::language()`, and it covers the one
+/// extension that backend claims: `.go`.
+#[cfg(feature = "go")]
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GoConfig {
+    pub strip_comments: Option<bool>,
+}
+
+/// Stand-in for the `[go]` table in a build without the `go` cargo feature,
+/// for the same reason `NoRubySupport` is one: naming the missing feature
+/// beats blaming the user's spelling or silently ignoring the option.
+#[cfg(not(feature = "go"))]
+#[derive(Debug, PartialEq)]
+pub struct NoGoSupport;
+
+#[cfg(not(feature = "go"))]
+impl<'de> Deserialize<'de> for NoGoSupport {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "this tokenpress was built without the `go` feature, so the \
+             [go] table has nothing to configure",
         ))
     }
 }
@@ -177,6 +209,7 @@ mod tests {
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
+        assert_eq!(cfg.go, None);
     }
 
     /// The `[ruby]` table as a build with the `ruby` feature spells it, and as
@@ -186,6 +219,22 @@ mod tests {
     const RUBY_TABLE: &str = "[ruby]\nstrip_comments = true\n";
     #[cfg(not(feature = "ruby"))]
     const RUBY_TABLE: &str = "";
+
+    /// The same for the `[go]` table and the `go` feature.
+    #[cfg(feature = "go")]
+    const GO_TABLE: &str = "[go]\nstrip_comments = true\n";
+    #[cfg(not(feature = "go"))]
+    const GO_TABLE: &str = "";
+
+    /// The same two tables with no keys in them.
+    #[cfg(feature = "ruby")]
+    const EMPTY_RUBY_TABLE: &str = "[ruby]\n";
+    #[cfg(not(feature = "ruby"))]
+    const EMPTY_RUBY_TABLE: &str = "";
+    #[cfg(feature = "go")]
+    const EMPTY_GO_TABLE: &str = "[go]\n";
+    #[cfg(not(feature = "go"))]
+    const EMPTY_GO_TABLE: &str = "";
 
     #[test]
     fn full_config_parses_every_field() {
@@ -201,7 +250,7 @@ mod tests {
              strip_doc_comments = true\n\
              [javascript]\n\
              strip_comments = true\n\
-             {RUBY_TABLE}"
+             {RUBY_TABLE}{GO_TABLE}"
         ));
         assert_eq!(cfg.tokenizer.as_deref(), Some("cl100k_base"));
         assert_eq!(cfg.verify, Some(ConfigVerify::Reparse));
@@ -233,6 +282,13 @@ mod tests {
                 strip_comments: Some(true)
             })
         );
+        #[cfg(feature = "go")]
+        assert_eq!(
+            cfg.go,
+            Some(GoConfig {
+                strip_comments: Some(true)
+            })
+        );
     }
 
     #[test]
@@ -243,6 +299,7 @@ mod tests {
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
+        assert_eq!(cfg.go, None);
         let python = cfg.python.unwrap();
         assert_eq!(python.strip_comments, Some(true));
         assert_eq!(python.strip_docstrings, None);
@@ -256,6 +313,7 @@ mod tests {
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
+        assert_eq!(cfg.go, None);
         let python = cfg.python.unwrap();
         assert_eq!(python.strip_annotations, Some(true));
         assert_eq!(python.merge_imports, Some(true));
@@ -267,6 +325,7 @@ mod tests {
         assert_eq!(cfg.python, None);
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
+        assert_eq!(cfg.go, None);
         assert_eq!(
             cfg.rust,
             Some(RustConfig {
@@ -281,6 +340,7 @@ mod tests {
         assert_eq!(cfg.python, None);
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.ruby, None);
+        assert_eq!(cfg.go, None);
         assert_eq!(
             cfg.javascript,
             Some(JavaScriptConfig {
@@ -296,6 +356,7 @@ mod tests {
         assert_eq!(cfg.python, None);
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.javascript, None);
+        assert_eq!(cfg.go, None);
         assert_eq!(
             cfg.ruby,
             Some(RubyConfig {
@@ -304,12 +365,27 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "go")]
+    #[test]
+    fn go_table_alone_parses() {
+        let cfg = parse("[go]\nstrip_comments = true\n");
+        assert_eq!(cfg.python, None);
+        assert_eq!(cfg.rust, None);
+        assert_eq!(cfg.javascript, None);
+        assert_eq!(cfg.ruby, None);
+        assert_eq!(
+            cfg.go,
+            Some(GoConfig {
+                strip_comments: Some(true)
+            })
+        );
+    }
+
     #[test]
     fn empty_tables_are_valid_and_leave_their_keys_unset() {
-        #[cfg(feature = "ruby")]
-        let cfg = parse("[python]\n[rust]\n[javascript]\n[ruby]\n");
-        #[cfg(not(feature = "ruby"))]
-        let cfg = parse("[python]\n[rust]\n[javascript]\n");
+        let cfg = parse(&format!(
+            "[python]\n[rust]\n[javascript]\n{EMPTY_RUBY_TABLE}{EMPTY_GO_TABLE}"
+        ));
         assert_eq!(
             cfg.python,
             Some(PythonConfig {
@@ -335,6 +411,13 @@ mod tests {
         assert_eq!(
             cfg.ruby,
             Some(RubyConfig {
+                strip_comments: None
+            })
+        );
+        #[cfg(feature = "go")]
+        assert_eq!(
+            cfg.go,
+            Some(GoConfig {
                 strip_comments: None
             })
         );
@@ -390,6 +473,27 @@ mod tests {
     fn unknown_ruby_key_is_an_error() {
         let msg = parse_err("[ruby]\nstrip_embdocs = true\n");
         assert!(msg.contains("strip_embdocs"), "{msg}");
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn unknown_go_key_is_an_error() {
+        let msg = parse_err("[go]\nstrip_directives = true\n");
+        assert!(msg.contains("strip_directives"), "{msg}");
+    }
+
+    #[cfg(not(feature = "go"))]
+    #[test]
+    fn a_go_table_names_the_missing_feature_rather_than_being_ignored() {
+        // Same reasoning as the `[ruby]` case above.
+        for text in [
+            "[go]\n",
+            "[go]\nstrip_comments = true\n",
+            "[go]\nstrip_directives = true\n",
+        ] {
+            let msg = parse_err(text);
+            assert!(msg.contains("built without the `go` feature"), "{msg}");
+        }
     }
 
     #[cfg(not(feature = "ruby"))]

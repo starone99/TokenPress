@@ -24,6 +24,8 @@ tokenpress-python = { path = "crates/tokenpress-python" }
 tokenpress-rust = { path = "crates/tokenpress-rust" }
 tokenpress-js = { path = "crates/tokenpress-js" }
 tokenpress-ruby = { path = "crates/tokenpress-ruby" }
+tokenpress-treesitter = { path = "crates/tokenpress-treesitter" }
+tokenpress-go = { path = "crates/tokenpress-go" }
 thiserror = "2"
 tiktoken-rs = "0.12"
 wasm-bindgen = "0.2"

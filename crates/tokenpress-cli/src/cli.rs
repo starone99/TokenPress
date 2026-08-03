@@ -13,6 +13,8 @@ use config::{ConfigError, ConfigVerify, FileConfig};
 use tokenpress_core::{
     Error, FormatOptions, FormatResult, Formatter, Result, TokenizerKind, VerifyLevel,
 };
+#[cfg(feature = "go")]
+use tokenpress_go::{GoFormatter, GoOptions};
 use tokenpress_js::{JsFormatter, JsOptions};
 use tokenpress_python::{PythonFormatter, PythonOptions};
 #[cfg(feature = "ruby")]
@@ -20,20 +22,40 @@ use tokenpress_ruby::{RubyFormatter, RubyOptions};
 use tokenpress_rust::{RustFormatter, RustOptions};
 
 #[derive(Parser)]
-#[command(name = "tokenpress", version)]
-// The `ruby` cargo feature is default-on; a build without it has no Ruby
-// backend at all, so nothing here may advertise one.
-#[cfg_attr(
-    feature = "ruby",
-    command(about = "Token-aware formatter for Python, Rust, JavaScript/TypeScript and Ruby")
-)]
-#[cfg_attr(
-    not(feature = "ruby"),
-    command(about = "Token-aware formatter for Python, Rust and JavaScript/TypeScript")
-)]
+#[command(name = "tokenpress", version, about = about())]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
+}
+
+/// The languages this build actually has a backend for, in dispatch order.
+/// The `ruby` and `go` cargo features are default-on but independent, and a
+/// build without one has no such backend at all, so nothing may advertise one.
+/// A `Vec` and not an array: the length is a property of the feature set.
+fn languages() -> Vec<&'static str> {
+    // The first three backends are unconditional, so the list never has fewer
+    // than three entries.
+    #[cfg_attr(not(any(feature = "ruby", feature = "go")), allow(unused_mut))]
+    let mut languages = vec!["Python", "Rust", "JavaScript/TypeScript"];
+    #[cfg(feature = "ruby")]
+    languages.push("Ruby");
+    #[cfg(feature = "go")]
+    languages.push("Go");
+    languages
+}
+
+/// The `--help` one-liner. Assembled from [`languages`] rather than written
+/// out per feature combination: two independent features would otherwise need
+/// four spellings of one sentence, and the conjunction moves with the list.
+fn about() -> String {
+    let languages = languages();
+    // Not an edge case: `languages` always has at least three entries.
+    let last = languages.len() - 1;
+    format!(
+        "Token-aware formatter for {} and {}",
+        languages[..last].join(", "),
+        languages[last]
+    )
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -45,19 +67,23 @@ enum VerifyArg {
 
 #[derive(Args)]
 struct CommonOpts {
-    /// Files or directories to process: `.py`, `.rs`, the
+    /// Files or directories to process: `.py`, `.rs` and the
     /// JavaScript/TypeScript set `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts`
-    // Written as `doc` attributes rather than `///` so the Ruby half can be
-    // switched off with the backend itself; they concatenate in source order.
+    /// `.cts` `.tsx`.
+    // Written as `doc` attributes rather than `///` so each optional backend's
+    // half can be switched off with the backend itself; they concatenate in
+    // source order. One self-contained sentence per backend, so the `ruby` and
+    // `go` features stay independent instead of needing a spelling per
+    // combination.
     #[cfg_attr(
         feature = "ruby",
-        doc = " `.cts` `.tsx`, and the Ruby set `.rb` `.rake` `.gemspec` `.ru` plus the"
+        doc = " Also the Ruby set `.rb` `.rake` `.gemspec` `.ru` plus the files"
     )]
     #[cfg_attr(
         feature = "ruby",
-        doc = " files named `Gemfile` and `Rakefile` (exact, case-sensitive names)."
+        doc = " named `Gemfile` and `Rakefile` (exact, case-sensitive names)."
     )]
-    #[cfg_attr(not(feature = "ruby"), doc = " `.cts` and `.tsx`.")]
+    #[cfg_attr(feature = "go", doc = " Also `.go`.")]
     #[arg(required = true)]
     paths: Vec<PathBuf>,
     /// Config file to read. Without it the nearest `tokenpress.toml` found
@@ -101,6 +127,16 @@ struct CommonOpts {
     #[cfg(feature = "ruby")]
     #[arg(long)]
     ruby_strip_comments: bool,
+    /// GOO1: strip Go comments (kept by default — and, unlike Rust and JS/TS,
+    /// nothing is dropped without this flag). The comments the Go toolchain
+    /// reads as directives — `//go:` lines, `/*line*/`, build constraints and
+    /// the cgo preamble — survive either way.
+    // Deliberately no mention of the Ruby flag it mirrors: the two features
+    // are independent, and a build with `go` but not `ruby` must not advertise
+    // a backend it does not have.
+    #[cfg(feature = "go")]
+    #[arg(long)]
+    go_strip_comments: bool,
 }
 
 #[derive(Subcommand)]
@@ -198,6 +234,10 @@ fn apply_config(common: &mut CommonOpts, cfg: FileConfig) {
     if let Some(ruby) = cfg.ruby {
         common.ruby_strip_comments |= ruby.strip_comments.unwrap_or(false);
     }
+    #[cfg(feature = "go")]
+    if let Some(go) = cfg.go {
+        common.go_strip_comments |= go.strip_comments.unwrap_or(false);
+    }
 }
 
 /// Runs the CLI and returns the process exit code.
@@ -261,8 +301,9 @@ struct FileOutcome {
 
 fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
     // The list has a conditional tail, so it is built and then extended; the
-    // `mut` is only needed when the `ruby` feature is on.
-    #[cfg_attr(not(feature = "ruby"), allow(unused_mut))]
+    // `mut` is only needed when at least one of the two optional backends is
+    // compiled in.
+    #[cfg_attr(not(any(feature = "ruby", feature = "go")), allow(unused_mut))]
     let mut formatters: Vec<Box<dyn Formatter>> = vec![
         Box::new(PythonFormatter::new(PythonOptions {
             strip_comments: common.py_strip_comments,
@@ -280,6 +321,10 @@ fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
     #[cfg(feature = "ruby")]
     formatters.push(Box::new(RubyFormatter::new(RubyOptions {
         strip_comments: common.ruby_strip_comments,
+    })));
+    #[cfg(feature = "go")]
+    formatters.push(Box::new(GoFormatter::new(GoOptions {
+        strip_comments: common.go_strip_comments,
     })));
     formatters
 }
@@ -378,12 +423,25 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
     }
 }
 
+// There is deliberately no `GO_CAVEAT_WARNING`, for the reason there is no
+// Ruby one: a caveat warning exists where a backend drops something the user
+// did not ask it to drop and verification cannot see the loss — Rust's `//`
+// comments, JS/TS's trailing and expression-position comments. The Go emitter
+// rewrites the whitespace between protected spans and copies everything else
+// verbatim, so at the default settings **every** comment survives byte for
+// byte; `--go-strip-comments` is the opt-in that deletes them, and an opt-in
+// flag documents itself. What the Go backend does unconditionally — pinning an
+// indented directive-shaped comment away from column 0, reproducing a
+// build-constraint prologue verbatim, leaving a cgo file byte-identical — only
+// ever preserves meaning, and none of it is a loss to warn about.
+
 // `--verify external` is real for JavaScript/TypeScript and for Ruby but
-// still equals `--verify ast` for Python and Rust, so a run containing files
-// of those two languages must not read the level as a stronger guarantee than
-// it is. Only the first half — which backends do have it — depends on the
-// `ruby` feature, so the warning is a conditional head plus a shared tail,
-// written out as one block by `warn_external_verify`.
+// still equals `--verify ast` for Python, Rust and Go, so a run containing
+// files of those languages must not read the level as a stronger guarantee
+// than it is. The head — which backends do have it — depends on the `ruby`
+// feature; the tail — which do not — depends on the `go` feature. The two are
+// independent, so the warning is a conditional head plus a conditional tail,
+// two variants each, written out as one block by `warn_external_verify`.
 #[cfg(feature = "ruby")]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
 warning: external-tooling verification is implemented for JavaScript/TypeScript,
@@ -397,6 +455,13 @@ warning: external-tooling verification is implemented for JavaScript/TypeScript,
   where `--verify external` runs `tsc --noEmit` (falling back to
   `node --check`); it fails if the tool it needs is not on PATH.";
 
+#[cfg(feature = "go")]
+const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python, Rust and Go: none of
+  `py_compile`, `rustc --emit=metadata` and `gofmt -e` is invoked, so for
+  `.py`, `.rs` and `.go` this level behaves exactly like `--verify ast`, i.e.
+  the output is re-parsed and compared for AST / token-stream equivalence.";
+
+#[cfg(not(feature = "go"))]
 const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python and Rust: neither
   `py_compile` nor `rustc --emit=metadata` is invoked, so for `.py` and `.rs`
   this level behaves exactly like `--verify ast`, i.e. the output is re-parsed
@@ -404,6 +469,9 @@ const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python an
 
 /// Extensions the warning above is about: the backends the external level does
 /// not reach yet.
+#[cfg(feature = "go")]
+const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 3] = ["py", "rs", "go"];
+#[cfg(not(feature = "go"))]
 const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 2] = ["py", "rs"];
 
 /// True when `path` belongs to a backend the external level does not reach.
@@ -685,6 +753,16 @@ mod tests {
         // must not advertise one.
         #[cfg(not(feature = "ruby"))]
         for absent in [".rb", ".gemspec", "Gemfile", "Rakefile", "Ruby"] {
+            assert!(!text.contains(absent), "{absent} in help:\n{text}");
+        }
+        #[cfg(feature = "go")]
+        {
+            assert!(text.contains(".go"), "'.go' missing from help:\n{text}");
+            assert!(text.contains("--go-strip-comments"), "{text}");
+        }
+        // ... and the same for the `go` feature, which is independent of it.
+        #[cfg(not(feature = "go"))]
+        for absent in [".go", "Go"] {
             assert!(!text.contains(absent), "{absent} in help:\n{text}");
         }
     }
@@ -1267,6 +1345,97 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x = /[z-a]/\n");
     }
 
+    #[cfg(feature = "go")]
+    #[test]
+    fn format_rewrites_go_files() {
+        let dir = Scratch::new();
+        let go = dir.file(
+            "a.go",
+            "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n",
+        );
+        let (code, text) = run_cli(&["format", go.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&go).unwrap(),
+            "package main\nimport \"fmt\"\nfunc main() {\nfmt.Println(\"hi\")\n}\n"
+        );
+        assert!(text.contains("tokens"));
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn go_files_are_discovered_by_the_walk_and_module_metadata_is_not() {
+        // `.go` is the whole path set: `go.mod` and `go.sum` sit next to the
+        // sources in every Go repository and are not Go source.
+        let dir = Scratch::new();
+        dir.file("a.go", "package  main\n");
+        dir.file("go.mod", "module example.com/m\n");
+        dir.file("go.sum", "\n");
+        let (code, text) = run_cli(&["stats", dir.0.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(text.contains("a.go"), "{text}");
+        assert!(!text.contains("go.mod"), "{text}");
+        assert!(!text.contains("go.sum"), "{text}");
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn go_strip_comments_flag_is_forwarded() {
+        let dir = Scratch::new();
+        let go = dir.file("a.go", "package main\n\n// note\nfunc f() {}\n");
+        let (code, _) = run_cli(&["format", "--go-strip-comments", go.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&go).unwrap(),
+            "package main\nfunc f() {}\n"
+        );
+        // Without the flag every comment survives, byte for byte.
+        let kept = dir.file("b.go", "package main\n\n// note\nfunc f() {}\n");
+        let (code, _) = run_cli(&["format", kept.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&kept).unwrap(),
+            "package main\n// note\nfunc f() {}\n"
+        );
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn go_runs_emit_no_caveat_warning() {
+        // Like Ruby, and unlike Rust and JS/TS, there is deliberately no Go
+        // caveat warning: the Go emitter rewrites whitespace only and drops
+        // nothing at the default settings, so there is nothing to warn about.
+        let dir = Scratch::new();
+        let go = dir.file("a.go", "package main\n\n// note\nfunc f() {}\n");
+        let path = go.to_str().unwrap();
+        for args in [
+            vec!["format", path],
+            vec!["check", path],
+            vec!["diff", path],
+            vec!["stats", path],
+        ] {
+            let (_, _, err) = run_cli_err(&args);
+            assert_eq!(err, "", "{args:?}");
+        }
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn external_verify_warning_names_go_as_not_implemented() {
+        // `gofmt -e` is not wired up yet, so Go joins Python and Rust: the
+        // level must not be read as a stronger guarantee than it is.
+        let dir = Scratch::new();
+        let go = dir.file("a.go", "package  main\n");
+        let (code, out, err) =
+            run_cli_err(&["format", "--verify", "external", go.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("gofmt -e"), "{err}");
+        assert!(err.contains("`.go`"), "{err}");
+        assert!(err.contains("--verify ast"), "{err}");
+        assert_eq!(std::fs::read_to_string(&go).unwrap(), "package main\n");
+    }
+
     #[test]
     fn external_verify_warning_is_emitted_once_per_run() {
         let dir = Scratch::new();
@@ -1677,6 +1846,99 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&rb).unwrap(), "x = 1\n");
     }
 
+    #[cfg(feature = "go")]
+    #[test]
+    fn config_file_supplies_go_settings() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[go]\nstrip_comments = true\n");
+        let go = dir.file("a.go", "package main\n\n// note\nfunc f() {}\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            go.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&go).unwrap(),
+            "package main\nfunc f() {}\n"
+        );
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn the_go_strip_flag_ors_with_the_config_file() {
+        let dir = Scratch::new();
+        // Presence-only flags: `false` in the config cannot cancel the flag,
+        // and the flag cannot cancel a `true` in the config.
+        let off = dir.file("off.toml", "[go]\nstrip_comments = false\n");
+        let a = dir.file("a.go", "package main\n\n// note\nfunc f() {}\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            off.to_str().unwrap(),
+            "--go-strip-comments",
+            a.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "package main\nfunc f() {}\n"
+        );
+
+        let on = dir.file("on.toml", "[go]\nstrip_comments = true\n");
+        let b = dir.file("b.go", "package main\n\n// note\nfunc f() {}\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            on.to_str().unwrap(),
+            "--go-strip-comments",
+            b.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&b).unwrap(),
+            "package main\nfunc f() {}\n"
+        );
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn a_go_config_table_without_keys_keeps_the_built_in_defaults() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[go]\n");
+        let go = dir.file("a.go", "package main\n\n// note\nfunc f() {}\n");
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            go.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&go).unwrap(),
+            "package main\n// note\nfunc f() {}\n"
+        );
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn unknown_go_config_key_is_an_error() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[go]\nstrip_directives = true\n");
+        let go = dir.file("a.go", "package main\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            go.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("invalid config file"), "{err}");
+        assert!(err.contains("strip_directives"), "{err}");
+        assert_eq!(std::fs::read_to_string(&go).unwrap(), "package main\n");
+    }
+
     #[test]
     fn config_can_disable_import_merging() {
         let dir = Scratch::new();
@@ -1833,6 +2095,69 @@ mod tests {
         assert!(err.contains("JavaScript/TypeScript"), "{err}");
         assert!(!err.contains("ruby -c"), "{err}");
         assert!(err.contains("py_compile"), "{err}");
+    }
+
+    // The same three surfaces for a build without the `go` cargo feature.
+
+    #[cfg(not(feature = "go"))]
+    #[test]
+    fn go_paths_are_unsupported_without_the_go_feature() {
+        let dir = Scratch::new();
+        let go = dir.file("a.go", "package  main\n");
+        let (code, text) = run_cli(&["format", go.to_str().unwrap()]);
+        assert_eq!(code, 2);
+        assert!(text.contains("unsupported language"), "{text}");
+        assert_eq!(std::fs::read_to_string(&go).unwrap(), "package  main\n");
+
+        let py = dir.file("keep.py", "x = 1\n");
+        let (code, text) = run_cli(&["stats", dir.0.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(text.contains("keep.py"), "{text}");
+        assert!(!text.contains("a.go"), "{text}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "go"))]
+    #[test]
+    fn the_go_strip_flag_does_not_exist_without_the_go_feature() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, text) = run_cli(&["format", "--go-strip-comments", py.to_str().unwrap()]);
+        assert_eq!(code, 2);
+        assert!(text.contains("--go-strip-comments"), "{text}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "go"))]
+    #[test]
+    fn a_go_config_table_names_the_missing_feature_without_the_go_feature() {
+        // A configured Go option must not be silently ignored: the run stops
+        // with a message about the build, before any file is touched.
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[go]\nstrip_comments = true\n");
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("invalid config file"), "{err}");
+        assert!(err.contains("built without the `go` feature"), "{err}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "go"))]
+    #[test]
+    fn the_external_verify_warning_does_not_mention_go_without_the_feature() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&["format", "--verify", "external", py.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("py_compile"), "{err}");
+        assert!(!err.contains("gofmt"), "{err}");
     }
 
     #[test]

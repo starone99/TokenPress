@@ -19,7 +19,9 @@
 # also claims extensionless names, so the regex is an alternation of an
 # extension branch and an exact-basename branch for `Gemfile`/`Rakefile`
 # (`(^|/)` because pre-commit matches the repository-relative path, not the
-# file name).
+# file name). Go needs nothing of the sort: `.go` is its whole path set, and
+# `go.mod`/`go.sum` are not Go source (the extension branch does not match
+# them either).
 #
 # `files` and `types_or` are ANDed by pre-commit: a path has to match the
 # regex *and* carry one of the tags. The `files` regex is the authority;
@@ -33,21 +35,27 @@
 #   * `ruby` covers every Ruby path this hook matches: identify 2.6.19 tags
 #     `.rb`, `.rake`, `.gemspec`, `.ru`, `Gemfile` and `Rakefile` all as
 #     `ruby` (verified against that release), so no second tag is needed.
+#   * `go` is the tag for `.go` -- not `golang`, which identify does not emit
+#     at all (verified against identify 2.6.19, and unchanged as far back as
+#     2.5.0). `go.mod` and `go.sum` carry `go-mod`/`go-sum` instead, so they
+#     are filtered out by the tag as well as by the regex.
 #
-# `TOKENPRESS_NO_RUBY=1` in the environment makes the entry script build the
-# CLI without its default-on `ruby` cargo feature (no libclang, no C compiler).
-# The filters below are static, so a repository that has Ruby files *and* sets
-# that variable must exclude them itself with `exclude:` in its own config.
+# `TOKENPRESS_NO_RUBY=1` / `TOKENPRESS_NO_GO=1` in the environment make the
+# entry script build the CLI without its default-on `ruby` / `go` cargo
+# feature (dropping libclang and, with both off, the C compiler too). The
+# filters below are static, so a repository that has files of a dropped
+# backend *and* sets the variable must exclude them itself with `exclude:` in
+# its own config.
 
 - id: tokenpress-check
   name: tokenpress check
   description: >-
-    Fail if any Python, Rust, JavaScript/TypeScript or Ruby file is not in
+    Fail if any Python, Rust, JavaScript/TypeScript, Ruby or Go file is not in
     TokenPress-normalized form. Writes nothing.
   entry: scripts/pre-commit-hook.sh check
   language: script
-  files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru)$|(^|/)(Gemfile|Rakefile)$)
-  types_or: [python, rust, javascript, jsx, ts, tsx, ruby]
+  files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru|go)$|(^|/)(Gemfile|Rakefile)$)
+  types_or: [python, rust, javascript, jsx, ts, tsx, ruby, go]
   # One process at a time: every invocation runs `cargo build` first, and
   # parallel builds would only contend for the same cargo lock.
   require_serial: true
@@ -56,12 +64,12 @@
 - id: tokenpress-format
   name: tokenpress format
   description: >-
-    Rewrite Python, Rust, JavaScript/TypeScript and Ruby files in place with
-    token-minimized formatting. Modifies files, so pre-commit reports the run
-    as failed whenever it had something to rewrite.
+    Rewrite Python, Rust, JavaScript/TypeScript, Ruby and Go files in place
+    with token-minimized formatting. Modifies files, so pre-commit reports the
+    run as failed whenever it had something to rewrite.
   entry: scripts/pre-commit-hook.sh format
   language: script
-  files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru)$|(^|/)(Gemfile|Rakefile)$)
-  types_or: [python, rust, javascript, jsx, ts, tsx, ruby]
+  files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru|go)$|(^|/)(Gemfile|Rakefile)$)
+  types_or: [python, rust, javascript, jsx, ts, tsx, ruby, go]
   require_serial: true
   minimum_pre_commit_version: '2.9.0'

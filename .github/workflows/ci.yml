@@ -39,18 +39,23 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-  # The opt-out configuration: `tokenpress-cli` without its default-on `ruby`
-  # feature. Deliberately no `.github/actions/libclang` step -- the whole point
-  # of the feature is that this build needs neither libclang nor a C compiler,
-  # and the first step below proves the prerequisite is gone by showing that
-  # `tokenpress-ruby` (and with it `ruby-prism-sys`) is not in the graph at all.
-  no-ruby:
-    name: Build without the ruby feature
+  # The opt-out configuration: `tokenpress-cli` without either of its two
+  # default-on native backends. Deliberately no `.github/actions/libclang` step
+  # -- the whole point of the features is that this build needs no C toolchain
+  # at all, and the first step below proves both prerequisites are gone:
+  # `tokenpress-ruby` (with `ruby-prism-sys` + bindgen) and `tokenpress-go`
+  # (with `tokenpress-treesitter`, the grammar and the `cc` that compiles them)
+  # are not in the graph. Only this fully-off configuration is built and tested
+  # -- the single-feature builds are asserted on the dependency graph alone,
+  # which is what the features are about; building every combination would buy
+  # nothing for the CI minutes.
+  no-native-backends:
+    name: Build without the native backends
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      - name: The Ruby backend is out of the dependency graph
+      - name: Neither native backend is in the dependency graph
         run: |
           set -euo pipefail
           tree=$(cargo tree -p tokenpress-cli --no-default-features)
@@ -58,28 +63,57 @@ jobs:
             echo '::error::the ruby backend is still reachable without the feature'
             exit 1
           fi
-          # ... while the rest of the default build is untouched: `ruby` is the
-          # CLI's only feature, so `--no-default-features` drops nothing else.
-          printf '%s\n' "$tree" | grep -q tokenizers \
-            || { echo '::error::--no-default-features dropped the HF tokenizer'; exit 1; }
+          # `cc v` with its separator, because `cargo tree` indents: a bare
+          # `^cc ` would only ever match the root of the tree.
+          if printf '%s\n' "$tree" | grep -E 'tokenpress-go|tokenpress-treesitter|tree-sitter|(^|[[:space:]])cc v'; then
+            echo '::error::the go backend is still reachable without the feature'
+            exit 1
+          fi
+          # ... while the rest of the build is untouched. `--no-default-features`
+          # now drops more than it used to, so this names what has to survive:
+          # the three unconditional backends and the tokenizer stack.
+          for kept in tokenpress-python tokenpress-rust tokenpress-js tokenizers; do
+            printf '%s\n' "$tree" | grep -q "$kept" \
+              || { echo "::error::--no-default-features dropped $kept"; exit 1; }
+          done
+      - name: Each single-feature build is the expected half
+        run: |
+          set -euo pipefail
+          go_only=$(cargo tree -p tokenpress-cli --no-default-features --features go)
+          printf '%s\n' "$go_only" | grep -q tree-sitter \
+            || { echo '::error::--features go did not re-add tree-sitter'; exit 1; }
+          if printf '%s\n' "$go_only" | grep -E 'ruby-prism'; then
+            echo '::error::--features go pulled the ruby backend back in'
+            exit 1
+          fi
+          ruby_only=$(cargo tree -p tokenpress-cli --no-default-features --features ruby)
+          printf '%s\n' "$ruby_only" | grep -q ruby-prism \
+            || { echo '::error::--features ruby did not re-add ruby-prism'; exit 1; }
+          if printf '%s\n' "$ruby_only" | grep -E 'tokenpress-go|tokenpress-treesitter|tree-sitter'; then
+            echo '::error::--features ruby pulled the go backend back in'
+            exit 1
+          fi
       - name: Build
         run: cargo build -p tokenpress-cli --no-default-features
       - name: Test
         run: cargo test -p tokenpress-cli --no-default-features
       - name: Create fixture
-        run: printf 'x=1' > no-ruby-fixture.py
+        run: printf 'x=1' > no-backends-fixture.py
       # Both consumer integration surfaces build the CLI on the consumer's
-      # machine, so both need their own way through: an env var for the
-      # pre-commit hook, an input for the action.
-      - name: The pre-commit hook honors TOKENPRESS_NO_RUBY
+      # machine, so both need their own way through: env vars for the
+      # pre-commit hook, inputs for the action. One per backend, so a consumer
+      # with a C compiler but no libclang can keep Go.
+      - name: The pre-commit hook honors TOKENPRESS_NO_RUBY and TOKENPRESS_NO_GO
         env:
           TOKENPRESS_NO_RUBY: '1'
-        run: sh scripts/pre-commit-hook.sh check no-ruby-fixture.py
-      - name: "The action honors ruby: false"
+          TOKENPRESS_NO_GO: '1'
+        run: sh scripts/pre-commit-hook.sh check no-backends-fixture.py
+      - name: "The action honors ruby: false and go: false"
         uses: ./
         with:
           ruby: 'false'
-          paths: no-ruby-fixture.py
+          go: 'false'
+          paths: no-backends-fixture.py
 
   # Exercises `action.yml` end to end through `uses: ./`, which is the only way
   # to test a composite action: its steps only exist inside a real runner.
@@ -91,8 +125,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The action builds `tokenpress-cli`, which now pulls in
-      # `tokenpress-ruby` -> `ruby-prism-sys` (vendored C + bindgen), so the
-      # *consumer's* runner needs libclang and a C compiler. This step is what
+      # `tokenpress-ruby` -> `ruby-prism-sys` (vendored C + bindgen) and
+      # `tokenpress-go` -> the tree-sitter runtime and grammar (C via `cc`), so
+      # the *consumer's* runner needs libclang and a C compiler. This step is what
       # a real consumer would have to provide for itself: a composite action
       # cannot install toolchain prerequisites into the job that uses it, so
       # the repository's own action is used here to mirror that requirement
@@ -122,6 +157,13 @@ jobs:
           printf '# keep me\ndef f(a, b)\na + b\nend\n' > action-fixtures/pass/ok.rb
           printf 'source "https://rubygems.org"\n' > action-fixtures/pass/Gemfile
           printf 'def  f(a,  b)\n    a  +  b\nend\n' > action-fixtures/fail/bad.rb
+          # Go. Normalized Go ends in a newline for the same reason Ruby does
+          # -- the emitter never joins or introduces a line -- and every
+          # comment survives at the default settings. `.go` needs its own
+          # pattern in the action's glob filter, which naming it explicitly
+          # below is what exercises.
+          printf 'package main\n// keep me\nfunc f(a int) int {\nreturn a\n}\n' > action-fixtures/pass/ok.go
+          printf 'package  main\n\nfunc  f( a int )  int  {\n\treturn  a\n}\n' > action-fixtures/fail/bad.go
 
       # Every step below that is expected to succeed asserts by failing the job.
       - name: Normalized tree passes
@@ -140,6 +182,18 @@ jobs:
         uses: ./
         with:
           paths: action-fixtures/pass/ok.rb action-fixtures/pass/Gemfile
+
+      - name: Explicitly named Go files pass
+        uses: ./
+        with:
+          paths: action-fixtures/pass/ok.go
+
+      - name: Unformatted Go fails
+        id: go-fail
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: action-fixtures/fail/bad.go
 
       - name: Unformatted Ruby fails
         id: ruby-fail
@@ -189,6 +243,10 @@ jobs:
             || fail 'check must fail on an unformatted Ruby file'
           [ '${{ steps.ruby-fail.outputs.changed }}' = true ] \
             || fail 'check must report changed=true on an unformatted Ruby file'
+          [ '${{ steps.go-fail.outcome }}' = failure ] \
+            || fail 'check must fail on an unformatted Go file'
+          [ '${{ steps.go-fail.outputs.changed }}' = true ] \
+            || fail 'check must report changed=true on an unformatted Go file'
           [ '${{ steps.extra-args.outcome }}' = failure ] \
             || fail 'extra-args did not reach the CLI'
           [ '${{ steps.format.outcome }}' = failure ] \
