@@ -8,7 +8,9 @@
 //!
 //! - **this crate** holds everything that does not know which language it is
 //!   looking at: the parse gate, the equivalence artifact, the protected-span
-//!   model and the whitespace rewriter. A grammar is not a dependency here,
+//!   model, the whitespace rewriter and the comment stripper — the last of
+//!   which takes its language-specific decisions as callbacks
+//!   ([`emit::CommentPolicy`]). A grammar is not a dependency here,
 //!   it is *configuration* — a [`parser::LanguageConfig`] carrying the
 //!   [`parser::Language`], the comment and protected node kinds, and a
 //!   newline-sensitivity flag.

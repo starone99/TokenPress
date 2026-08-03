@@ -59,8 +59,9 @@
 //! pipeline with the policy seam left empty, which is what makes span
 //! collection testable on its own, with no policy to attribute a difference
 //! to. [`minimize`] is the whitespace policy, so [`minimize_source`] is the
-//! comments-kept configuration. The comment policy plugs into the same seam
-//! later.
+//! comments-kept configuration. [`strip_comments`] is the second stage and
+//! takes the same gap policy parameter for the same reason, so
+//! [`strip_comments_source`] is the comments-stripped configuration.
 //!
 //! # The whitespace policy
 //!
@@ -127,6 +128,82 @@
 //!   dropped is likewise not pinned, for the same reason: there is no
 //!   emitted `\n` in front of it. A language whose prologue is
 //!   position-sensitive protects it as a span instead.
+//!
+//! # The comment policy
+//!
+//! Comment stripping cannot be a gap policy: a comment is *collected into* the
+//! spans, so by the time a gap policy runs it is one of the bytes that policy
+//! is forbidden to touch. It is instead a second classification of the same
+//! spans. [`strip_comments_plan`] partitions the merged span set into a
+//! [`StripPlan`]'s two halves — what survives verbatim, and the comments that
+//! do not — and [`strip_comments`] applies it before [`rewrite`] ever sees the
+//! file.
+//!
+//! ## Deletion is blanking
+//!
+//! A deleted comment's bytes are not removed, they are **overwritten with
+//! whitespace of the same length**: every byte becomes a space, except a `\n`,
+//! which stays one. Three properties fall out of that, and each one replaces a
+//! special case:
+//!
+//! - the bytes on either side of a vanished comment reach the gap policy as
+//!   **one** gap, so `\n  // note\n` is a single whitespace run and
+//!   [`minimize`] collapses it to the one `\n` it carried: a comment-only line
+//!   leaves no blank line behind, with no rule about lines anywhere in this
+//!   module;
+//! - **every newline of the file survives deletion**, including the ones
+//!   *inside* a deleted comment. Go's scanner reads a `/* … \n … */` as a line
+//!   break (a general comment containing newlines "acts like a newline"), so
+//!   dropping those bytes outright could delete a statement terminator that
+//!   the equivalence artifact — comment-blind by construction — could never
+//!   report. Keeping them means the T4 argument carries over unchanged: the
+//!   emitter never joins two lines and never introduces one;
+//! - a comment is at least one byte wide, so what replaces it is at least one
+//!   whitespace byte: two tokens that a comment separated stay separated,
+//!   `x := 1 /* c */ + 2` becomes `x := 1 + 2` and never `x := 1+2`.
+//!
+//! Blanking is also **offset-preserving**, which is what makes the column-0
+//! hook compose: [`strip_comments_pinned`] hands its predicate spans that
+//! still index the *original* source, so a predicate that decides from a
+//! comment's bytes — the shape a directive rule has — needs no coordinate map.
+//!
+//! The one visible residue is at end of file: only the file's *leading*
+//! whitespace run is dropped, so a comment that ended a file with no final
+//! newline leaves the single space its run collapses to. One byte, pinned by a
+//! test rather than special-cased.
+//!
+//! ## The three language-specific decisions
+//!
+//! Which comments carry meaning is language knowledge, so it arrives as a
+//! [`CommentPolicy`]: a keep predicate over a comment's own bytes, a verbatim
+//! prologue region, and a whole-file bail-out. Both region and bail-out are
+//! decided from the tree and the source, because that is what the rules they
+//! stand for need (a Go build-constraint block ends where the package clause
+//! begins; a cgo file is one that imports `"C"`).
+//!
+//! Neither the prologue nor the bail-out is a flag this module acts on. They
+//! are expressed in the model that already exists:
+//!
+//! - the **prologue** enters the span set as a synthetic
+//!   [`SpanKind::Protected`] span and goes through the same merge as
+//!   everything else, which is why it is a plan-level entry point rather than
+//!   a second span source ([`collect_spans`] stays the only one, `merge` stays
+//!   private). Its bytes are therefore reproduced **verbatim, blank lines
+//!   included** — protecting it from deletion alone would not be enough,
+//!   because the whitespace policy collapses the blank line after a
+//!   `//go:build` line and that blank line is part of the constraint's
+//!   meaning. Neither loss is visible to the equivalence artifact, so the
+//!   region is the only defence there is;
+//! - the **bail-out** yields the plan that protects the whole file. There is
+//!   then no gap to rewrite and nothing that could be promoted to column 0, so
+//!   the output is the input byte for byte under *any* gap policy and *any*
+//!   pinning predicate.
+//!
+//! A comment that overlaps the prologue is kept whatever the keep predicate
+//! says. That is deliberately not left to the merge: the merged run inherits
+//! the kind of the span that *starts* it, so a comment beginning before the
+//! region hands the whole run to the comment policy — the same inversion the
+//! sort order guards against, in the one place the sort order cannot reach.
 
 use std::cmp::Reverse;
 use std::ops::Range;
@@ -305,6 +382,176 @@ pub fn identity(config: &LanguageConfig, source: &[u8]) -> Result<Vec<u8>> {
     Ok(rewrite(source, &spans, keep))
 }
 
+/// The three language-specific decisions comment stripping is made of.
+///
+/// They are callbacks, and they are parameters of [`strip_comments_plan`]
+/// rather than fields of a [`LanguageConfig`], because a config is a validated
+/// description of a *grammar*: kind names checked against it, `Debug`, no type
+/// parameters, shared by [`crate::parser::parse`] and
+/// [`crate::comparable::comparable`], neither of which has any use for a
+/// policy. Hanging three closures off it would put three type parameters into
+/// every signature that mentions one. They are generic rather than
+/// `Box<dyn Fn>` because nothing here stores a policy for later.
+///
+/// The callbacks are `Fn`, not `FnMut`: each one is a decision about the bytes
+/// it is handed, taken an unspecified number of times and in an unspecified
+/// order.
+pub struct CommentPolicy<Keep, Prologue, BailOut> {
+    keep_comment: Keep,
+    prologue: Prologue,
+    bail_out: BailOut,
+}
+
+impl<Keep, Prologue, BailOut> CommentPolicy<Keep, Prologue, BailOut>
+where
+    Keep: Fn(&[u8]) -> bool,
+    Prologue: Fn(&Tree, &[u8]) -> Range<usize>,
+    BailOut: Fn(&Tree, &[u8]) -> bool,
+{
+    /// Builds a policy from its three decisions.
+    ///
+    /// - `keep_comment` is handed a comment span's own source bytes and
+    ///   answers whether it has to survive;
+    /// - `prologue` answers the byte range at the head of the file whose bytes
+    ///   are reproduced verbatim — blank lines included — or an empty range
+    ///   when the language has no such region;
+    /// - `bail_out` answers whether the file must be left alone entirely.
+    ///
+    /// See the module docs for what each one is for and what it may not do.
+    pub fn new(keep_comment: Keep, prologue: Prologue, bail_out: BailOut) -> Self {
+        Self {
+            keep_comment,
+            prologue,
+            bail_out,
+        }
+    }
+}
+
+/// What a comment-stripping run does with the bytes it has classified: which
+/// spans survive verbatim, and which are blanked out.
+///
+/// The two lists are a partition of one merged span set, so each is sorted and
+/// non-overlapping, no `deleted` span overlaps a `protected` one, and both are
+/// within the source — the precondition [`strip_comments`] is documented to
+/// need. [`strip_comments_plan`] produces plans that satisfy it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct StripPlan {
+    /// The byte ranges copied verbatim: every protected span, plus the
+    /// comments the policy keeps, plus the prologue region.
+    pub protected: Vec<Span>,
+    /// The comment spans that do not survive.
+    pub deleted: Vec<Span>,
+}
+
+/// Classifies `source` for comment stripping under `policy`.
+///
+/// Every comment span is deleted except the ones the policy keeps and the ones
+/// that touch the prologue region; a policy that bails out yields the plan that
+/// protects the whole file. See the module docs.
+pub fn strip_comments_plan<Keep, Prologue, BailOut>(
+    config: &LanguageConfig,
+    tree: &Tree,
+    source: &[u8],
+    policy: &CommentPolicy<Keep, Prologue, BailOut>,
+) -> StripPlan
+where
+    Keep: Fn(&[u8]) -> bool,
+    Prologue: Fn(&Tree, &[u8]) -> Range<usize>,
+    BailOut: Fn(&Tree, &[u8]) -> bool,
+{
+    if (policy.bail_out)(tree, source) {
+        // One span over the whole file: every byte is copied verbatim and
+        // there is no gap left for a policy to rewrite, so the output is the
+        // input whatever else is applied to it.
+        return StripPlan {
+            protected: vec![Span::new(0, source.len(), SpanKind::Protected)],
+            deleted: Vec::new(),
+        };
+    }
+
+    let mut spans = collect_spans(config, tree);
+    let prologue = (policy.prologue)(tree, source);
+    if !prologue.is_empty() {
+        // The prologue's own entry point into the span set: it is not a node
+        // kind, so collection cannot produce it, and it has to go through the
+        // same merge as everything else.
+        spans.push(Span::new(prologue.start, prologue.end, SpanKind::Protected));
+        spans = merge(spans);
+    }
+
+    let mut protected = Vec::new();
+    let mut deleted = Vec::new();
+    for span in spans {
+        // The overlap test, not the merged kind, is what protects the
+        // prologue: a comment that starts before it decides the merged run's
+        // kind, so the run can reach here classified `Comment`.
+        if span.kind == SpanKind::Comment
+            && !overlaps(&prologue, span)
+            && !(policy.keep_comment)(&source[span.range()])
+        {
+            deleted.push(span);
+        } else {
+            protected.push(span);
+        }
+    }
+    StripPlan { protected, deleted }
+}
+
+/// Rebuilds `source` under `plan`: the deleted spans become whitespace of the
+/// same length, so the bytes on either side of a vanished comment reach the gap
+/// policy as **one** gap, and the protected spans are copied verbatim.
+///
+/// `plan` must satisfy the invariants [`StripPlan`] documents, which is what
+/// [`strip_comments_plan`] returns.
+pub fn strip_comments(
+    source: &[u8],
+    plan: &StripPlan,
+    gap_policy: impl FnMut(&[u8]) -> Vec<u8>,
+) -> Vec<u8> {
+    strip_comments_pinned(source, plan, gap_policy, |_| false)
+}
+
+/// [`strip_comments`] plus the column-0 pinning hook, exactly as
+/// [`rewrite_pinned`] is [`rewrite`] plus that hook.
+///
+/// Blanking is length-preserving, so the spans the predicate is handed index
+/// `source` itself: a predicate that reads a span's bytes out of the original
+/// source — which is the shape a directive rule needs — composes with
+/// stripping without a coordinate map.
+pub fn strip_comments_pinned(
+    source: &[u8],
+    plan: &StripPlan,
+    gap_policy: impl FnMut(&[u8]) -> Vec<u8>,
+    never_starts_a_line: impl FnMut(Span) -> bool,
+) -> Vec<u8> {
+    rewrite_pinned(
+        &blanked(source, &plan.deleted),
+        &plan.protected,
+        gap_policy,
+        never_starts_a_line,
+    )
+}
+
+/// Parses `source`, plans its comment stripping under `policy` and rewrites
+/// what is left with [`minimize`]: the comments-stripped emitter.
+///
+/// Returns [`tokenpress_core::Error::Parse`] for a source the configured
+/// grammar reports errors for.
+pub fn strip_comments_source<Keep, Prologue, BailOut>(
+    config: &LanguageConfig,
+    source: &[u8],
+    policy: &CommentPolicy<Keep, Prologue, BailOut>,
+) -> Result<Vec<u8>>
+where
+    Keep: Fn(&[u8]) -> bool,
+    Prologue: Fn(&Tree, &[u8]) -> Range<usize>,
+    BailOut: Fn(&Tree, &[u8]) -> bool,
+{
+    let tree = parser::parse(config, source)?;
+    let plan = strip_comments_plan(config, &tree, source, policy);
+    Ok(strip_comments(source, &plan, minimize(config)))
+}
+
 /// The length of the whitespace run `bytes` starts with, in bytes.
 ///
 /// "Whitespace" is the ASCII set — space, tab, newline, carriage return and
@@ -364,6 +611,32 @@ fn classify(config: &LanguageConfig, kind: &str) -> Option<SpanKind> {
     }
 }
 
+/// `source` with every deleted span turned into whitespace of the same length:
+/// each of its bytes becomes a space, except a `\n`, which stays one.
+///
+/// Length-preserving, so every offset in the plan still indexes the result,
+/// and newline-preserving, so a deleted comment still ends the lines it
+/// ended. See the module docs for why both properties are load-bearing.
+fn blanked(source: &[u8], deleted: &[Span]) -> Vec<u8> {
+    let mut out = source.to_vec();
+    for span in deleted {
+        for byte in &mut out[span.range()] {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    out
+}
+
+/// Whether `span` shares a byte with `region`.
+///
+/// An empty region shares nothing with anything, which is what makes "this
+/// language has no prologue" the same code path as "this file has none".
+fn overlaps(region: &Range<usize>, span: Span) -> bool {
+    region.start < span.end && span.start < region.end
+}
+
 /// Sorts `spans` and merges every pair that overlaps or touches, keeping the
 /// kind of the span that starts the merged run.
 ///
@@ -385,6 +658,7 @@ mod tests {
     use super::*;
     use crate::comparable::equivalent;
     use crate::parser::Language;
+    use std::cell::RefCell;
     use tokenpress_core::Error;
 
     /// The dev-dependency grammar, converted from its `LanguageFn`.
@@ -1185,6 +1459,450 @@ mod tests {
             assert_eq!(
                 rewrite(source, &spans, minimize(&config)),
                 rewrite_pinned(source, &spans, minimize(&config), |_| false),
+                "{name}"
+            );
+        }
+    }
+
+    // ---- the comment policy --------------------------------------------
+
+    /// The stand-in policies' type. Plain `fn` pointers rather than closures,
+    /// so a helper can name the policy it is handed; the real Go ones (G2)
+    /// capture nothing either.
+    type StandInPolicy = CommentPolicy<
+        fn(&[u8]) -> bool,
+        fn(&Tree, &[u8]) -> Range<usize>,
+        fn(&Tree, &[u8]) -> bool,
+    >;
+
+    /// The keep predicate that keeps nothing.
+    fn never_keep(_comment: &[u8]) -> bool {
+        false
+    }
+
+    /// A keep predicate of the shape G2 will supply: a marked comment is
+    /// semantic and survives.
+    fn keep_marked(comment: &[u8]) -> bool {
+        comment.starts_with(b"//keep")
+    }
+
+    /// The prologue of a language that has none.
+    fn no_prologue(_tree: &Tree, _source: &[u8]) -> Range<usize> {
+        0..0
+    }
+
+    /// A prologue of the shape G2 will supply: everything before the file's
+    /// `package_clause`, which is `0..0` for a file that starts with one.
+    fn prologue_before_package(tree: &Tree, _source: &[u8]) -> Range<usize> {
+        0..package_offset(tree)
+    }
+
+    /// A deliberately misaligned prologue: it starts three bytes into the
+    /// file, so on a file that opens with a comment it starts *inside* one.
+    fn prologue_from_byte_three(tree: &Tree, _source: &[u8]) -> Range<usize> {
+        3..package_offset(tree)
+    }
+
+    /// The start byte of the file's package clause, or 0 when it has none.
+    fn package_offset(tree: &Tree) -> usize {
+        let root = tree.root_node();
+        let mut cursor = root.walk();
+        let clause = root
+            .children(&mut cursor)
+            .find(|child| child.kind() == "package_clause");
+        clause.map_or(0, |clause| clause.start_byte())
+    }
+
+    /// The bail-out of a language that never needs one.
+    fn never_bail(_tree: &Tree, _source: &[u8]) -> bool {
+        false
+    }
+
+    /// A bail-out of the shape G2 will supply: a cgo file is left alone.
+    fn bail_on_import_c(_tree: &Tree, source: &[u8]) -> bool {
+        source
+            .windows(IMPORT_C.len())
+            .any(|window| window == IMPORT_C)
+    }
+
+    const IMPORT_C: &[u8] = b"import \"C\"";
+
+    /// The most aggressive policy: every comment goes, nothing is special.
+    fn delete_every_comment() -> StandInPolicy {
+        CommentPolicy::new(never_keep, no_prologue, never_bail)
+    }
+
+    /// All three callbacks doing something.
+    fn stand_in_policy() -> StandInPolicy {
+        CommentPolicy::new(keep_marked, prologue_before_package, bail_on_import_c)
+    }
+
+    fn plan_for(config: &LanguageConfig, source: &[u8], policy: &StandInPolicy) -> StripPlan {
+        let tree = parser::parse(config, source).unwrap();
+        strip_comments_plan(config, &tree, source, policy)
+    }
+
+    fn stripped(config: &LanguageConfig, source: &[u8], policy: &StandInPolicy) -> Vec<u8> {
+        strip_comments_source(config, source, policy).unwrap()
+    }
+
+    /// The source bytes of each span, so an assertion reads as the text it is
+    /// about rather than as offsets.
+    fn texts<'a>(source: &'a [u8], spans: &[Span]) -> Vec<&'a [u8]> {
+        spans.iter().map(|span| &source[span.range()]).collect()
+    }
+
+    /// The precondition [`strip_comments`] documents: two sorted, disjoint,
+    /// in-bounds lists whose union is sorted and disjoint too.
+    fn assert_plan_is_well_formed(plan: &StripPlan, len: usize, name: &str) {
+        assert_sorted_disjoint_in_bounds(&plan.protected, len, name);
+        assert_sorted_disjoint_in_bounds(&plan.deleted, len, name);
+        let mut all: Vec<Span> = plan
+            .protected
+            .iter()
+            .chain(plan.deleted.iter())
+            .copied()
+            .collect();
+        all.sort_by_key(|span| span.start);
+        assert_sorted_disjoint_in_bounds(&all, len, name);
+    }
+
+    #[test]
+    fn a_plan_partitions_the_spans_into_the_kept_and_the_deleted() {
+        let config = go_config();
+        let source = b"package main\n\n// note\n//keep me\nfunc f() { g(\"a  b\") }\n";
+        let plan = plan_for(&config, source, &stand_in_policy());
+        assert_eq!(
+            texts(source, &plan.protected),
+            [&b"//keep me"[..], b"\"a  b\""]
+        );
+        assert_eq!(texts(source, &plan.deleted), [&b"// note"[..]]);
+    }
+
+    #[test]
+    fn a_source_without_comments_deletes_nothing() {
+        let config = go_config();
+        let source = b"package main\n\nvar s = \"a\"\n";
+        let plan = plan_for(&config, source, &delete_every_comment());
+        assert!(plan.deleted.is_empty(), "{plan:?}");
+        assert_eq!(texts(source, &plan.protected), [&b"\"a\""[..]]);
+    }
+
+    #[test]
+    fn the_keep_predicate_sees_every_comments_own_bytes_and_nothing_else() {
+        let config = go_config();
+        let source = b"package main\n\n// a\n/* b */\nvar s = `c // d`\n";
+        let seen = RefCell::new(Vec::new());
+        let policy = CommentPolicy::new(
+            |comment: &[u8]| {
+                seen.borrow_mut().push(comment.to_vec());
+                false
+            },
+            no_prologue,
+            never_bail,
+        );
+        let tree = parser::parse(&config, source).unwrap();
+        let plan = strip_comments_plan(&config, &tree, source, &policy);
+        // The bytes that look like a comment inside the raw string are a
+        // protected literal, so the policy is never even asked about them.
+        assert_eq!(seen.into_inner(), [b"// a".to_vec(), b"/* b */".to_vec()]);
+        assert_eq!(texts(source, &plan.deleted), [&b"// a"[..], b"/* b */"]);
+        assert_eq!(texts(source, &plan.protected), [&b"`c // d`"[..]]);
+    }
+
+    #[test]
+    fn the_prologue_region_is_reproduced_verbatim_blank_line_included() {
+        let config = go_config();
+        let source = b"//go:build ignore\n\npackage main\n";
+        // Without a prologue the constraint is deleted and the blank line that
+        // separates it from the package clause collapses with it. Both are
+        // equivalence-clean and both are fatal to a build constraint, which is
+        // why the prologue is a *verbatim* region rather than a keep rule.
+        assert_eq!(
+            stripped(&config, source, &delete_every_comment()),
+            b"package main\n"
+        );
+        assert_eq!(stripped(&config, source, &stand_in_policy()), source);
+    }
+
+    #[test]
+    fn a_comment_the_prologue_covers_is_never_deleted() {
+        let config = go_config();
+        let source = b"// note\npackage main\n";
+        let plan = plan_for(&config, source, &stand_in_policy());
+        // The prologue starts first and reaches further, so the merged run is
+        // its: protected, not a comment any more.
+        assert_eq!(plan.protected, [Span::new(0, 8, SpanKind::Protected)]);
+        assert!(plan.deleted.is_empty(), "{plan:?}");
+        assert_eq!(stripped(&config, source, &stand_in_policy()), source);
+    }
+
+    #[test]
+    fn a_prologue_the_merge_classifies_as_a_comment_is_still_never_deleted() {
+        // A prologue that starts *inside* a comment: the comment starts first,
+        // so the merged run inherits *its* kind and the sort order cannot
+        // save the region. The overlap rule is what does.
+        let config = go_config();
+        let source = b"// note\npackage main\n";
+        let policy: StandInPolicy =
+            CommentPolicy::new(never_keep, prologue_from_byte_three, never_bail);
+        let plan = plan_for(&config, source, &policy);
+        assert_eq!(plan.protected, [Span::new(0, 8, SpanKind::Comment)]);
+        assert!(plan.deleted.is_empty(), "{plan:?}");
+        assert_eq!(stripped(&config, source, &policy), source);
+    }
+
+    #[test]
+    fn an_empty_prologue_region_contributes_no_span() {
+        let config = go_config();
+        // The package clause is at byte 0, so the stand-in prologue is `0..0`.
+        let plan = plan_for(&config, b"package main\n", &stand_in_policy());
+        assert_eq!(
+            plan,
+            StripPlan {
+                protected: Vec::new(),
+                deleted: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_bail_out_protects_the_whole_file_and_reproduces_it_byte_for_byte() {
+        let config = go_config();
+        let source = b"package main\n\n/*\n#include <stdio.h>\n*/\nimport \"C\"\n";
+        let plan = plan_for(&config, source, &stand_in_policy());
+        assert_eq!(
+            plan,
+            StripPlan {
+                protected: vec![Span::new(0, source.len(), SpanKind::Protected)],
+                deleted: Vec::new(),
+            }
+        );
+        assert_eq!(stripped(&config, source, &stand_in_policy()), source);
+        // Whatever the gap policy, and even with every span pinned: the file
+        // is one span, so there is no gap to rewrite and nothing that could be
+        // promoted to column 0.
+        assert_eq!(strip_comments(source, &plan, keep), source);
+        assert_eq!(
+            strip_comments_pinned(source, &plan, minimize(&config), |_| true),
+            source
+        );
+        // The hazard it exists for: without it the cgo preamble is deleted,
+        // and the equivalence artifact cannot see the difference.
+        let deleted = stripped(&config, source, &delete_every_comment());
+        assert_ne!(deleted, source);
+        assert!(equivalent(&config, source, &deleted).unwrap());
+    }
+
+    #[test]
+    fn deletion_blanks_a_comments_bytes_and_keeps_the_newlines_they_carried() {
+        // The deletion half on its own: a hand-built plan, no grammar.
+        let source = b"a /* x\ny */ b";
+        let plan = StripPlan {
+            protected: Vec::new(),
+            deleted: vec![Span::new(2, 11, SpanKind::Comment)],
+        };
+        assert_eq!(strip_comments(source, &plan, keep), b"a     \n     b");
+        // The blanked bytes joined the runs on either side, so the whole thing
+        // is one run — and it still carries the newline the comment held.
+        let config = go_config();
+        assert_eq!(strip_comments(source, &plan, minimize(&config)), b"a\nb");
+    }
+
+    #[test]
+    fn a_deleted_block_comment_still_ends_the_line_it_ended() {
+        let config = go_config();
+        let source = b"package main\n\nfunc f() {\n\tx := 1\n\t/* a\n\t   b */\n\t_ = x\n}\n";
+        assert_eq!(
+            stripped(&config, source, &delete_every_comment()),
+            b"package main\nfunc f() {\nx := 1\n_ = x\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_comment_only_line_leaves_no_blank_line_behind() {
+        let config = go_config();
+        assert_eq!(
+            stripped(
+                &config,
+                b"package main\n\n// note\nfunc f() {}\n",
+                &delete_every_comment()
+            ),
+            b"package main\nfunc f() {}\n"
+        );
+    }
+
+    #[test]
+    fn adjacent_comment_lines_vanish_together() {
+        let config = go_config();
+        assert_eq!(
+            stripped(
+                &config,
+                b"package main\n\n// a\n// b\nfunc f() {}\n",
+                &delete_every_comment()
+            ),
+            b"package main\nfunc f() {}\n"
+        );
+    }
+
+    #[test]
+    fn a_comment_at_byte_zero_vanishes_with_the_files_leading_run() {
+        let config = go_config();
+        assert_eq!(
+            stripped(&config, b"// note\npackage main\n", &delete_every_comment()),
+            b"package main\n"
+        );
+    }
+
+    #[test]
+    fn a_comment_at_the_end_of_a_file_leaves_the_space_its_run_collapses_to() {
+        // Only the file's *leading* whitespace run is dropped, so the run the
+        // blanked comment joined comes out as the one space every horizontal
+        // run comes out as. One byte, pinned rather than special-cased.
+        let config = go_config();
+        assert_eq!(
+            stripped(
+                &config,
+                b"package main\n\nfunc f() {} // note",
+                &delete_every_comment()
+            ),
+            b"package main\nfunc f() {} "
+        );
+    }
+
+    #[test]
+    fn a_deleted_comment_between_two_tokens_still_separates_them() {
+        let config = go_config();
+        let source = b"package main\n\nfunc f() {\n\tx := 1 /* c */ + 2\n\t_ = x\n}\n";
+        let out = stripped(&config, source, &delete_every_comment());
+        assert_eq!(out, b"package main\nfunc f() {\nx := 1 + 2\n_ = x\n}\n");
+        assert!(equivalent(&config, source, &out).unwrap());
+    }
+
+    #[test]
+    fn a_newline_insensitive_config_strips_the_same_spans() {
+        // The plan does not depend on newline sensitivity at all; the gap
+        // policy it feeds does, and this is the Java/C#/PHP branch of it.
+        let source = b"package main\n\n// note\nfunc f() {}\n";
+        assert_eq!(
+            stripped(&go_config(), source, &delete_every_comment()),
+            b"package main\nfunc f() {}\n"
+        );
+        assert_eq!(
+            stripped(
+                &newline_insensitive_config(),
+                source,
+                &delete_every_comment()
+            ),
+            b"package main func f() {} "
+        );
+    }
+
+    #[test]
+    fn a_surviving_comment_can_still_be_kept_off_column_zero() {
+        // Stripping composes with the T4 hook, and the predicate reads the
+        // surviving comment's bytes out of the *original* source — which is
+        // sound only because blanking preserves every offset.
+        let config = go_config();
+        let source =
+            b"package main\n\nfunc f() {\n\t// note\n\t//keep:directive\n\tx := 1\n\t_ = x\n}\n";
+        let policy: StandInPolicy = CommentPolicy::new(keep_marked, no_prologue, never_bail);
+        let plan = plan_for(&config, source, &policy);
+        let out = strip_comments_pinned(source, &plan, minimize(&config), |span| {
+            source[span.range()].starts_with(b"//keep")
+        });
+        assert_eq!(
+            out,
+            b"package main\nfunc f() {\n //keep:directive\nx := 1\n_ = x\n}\n"
+        );
+        assert!(equivalent(&config, source, &out).unwrap());
+    }
+
+    #[test]
+    fn strip_comments_is_the_unpinned_stripper() {
+        let config = go_config();
+        for (name, source) in CORPUS {
+            let plan = plan_for(&config, source, &stand_in_policy());
+            assert_eq!(
+                strip_comments(source, &plan, minimize(&config)),
+                strip_comments_pinned(source, &plan, minimize(&config), |_| false),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn strip_comments_source_reports_a_parse_error() {
+        let err = strip_comments_source(
+            &go_config(),
+            b"package main\n\nfunc f( {\n",
+            &delete_every_comment(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Parse(_)), "{err}");
+    }
+
+    #[test]
+    fn every_corpus_source_strips_to_an_equivalent_source() {
+        let config = go_config();
+        for (policy_name, policy) in [
+            ("delete every comment", delete_every_comment()),
+            ("the full stand-in policy", stand_in_policy()),
+        ] {
+            for (name, source) in CORPUS {
+                let name = format!("{policy_name}: {name}");
+                assert_plan_is_well_formed(
+                    &plan_for(&config, source, &policy),
+                    source.len(),
+                    &name,
+                );
+                let out = strip_comments_source(&config, source, &policy).unwrap();
+                let rendered = String::from_utf8_lossy(&out);
+                // The artifact skips comment kinds, so removing a comment is
+                // invisible to it — and so is keeping one.
+                assert!(
+                    equivalent(&config, source, &out).unwrap(),
+                    "{name}: {rendered}"
+                );
+                // Blanking is length-preserving and the gap policy only ever
+                // shrinks, so stripping cannot grow a file.
+                assert!(out.len() <= source.len(), "{name}");
+                // And it is a fixed point.
+                assert_eq!(
+                    strip_comments_source(&config, &out, &policy).unwrap(),
+                    out,
+                    "{name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generated_sources_strip_to_equivalent_sources() {
+        let config = go_config();
+        let policy = delete_every_comment();
+        let mut rng = Rng::new(0x5eed_0005);
+        for case in 0..256 {
+            let source = generated_source(&mut rng);
+            let out = strip_comments_source(&config, &source, &policy).unwrap();
+            let name = format!("generated {case}: {}", String::from_utf8_lossy(&source));
+            assert!(equivalent(&config, &source, &out).unwrap(), "{name}");
+            assert!(out.len() <= source.len(), "{name}");
+            // Never introduces a line: a blanked comment keeps the newlines it
+            // held and the gap policy emits one `\n` per run that had one.
+            let lines = |bytes: &[u8]| bytes.iter().filter(|byte| **byte == b'\n').count();
+            assert!(lines(&out) <= lines(&source), "{name}");
+            // Nothing that survives is a comment any more.
+            let rendered = String::from_utf8_lossy(&out);
+            assert!(
+                spans_of(&config, &out)
+                    .iter()
+                    .all(|span| span.kind != SpanKind::Comment),
+                "{name}: {rendered}"
+            );
+            assert_eq!(
+                strip_comments_source(&config, &out, &policy).unwrap(),
+                out,
                 "{name}"
             );
         }
