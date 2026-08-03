@@ -435,33 +435,43 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
 // build-constraint prologue verbatim, leaving a cgo file byte-identical — only
 // ever preserves meaning, and none of it is a loss to warn about.
 
-// `--verify external` is real for JavaScript/TypeScript and for Ruby but
-// still equals `--verify ast` for Python, Rust and Go, so a run containing
-// files of those languages must not read the level as a stronger guarantee
-// than it is. The head — which backends do have it — depends on the `ruby`
-// feature; the tail — which do not — depends on the `go` feature. The two are
-// independent, so the warning is a conditional head plus a conditional tail,
-// two variants each, written out as one block by `warn_external_verify`.
-#[cfg(feature = "ruby")]
+// `--verify external` is real for JavaScript/TypeScript, for Ruby and for Go,
+// but still equals `--verify ast` for Python and Rust, so a run containing
+// files of those two languages must not read the level as a stronger
+// guarantee than it is. The tail — which backends do not have it — is now
+// fixed, because the two that lack it are both unconditional backends. The
+// head — which backends do have it — names only backends this binary was
+// actually built with: promising Ruby's or Go's checker in a build that
+// refuses `.rb` or `.go` outright would be a lie about this binary, which is
+// why the head has one variant per `ruby`/`go` combination. Head and tail are
+// written out as one block by `warn_external_verify`.
+#[cfg(all(feature = "ruby", feature = "go"))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for JavaScript/TypeScript,
+  where `--verify external` runs `tsc --noEmit` (falling back to
+  `node --check`), for Ruby, where it runs `ruby -c`, and for Go, where it runs
+  `gofmt -e`; each fails if the tool it needs is not on PATH.";
+
+#[cfg(all(feature = "ruby", not(feature = "go")))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
 warning: external-tooling verification is implemented for JavaScript/TypeScript,
   where `--verify external` runs `tsc --noEmit` (falling back to
   `node --check`), and for Ruby, where it runs `ruby -c`; both fail if the tool
   they need is not on PATH.";
 
-#[cfg(not(feature = "ruby"))]
+#[cfg(all(not(feature = "ruby"), feature = "go"))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for JavaScript/TypeScript,
+  where `--verify external` runs `tsc --noEmit` (falling back to
+  `node --check`), and for Go, where it runs `gofmt -e`; both fail if the tool
+  they need is not on PATH.";
+
+#[cfg(all(not(feature = "ruby"), not(feature = "go")))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
 warning: external-tooling verification is implemented for JavaScript/TypeScript,
   where `--verify external` runs `tsc --noEmit` (falling back to
   `node --check`); it fails if the tool it needs is not on PATH.";
 
-#[cfg(feature = "go")]
-const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python, Rust and Go: none of
-  `py_compile`, `rustc --emit=metadata` and `gofmt -e` is invoked, so for
-  `.py`, `.rs` and `.go` this level behaves exactly like `--verify ast`, i.e.
-  the output is re-parsed and compared for AST / token-stream equivalence.";
-
-#[cfg(not(feature = "go"))]
 const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python and Rust: neither
   `py_compile` nor `rustc --emit=metadata` is invoked, so for `.py` and `.rs`
   this level behaves exactly like `--verify ast`, i.e. the output is re-parsed
@@ -469,9 +479,6 @@ const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python an
 
 /// Extensions the warning above is about: the backends the external level does
 /// not reach yet.
-#[cfg(feature = "go")]
-const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 3] = ["py", "rs", "go"];
-#[cfg(not(feature = "go"))]
 const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 2] = ["py", "rs"];
 
 /// True when `path` belongs to a backend the external level does not reach.
@@ -1421,19 +1428,70 @@ mod tests {
 
     #[cfg(feature = "go")]
     #[test]
-    fn external_verify_warning_names_go_as_not_implemented() {
-        // `gofmt -e` is not wired up yet, so Go joins Python and Rust: the
-        // level must not be read as a stronger guarantee than it is.
+    fn external_verify_warning_names_go_as_implemented() {
+        // Go's `External` level really runs `gofmt -e`, so the warning has to
+        // name it on the *implemented* side and must no longer list `.go`
+        // among the extensions the level does not reach.
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, out, err) =
+            run_cli_err(&["format", "--verify", "external", py.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("gofmt -e"), "{err}");
+        assert!(!err.contains("`.go`"), "{err}");
+        assert!(err.contains("py_compile"), "{err}");
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn external_verify_warning_is_absent_for_go_paths() {
+        // A Go-only run must not be told the level is a no-op for it.
         let dir = Scratch::new();
         let go = dir.file("a.go", "package  main\n");
         let (code, out, err) =
             run_cli_err(&["format", "--verify", "external", go.to_str().unwrap()]);
         assert_eq!(code, 0, "{out}");
-        assert_eq!(err.matches("warning:").count(), 1);
-        assert!(err.contains("gofmt -e"), "{err}");
-        assert!(err.contains("`.go`"), "{err}");
-        assert!(err.contains("--verify ast"), "{err}");
+        assert_eq!(err, "");
         assert_eq!(std::fs::read_to_string(&go).unwrap(), "package main\n");
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn external_verify_runs_the_real_checker_over_go() {
+        // End to end at the level that spawns `gofmt -e`: the output is
+        // accepted, written, and stable on a second pass.
+        let dir = Scratch::new();
+        let go = dir.file(
+            "real.go",
+            "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n",
+        );
+        let path = go.to_str().unwrap();
+        let (code, _, _) = run_cli_err(&["format", "--verify", "external", path]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&go).unwrap(),
+            "package main\nimport \"fmt\"\nfunc main() {\nfmt.Println(\"hi\")\n}\n"
+        );
+        let (code, out, _) = run_cli_err(&["check", "--verify", "external", path]);
+        assert_eq!(code, 0, "{out}");
+    }
+
+    #[cfg(feature = "go")]
+    #[test]
+    fn external_verify_does_not_blame_go_input_the_checker_already_rejects() {
+        // A source file carrying only comments is a clean tree-sitter parse
+        // and an "expected 'package'" error to `go/parser`, which is what
+        // `gofmt -e` runs. The policy is that the external level is then
+        // satisfied by the built-in equivalence check alone, so the run
+        // succeeds instead of failing on the user's own input.
+        let dir = Scratch::new();
+        let go = dir.file("comments.go", "\n\n// note\n\n");
+        let (code, out, err) =
+            run_cli_err(&["format", "--verify", "external", go.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(err, "");
+        assert_eq!(std::fs::read_to_string(&go).unwrap(), "// note\n");
     }
 
     #[test]
@@ -2150,7 +2208,9 @@ mod tests {
 
     #[cfg(not(feature = "go"))]
     #[test]
-    fn the_external_verify_warning_does_not_mention_go_without_the_feature() {
+    fn the_external_verify_warning_does_not_promise_go_without_the_feature() {
+        // A build that cannot format Go at all must not advertise Go's
+        // external checker, exactly as it must not advertise Ruby's.
         let dir = Scratch::new();
         let py = dir.file("a.py", "x = 1\n");
         let (code, _, err) = run_cli_err(&["format", "--verify", "external", py.to_str().unwrap()]);

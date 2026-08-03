@@ -88,7 +88,7 @@
 //! stake, cost **3,382 bytes** of the 79 MB — 0.004 % of the corpus, for a
 //! rule without which 42 stdlib files change how they build.
 //!
-//! `gofmt -e` (which is what [`VerifyLevel::External`] will run once G5 lands)
+//! `gofmt -e` (which is what [`VerifyLevel::External`] runs, see [`external`])
 //! accepts every output in both configurations except five, and those five are
 //! exactly the files whose *originals* `gofmt -e` already rejects — which is
 //! why the external gate has to check the original first.
@@ -105,12 +105,14 @@
 //!
 //! `Reparse` re-parses the output; `AstEquiv` compares the comparable
 //! artifacts of input and output (which re-parses the output too, so no
-//! separate re-parse is needed). `External` — `gofmt -e` — is not implemented
-//! yet and runs the `AstEquiv` check, exactly as the Python and Rust backends
-//! do. Output that fails is discarded with [`Error::Verification`] and never
+//! separate re-parse is needed). `External` runs the `AstEquiv` check and
+//! then hands the output to the Go toolchain itself (`gofmt -e`), which must
+//! be on PATH; see [`external`] for what that covers and what it requires.
+//! Output that fails is discarded with [`Error::Verification`] and never
 //! returned.
 
 pub mod config;
+pub mod external;
 pub mod paths;
 pub mod policy;
 
@@ -220,11 +222,16 @@ impl Formatter for GoFormatter {
                 verify::reparse(&config, code.as_bytes())?;
             }
             // `equivalent` re-parses the output itself, so no separate
-            // `reparse` call is needed at either level. External tooling
-            // (`gofmt -e`) is not wired up yet, so both levels run the
-            // strongest built-in check.
-            VerifyLevel::AstEquiv | VerifyLevel::External => {
+            // `reparse` call is needed at either level.
+            VerifyLevel::AstEquiv => {
                 verify::equivalent(&config, bytes, code.as_bytes())?;
+            }
+            // External tooling runs *in addition to* the built-in check, and
+            // only after it: a candidate the equivalence check already
+            // rejected is not worth a process spawn.
+            VerifyLevel::External => {
+                verify::equivalent(&config, bytes, code.as_bytes())?;
+                external::check(source, &code)?;
             }
         }
         let tokenizer = options.tokenizer.load()?;
@@ -479,18 +486,42 @@ mod tests {
         assert_eq!(r.code, "package main\n");
     }
 
-    #[test]
-    fn external_level_currently_behaves_like_ast_equiv() {
-        // `gofmt -e` is G5; until it lands this level runs the strongest
-        // built-in check, exactly as the Python and Rust backends do.
-        let opts = FormatOptions {
+    fn external() -> FormatOptions {
+        FormatOptions {
             verify: VerifyLevel::External,
             ..FormatOptions::default()
-        };
+        }
+    }
+
+    #[test]
+    fn external_level_runs_gofmt_on_top_of_the_built_in_check() {
+        // Spawns the real toolchain (`gofmt -e`) after the equivalence check.
+        // `gofmt` agreeing here is the expected result and not a weak
+        // assertion: it agreed with **every** output this backend produced
+        // over the go1.24.7 standard library, in both comment configurations
+        // (see [`external`]). The level is an addition to the built-in check,
+        // never a substitute for it.
         let r = GoFormatter::default()
-            .format(Path::new("a.go"), "package  main\n", &opts)
+            .format(
+                Path::new("a.go"),
+                "package  main\n\nfunc  main()  {}\n",
+                &external(),
+            )
             .unwrap();
-        assert_eq!(r.code, "package main\n");
+        assert_eq!(r.code, "package main\nfunc main() {}\n");
+    }
+
+    #[test]
+    fn external_level_does_not_blame_input_gofmt_already_rejects() {
+        // A source file carrying only comments is a clean tree-sitter parse
+        // and an "expected 'package'" error to `go/parser`. The external
+        // level is then satisfied by the built-in equivalence check alone, so
+        // the file is still formatted instead of the run failing on the
+        // user's own input.
+        let r = GoFormatter::default()
+            .format(Path::new("a.go"), "\n\n// note\n\n", &external())
+            .unwrap();
+        assert_eq!(r.code, "// note\n");
     }
 
     #[test]

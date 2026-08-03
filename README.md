@@ -81,13 +81,11 @@ not a character minifier.
 | Rust | `.rs` | Supported (with the comment/macro caveats below) |
 | JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts` `.cts` `.tsx` | Supported (with the comment/JSX caveats below) |
 | Ruby | `.rb` `.rake` `.gemspec` `.ru`, plus the exact file names `Gemfile` and `Rakefile` | Supported (context-lossless at default settings; see below) |
-| Go | `.go` | **Experimental** until external verification lands (see below) |
+| Go | `.go` | Supported (context-lossless at default settings; see below) |
 
-**`--verify external` is real for JavaScript/TypeScript and Ruby**, which is
-what "Supported" is gated on here: the output is handed to the language's own
-toolchain, on top of the built-in AST-equivalence check. Go is the language
-that does not have it yet, which is exactly what "experimental" means in the
-table above.
+**`--verify external` is real for JavaScript/TypeScript, Ruby and Go**, which
+is what "Supported" is gated on here: the output is handed to the language's
+own toolchain, on top of the built-in AST-equivalence check.
 
 For JavaScript/TypeScript it runs
 `tsc --noEmit --noCheck --skipLibCheck --allowJs --jsx preserve` over the
@@ -105,16 +103,28 @@ warnings for files that are perfectly valid, and those never fail a run.
 `--verify external` therefore requires `ruby` on PATH for Ruby paths, and
 **fails naming it** when it is missing rather than quietly checking less.
 
+For Go it runs `gofmt -e` — the toolchain's own front end, which parses the
+file with `go/parser` and reports every parse error rather than the first ten.
+Nothing is compiled, linked or run, and no package outside the file is loaded,
+so no module context is needed. The verdict is the exit status alone: `gofmt`
+prints the *reformatted* source on success and TokenPress's output is not
+`gofmt`-shaped, so that output is discarded rather than compared —
+`--verify external` is a parse check, never a style check. It requires `gofmt`
+on PATH (it ships with every Go distribution) for Go paths, and **fails naming
+it** when it is missing. The probe is `gofmt -h`: `gofmt` has no `--version`,
+and a bare `gofmt` reads standard input.
+
 The candidate is checked in a private temp file — carrying the target's
 extension for JS/TS, always `.rb` for Ruby, which is what makes the
-extensionless `Gemfile` and `Rakefile` checkable at all; nothing is written to
-your file until every check has passed. Python, Rust and Go do not implement
-the level yet and still treat it as `--verify ast`; the CLI says so on stderr
-when a `.py`, `.rs` or `.go` path is in the run.
+extensionless `Gemfile` and `Rakefile` checkable at all, always `.go` for Go;
+nothing is written to your file until every check has passed. Python and Rust
+do not implement the level yet and still treat it as `--verify ast`; the CLI
+says so on stderr when a `.py` or `.rs` path is in the run.
 
 If your *input* does not pass the external checker (a file the toolchain
 already rejects — ESM syntax in a `.cjs`, a syntax newer than your `tsc`, a
-regexp literal prism parses and MRI refuses to compile), the output is not
+regexp literal prism parses and MRI refuses to compile, a `.go` file with no
+package clause), the output is not
 checked against it and the file is accepted on the built-in equivalence check
 alone: TokenPress does not fail a run over a file that was already broken
 before it ran. Expect the level to be substantially slower than
@@ -176,18 +186,16 @@ Ruby caveat warning on stderr: there is nothing to warn about. Context-lossless
 here is about *comments*, not line numbers — those no backend preserves, Ruby
 included (see **What it never touches** below).
 
-**Go is experimental.** The backend parses with tree-sitter, re-emits
+**Go is supported.** The backend parses with tree-sitter, re-emits
 whitespace-minimally over the source bytes, verifies with re-parse plus
 AST-equivalence, and refuses to write anything that fails — the same core
-invariant as every other backend. What it does *not* have yet is external
-verification: `--verify external` currently behaves exactly like
-`--verify ast` for `.go` paths (`gofmt -e` is not invoked), and the CLI says
-so on stderr. That gate is what the other backends' "Supported" label is
-gated on, so Go carries **experimental** until it lands. Everything else is
-in place: `.go` is the whole path set (`go.mod` and `go.sum` are not Go
-source), and measured over the Go 1.24.7 standard library (7,117 files,
-79 MB) the savings are **-7.2%** at default settings and **-23.6%** with
-`--go-strip-comments`, both on `o200k_base`, with zero verification refusals.
+invariant as every other backend. `--verify external` hands the output to
+`gofmt -e` as described above, which is what the label was gated on. `.go` is
+the whole path set (`go.mod` and `go.sum` are not Go source), and measured
+over the Go 1.24.7 standard library (7,117 files, 79 MB) the savings are
+**-7.2%** at default settings and **-23.6%** with `--go-strip-comments`, both
+on `o200k_base`, with zero verification refusals — and `gofmt -e` accepted
+every one of the 7,060 outputs, in both comment configurations.
 
 **Go, like Ruby, is context-lossless at default settings** — and it defends
 what Go puts *in* comments. Every comment survives byte for byte unless
@@ -313,9 +321,10 @@ Prerequisites for the consumer:
   `clang`); on macOS `xcode-select --install`; on Windows install LLVM
   (`choco install llvm`) and set `LIBCLANG_PATH=C:\Program Files\LLVM\bin`.
   **Neither `ruby` nor the Go toolchain is needed to build** — nothing in the
-  build shells out to either. `ruby` is needed at *run* time only if you pass
-  `--verify external`, which runs `ruby -c` over Ruby output; the hooks do not
-  by default. **Opt out with `TOKENPRESS_NO_RUBY=1` and/or
+  build shells out to either. They are needed at *run* time only if you pass
+  `--verify external`, which runs `ruby -c` over Ruby output and `gofmt -e`
+  over Go output; the hooks do not by default. **Opt out with
+  `TOKENPRESS_NO_RUBY=1` and/or
   `TOKENPRESS_NO_GO=1`**: the hook then builds the CLI without that backend's
   default-on cargo feature, dropping it from the dependency graph. Setting
   just `TOKENPRESS_NO_RUBY=1` removes the libclang requirement; setting both
@@ -356,11 +365,11 @@ generally ship both; Windows runners may need LLVM installed
 cannot install toolchain prerequisites into the job that uses it, so this
 action does not try to — provide your own step if your runner lacks them (this
 repository's own CI uses a local `.github/actions/libclang` composite action for
-exactly that, and consumers need their own equivalent). Ruby itself is not
-needed to build, and at run time only if `extra-args` selects
-`--verify external`, which runs `ruby -c` over Ruby output (GitHub-hosted
-runners preinstall Ruby), and the Go toolchain is never needed at all. **Or
-drop the requirement with `ruby: 'false'` and/or `go: 'false'`**: the action
+exactly that, and consumers need their own equivalent). Neither Ruby nor the
+Go toolchain is needed to build, and at run time only if `extra-args` selects
+`--verify external`, which runs `ruby -c` over Ruby output and `gofmt -e` over
+Go output (GitHub-hosted runners preinstall both Ruby and Go). **Or drop the
+requirement with `ruby: 'false'` and/or `go: 'false'`**: the action
 then builds the CLI without that backend's default-on cargo feature, so it is
 not in the dependency graph. `ruby: 'false'` alone drops the libclang
 requirement; both together drop the C compiler as well, leaving a pure-Rust
@@ -483,9 +492,9 @@ strip_comments = false        # --go-strip-comments
 ```
 
 That is the complete schema — there are no other keys. `verify = "external"`
-runs the JavaScript/TypeScript toolchain over JS/TS output and `ruby -c` over
-Ruby output (see **Language support**); for `.py`, `.rs` and `.go` it still
-behaves exactly like `"ast"` and says so on stderr.
+runs the JavaScript/TypeScript toolchain over JS/TS output, `ruby -c` over
+Ruby output and `gofmt -e` over Go output (see **Language support**); for
+`.py` and `.rs` it still behaves exactly like `"ast"` and says so on stderr.
 
 A `[ruby]` or `[go]` table is a config error naming the missing feature in a
 build that switched that backend off (see **Cargo features** below), rather
@@ -573,7 +582,8 @@ Format-time verification cannot detect this **by construction**: the canonical
 forms the re-parse/equivalence check compares are location-independent, which
 is what makes them usable as an equality stand-in at all, so a moved line is
 the same token in the same position before and after. `--verify external` does
-not help either — `tsc` and `ruby -c` are syntax checks and nothing runs. The
+not help either — `tsc`, `ruby -c` and `gofmt -e` are syntax checks and
+nothing runs. The
 layer that does catch it is running a corpus's own upstream test suite against
 the formatted copy (`benchmarks/verify-upstream.sh`), and it has: on 2026-08-02
 the rack v3.2.6 target came back **DIVERGED** on one test,

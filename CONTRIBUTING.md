@@ -143,6 +143,18 @@ interpreter cannot be made to do on demand (a machine with no `ruby` at all, a
 process that fails to spawn) is tested through the same injectable `Tools`
 seam.
 
+**`gofmt` must be on PATH to run the suite too**, on the same terms:
+`tokenpress-go` implements `--verify external` by running `gofmt -e`, and its
+tests exercise that against real processes. `gofmt` ships inside every Go
+distribution (`$(go env GOROOT)/bin/gofmt`, normally already on PATH next to
+`go`), and **both CI runners preinstall Go**, so nothing has to be set up for
+it. What cannot be arranged on demand (a machine with no `gofmt`, a process
+that fails to spawn) goes through the same injectable `Tools` seam.
+
+Note that `gofmt` is probed with `gofmt -h`. It has no `--version` flag, and a
+**bare** `gofmt` reads standard input — a probe without an argument would
+block rather than fail, so never write one.
+
 ## Integration surfaces
 
 `.pre-commit-hooks.yaml` (with `scripts/pre-commit-hook.sh`), `action.yml` and
