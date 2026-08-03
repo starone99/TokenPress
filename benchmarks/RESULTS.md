@@ -2,7 +2,8 @@
 
 Measured: 2026-07-31 (open-model tokenizers added 2026-08-01; the
 JavaScript/TypeScript corpus added 2026-08-02; the Ruby corpus added
-2026-08-02)
+2026-08-02; per-tokenizer aggressive run and the express open-model rows
+added 2026-08-02)
 Binary: `cargo build --release -p tokenpress-cli` at the commit containing this file
 Command: `tokenpress stats <corpus> --tokenizer <name> [options]`
 Platform: Windows 11, rustc 1.95.0
@@ -30,7 +31,9 @@ UTF-8 by design), both correctly rejected with per-file errors — plus one
 genuine refusal in rack, `lib/rack/utils.rb`, which is a known Ruby
 over-refusal class documented in the Ruby section below. A refusal writes
 nothing and leaves the file untouched; it is the core invariant working, not
-a corruption.
+a corruption. Runs made with the JS/TS-enabled CLI (2026-08-02 onward)
+additionally reject three django `.js` files as invalid input —
+template/fixture files, listed in the open-model subsection below.
 
 ## Which LLM does each number apply to? (tokenizer ↔ model mapping)
 
@@ -126,11 +129,11 @@ reported on its own rather than folded into the tables above: those were
 measured on Windows with a CRLF checkout, and the line-ending caveat further
 down applies to any comparison across the two.
 
-**Only the two embedded tokenizers were measured** — the measurement
-environment cannot reach huggingface.co, so the Qwen3.6 / GLM-5.2 / Kimi K3
-columns are pending here exactly as they are for the full-aggressive run
-below, to be filled in from an environment that can fetch those
-revision-pinned tokenizer files.
+The two embedded-tokenizer rows were measured in that environment, which
+cannot reach huggingface.co. The Qwen3.6 / GLM-5.2 / Kimi K3 rows were
+filled in on 2026-08-02 from the maintainer's Windows machine, using an LF
+checkout of the same pin; the `o200k_base` totals reproduced exactly
+(135,740 → 112,307), so the two platforms are directly comparable.
 
 The whole tree is measured, matching every other corpus: `index.js`, `lib/`,
 `test/`, `examples/` and `benchmarks/`. All 142 files are `.js`; there is no
@@ -142,9 +145,14 @@ re-emitted verbatim and save nothing) is untested by these numbers** and a
 |---|---|---|---|---|---|
 | express | o200k_base | 142 | 135,740 | 112,307 | **-17.3%** |
 | express | cl100k_base | 142 | 135,206 | 111,338 | **-17.7%** |
-| express | Qwen3.6 | — | — | — | *pending* |
-| express | GLM-5.2 | — | — | — | *pending* |
-| express | Kimi K3 | — | — | — | *pending* |
+| express | Qwen3.6 | 142 | 156,175 | 117,208 | **-25.0%** |
+| express | GLM-5.2 | 142 | 135,795 | 111,924 | **-17.6%** |
+| express | Kimi K3 | 142 | 136,412 | 112,724 | **-17.4%** |
+
+Qwen3.6 stands out on JavaScript the same way it does on Rust: it prices
+whitespace runs comparatively high (its before-count is 156k where the
+others sit at ~136k), so whitespace-minimal re-emission saves +7.7pp more
+than on `o200k_base`.
 
 **0 verification refusals** across all 142 files, at both tokenizers. Absolute
 saving at o200k: 23,433 tokens per full-repo prompt.
@@ -269,10 +277,11 @@ in the next subsection.
 Measured: 2026-08-01, Linux, rustc 1.95.0, same commit-pinned corpus
 (`benchmarks/fetch.sh`); the express and rack rows were measured the same way
 on 2026-08-02, when the JS/TS and Ruby backends and their corpora were added.
-**Only the two embedded tokenizers were measured**
-— the measurement environment cannot reach huggingface.co, so the Qwen3.6 /
-GLM-5.2 / Kimi K3 columns are absent here and are to be filled in from an
-environment that can fetch those revision-pinned tokenizer files.
+**Only the two embedded tokenizers were measured in this run** — the
+measurement environment cannot reach huggingface.co. The Qwen3.6 / GLM-5.2 /
+Kimi K3 columns were measured separately on 2026-08-02 from the maintainer's
+Windows machine and are reported under "Open-model tokenizers" below; that
+run predates the rack corpus, so rack has no open-model figures.
 
 Exact flags:
 
@@ -479,14 +488,111 @@ The second known Ruby over-refusal class — a whitelisted magic-comment key
 appearing lexically *after* the first code token, which `--ruby-strip-comments`
 deletes and the verifier then rejects — **did not fire anywhere in rack**.
 
+##### Open-model tokenizers (Qwen3.6 / GLM-5.2 / Kimi K3, added 2026-08-02)
+
+Measured 2026-08-02 on the maintainer's Windows machine, rustc 1.95.0, from
+an **LF checkout** of the same pinned commits (clones made with
+`core.autocrlf=false`), so these rows extend the Linux LF table above, not
+the historical CRLF tables. Two sanity checks anchor the platforms:
+requests aggressive and express default at `o200k_base` reproduced the
+Linux totals exactly (86,331 → 55,265 and 135,740 → 112,307).
+
+One deliberate difference: this run used the current CLI, which includes
+the JS/TS backend added 2026-08-02, so `.js` files inside the Python and
+mixed corpora are formatted too. The flag matrix is unchanged —
+`--js-strip-comments` was still applied only to express, so those embedded
+`.js` files are formatted at default JS settings. The two
+embedded-tokenizer columns were re-measured with the same binary so all
+five columns of the table below share one file set. File-count changes
+against the 2026-08-01 table: fastapi 1,136 → 1,140 (+4 `.js`), langchain
+2,530 → 2,531 (+1 — its only other `.js` lives under `.github/`, which the
+gitignore-aware walk skips as hidden), uv 718 → 719 (+1), django
+2,924 → 3,032 (+108 `.js` formatted; 3 more rejected as invalid input,
+below). Only django's percentage moves visibly: its admin/static JS adds
+~423k `o200k` tokens that compress less than Python, so its o200k saving
+reads -22.2% here vs -23.1% in the Python-only table. That is a coverage
+change, not a formatter change.
+
+Savings per corpus, aggressive flags as above (bold = clears the ≥40%
+showcase bar):
+
+| Corpus | Files | o200k_base | cl100k_base | Qwen3.6 | GLM-5.2 | Kimi K3 |
+|---|---|---|---|---|---|---|
+| tokio | 790 | **-50.5%** | **-50.9%** | **-55.2%** | **-50.9%** | **-50.6%** |
+| ripgrep | 98 | -37.4% | -37.6% | **-42.7%** | -37.6% | -37.3% |
+| langchain | 2,531 | -38.8% | -39.2% | **-41.1%** | -39.3% | -38.6% |
+| fastapi | 1,140 | -36.1% | -36.8% | **-40.1%** | -36.7% | -36.3% |
+| requests | 36 | -36.0% | -36.3% | -36.5% | -36.2% | -35.4% |
+| transformers | 4,700 | -34.9% | -35.6% | -36.1% | -35.5% | -34.8% |
+| express | 142 | -25.4% | -25.9% | -33.3% | -25.9% | -25.5% |
+| django | 3,032 | -22.2% | -22.7% | -24.8% | -22.8% | -21.9% |
+| uv | 719 | -21.5% | -21.8% | -24.7% | -21.4% | -21.7% |
+
+Raw counts for the three open-model tokenizers:
+
+| Corpus | Qwen3.6 before | after | GLM-5.2 before | after | Kimi K3 before | after |
+|---|---|---|---|---|---|---|
+| tokio | 1,542,030 | 690,601 | 1,394,952 | 684,919 | 1,390,718 | 687,497 |
+| ripgrep | 458,041 | 262,670 | 415,968 | 259,500 | 416,120 | 260,957 |
+| langchain | 3,240,913 | 1,908,563 | 2,945,096 | 1,788,970 | 2,946,274 | 1,808,322 |
+| fastapi | 830,093 | 497,465 | 734,771 | 465,058 | 731,460 | 465,816 |
+| requests | 94,786 | 60,211 | 86,278 | 55,037 | 86,409 | 55,858 |
+| transformers | 18,431,508 | 11,784,285 | 17,020,980 | 10,986,756 | 16,936,419 | 11,039,030 |
+| express | 156,175 | 104,226 | 135,795 | 100,685 | 136,412 | 101,572 |
+| django | 5,050,621 | 3,800,285 | 4,550,506 | 3,513,998 | 4,625,412 | 3,610,917 |
+| uv | 5,559,284 | 4,185,455 | 4,862,547 | 3,821,025 | 4,742,042 | 3,715,145 |
+
+**0 verification refusals** at every tokenizer. Three django `.js` files
+are rejected as invalid *input* — beyond the two broken fixtures documented
+at the top of this file — all at parse, with nothing written:
+`django/views/templates/i18n_catalog.js` (a Django template containing
+`{% %}` tags, not JavaScript), `tests/i18n/commands/javascript.js` (an
+i18n-scanner fixture), and
+`tests/staticfiles_tests/project/documents/cached/module.js` (duplicate
+export). The langchain run still reports only the known non-UTF-8 fixture.
+
+**Coverage limit:** this run covers the nine corpora that existed on
+2026-08-02 when it was made. The rack (Ruby) corpus was added later the same
+day and has **no open-model figures** — its embedded-tokenizer aggressive
+result (-20.8% / -20.5%) is far below the ≥40% bar, so its absence cannot
+change any candidate list below, but no Qwen3.6 / GLM-5.2 / Kimi K3 number
+should be quoted for Ruby until rack is re-measured on the maintainer's
+machine.
+
 #### Showcase candidates (≥40% aggressive reduction)
 
 Recorded for the ROADMAP P3 task ("hunt for well-known projects per
 supported language where the aggressive setting clears ≥40% token
-reduction"). Measured 2026-08-01 on the embedded tokenizers only; rack was
-added 2026-08-02 the same way.
+reduction"). The hunt is defined **per target-model tokenizer** — savings
+differ enough by tokenizer that a single list would be wrong for most
+models. Embedded-tokenizer columns measured 2026-08-01 (re-measured
+2026-08-02 with the JS-enabled CLI — unchanged except django, see the
+open-model subsection); open-model columns measured 2026-08-02. rack was
+added 2026-08-02 and measured on the embedded tokenizers only (-20.8% /
+-20.5%, below the bar on both); it is absent from the open-model columns.
 
-**Clears ≥40% — 1 of 10 corpora:**
+**Per-tokenizer candidate lists:**
+
+| Tokenizer | ≥40% candidates (aggressive flags) |
+|---|---|
+| o200k_base | tokio **-50.5%** |
+| cl100k_base | tokio **-50.9%** |
+| Qwen3.6 | tokio **-55.2%**, ripgrep **-42.7%**, langchain **-41.1%**, fastapi **-40.1%** |
+| GLM-5.2 | tokio **-50.9%** |
+| Kimi K3 | tokio **-50.6%** |
+
+tokio clears the bar on every tokenizer measured and stays the headline
+everywhere; at Qwen3.6 it reaches **-55.2%** (1,542,030 → 690,601, an
+absolute saving of 851,429 tokens per full-repo prompt). The Qwen3.6 list
+is four deep because Qwen prices whitespace runs comparatively expensively;
+selecting candidates on the `o200k_base` proxy would have missed three of
+its four — which is exactly why this hunt is per-tokenizer. Gemma is not
+measured: the official `google/gemma-*` repos are gated (license acceptance
+plus auth token), so pinning its `tokenizer.json` needs an
+authenticated-download story nothing else needs; it was excluded from this
+run by maintainer decision (2026-08-02).
+
+**Clears ≥40% on the embedded tokenizers — 1 of 10 corpora:**
 
 | Project | Language | Commit | o200k_base | cl100k_base | Absolute saving (o200k) |
 |---|---|---|---|---|---|
@@ -511,6 +617,10 @@ stream, so more than half of a full-repo prompt disappears.
 | psf/requests | Python | `0e322af8` | -36.0% | -36.3% |
 | huggingface/transformers | Python | `71c6f699` | -34.9% | -35.6% |
 
+On GLM-5.2 and Kimi K3 the same projects stay near misses (langchain -39.3%
+/ -38.6%, ripgrep -37.6% / -37.3%, fastapi -36.7% / -36.3%); the full grid
+is in the open-model subsection above.
+
 Flags: Python projects `--py-strip-comments --py-strip-annotations
 --py-strip-docstrings`; ripgrep `--rs-strip-doc-comments`.
 
@@ -534,17 +644,12 @@ Two caveats on this list:
   table** (-37.4% here vs -38.2% there). The Rust flag set did not change —
   `--rs-strip-doc-comments` is the same single flag in both runs — and the
   difference is entirely the CRLF→LF checkout described above.
-* **This list is defined on `o200k_base` only, and is therefore a proxy
-  list — valid for OpenAI-tokenizer models and nothing else.** Savings differ
-  materially by tokenizer: in the historical table Qwen3.6 beat o200k by
-  +4.5pp on ripgrep aggressive (-42.7% vs -38.2%), i.e. ripgrep already
-  cleared 40% on Qwen while missing it on o200k. Membership of the ≥40% set
-  must be decided **per real target-model tokenizer**, so Qwen3.6, GLM-5.2,
-  Kimi K3 and Gemma each need their own candidate list before any of this is
-  final. Gemma is not in the benchmark tokenizer set yet at all — its
-  `tokenizer.json` still has to be revision-pinned and added to `fetch.ps1`
-  and `fetch.sh`. Re-run this section in an environment with huggingface
-  access; until then, treat the list above as provisional.
+* **Each list is valid only for models using that tokenizer.** The per-
+  tokenizer measurement (2026-08-02) confirmed the gap is decisive: three of
+  Qwen3.6's four candidates are invisible on the `o200k_base` proxy. Judge
+  ≥40% membership on the tokenizer of the model you actually run. Gemma
+  remains unmeasured (gated repos — see the note above), so no candidate
+  list exists for Gemma-tokenizer models.
 
 ## Interpretation
 

@@ -5,17 +5,20 @@ the *aggressive* (lossy) settings. Every number on this page is taken from
 [`RESULTS.md`](RESULTS.md), which holds the full methodology, the platform
 notes, and the default-setting numbers. Nothing here is extrapolated.
 
-Two tokenizers only: `o200k_base` (OpenAI GPT-4o / GPT-4.1 / o-series,
-including Codex models) and `cl100k_base` (GPT-4 / GPT-3.5-turbo). Both are
-embedded in the binary and were measured locally.
+Five public tokenizers: `o200k_base` (OpenAI GPT-4o / GPT-4.1 / o-series,
+including Codex models) and `cl100k_base` (GPT-4 / GPT-3.5-turbo), both
+embedded in the binary, plus three open-model tokenizers measured
+2026-08-02 from revision-pinned files — Qwen3.6, GLM-5.2 and Kimi K3.
+Candidate lists are per-tokenizer (see below); Gemma is not measured.
 
 ---
 
 ## Headline: tokio, -50.5%
 
-The only corpus of the ten that clears a 40% reduction *on the two embedded
-OpenAI tokenizers measured here*. Per-model candidate lists are still pending
-(see caveats).
+The only corpus of the ten that clears a 40% reduction on every tokenizer
+measured — -50.5% on `o200k_base`, and **-55.2% on Qwen3.6** (1,542,030 →
+690,601). On Qwen3.6 specifically, three more corpora clear the bar; see
+"Per-tokenizer ≥40% candidates" below.
 
 | | |
 |---|---|
@@ -136,6 +139,41 @@ difference:
 | langchain | -22.4% | -38.8% | +16.4pp |
 | transformers | -21.6% | -34.9% | +13.3pp |
 | uv | -21.4% | -21.5% | +0.1pp |
+
+---
+
+## Per-tokenizer ≥40% candidates
+
+Added 2026-08-02. Savings differ enough by tokenizer that candidate
+selection is done per tokenizer, not on an OpenAI proxy. Measured on the
+maintainer's Windows machine from an LF checkout of the same pins; the
+`o200k_base` sanity runs reproduced the Linux totals exactly. The run used
+the current CLI (JS/TS backend included), so `.js` files inside the Python
+and mixed corpora are formatted too — file counts and the django
+percentages shift slightly against the 2026-08-01 table; `RESULTS.md`
+("Open-model tokenizers") has the full grid, raw counts and the coverage
+notes.
+
+| Tokenizer | Models | ≥40% candidates (aggressive flags) |
+|---|---|---|
+| `o200k_base` | GPT-4o / GPT-4.1 / o-series | tokio **-50.5%** |
+| `cl100k_base` | GPT-4 / GPT-3.5-turbo | tokio **-50.9%** |
+| Qwen3.6 | Qwen3.6 family | tokio **-55.2%**, ripgrep **-42.7%**, langchain **-41.1%**, fastapi **-40.1%** |
+| GLM-5.2 | GLM-5.2 | tokio **-50.9%** |
+| Kimi K3 | Kimi K3 | tokio **-50.6%** |
+
+The Qwen3.6 list is four deep because Qwen prices whitespace runs
+comparatively expensively — the same property that makes it save +7.9pp
+more than `o200k_base` on express. Selecting candidates on `o200k_base`
+would have missed three of Qwen's four. No list exists for Gemma-tokenizer
+models: the official Gemma repos are gated, so its tokenizer is not in the
+benchmark set (maintainer decision, 2026-08-02).
+
+This run covers the nine corpora that existed when it was made. rack, the
+tenth (Ruby), was added later the same day and has **no open-model figures**;
+it reaches -20.8% on `o200k_base`, far below the bar, so it cannot change any
+list above, but no Qwen3.6 / GLM-5.2 / Kimi K3 number should be quoted for
+Ruby until it is re-measured.
 
 ---
 
@@ -283,23 +321,18 @@ whitespace-sensitive macros — `stringify!` is the common case — this changes
 the string produced at runtime, and a re-spaced macro body is token-identical
 to the original, so verification does not detect it.
 
-**Public tokenizers only.** All numbers here are `o200k_base` and
-`cl100k_base`. Claude's vocabulary is private and has not been measured; no
-number on this page is given or extrapolated for any private or closed
-tokenizer, and none should be. `RESULTS.md` additionally reports three
-open-model tokenizers (Qwen3.6, GLM-5.2, Kimi K3) for the default and
-historical-aggressive runs; those columns are absent from the full-aggressive
-run above because the measurement environment could not fetch the
-revision-pinned tokenizer files.
+**Public tokenizers only.** All numbers here are the two embedded OpenAI
+tokenizers plus the three revision-pinned open-model tokenizers (Qwen3.6,
+GLM-5.2, Kimi K3). Claude's vocabulary is private and has not been
+measured; no number on this page is given or extrapolated for any private
+or closed tokenizer, and none should be.
 
-**Which projects clear 40% depends on the tokenizer.** Candidate selection on
-this page used `o200k_base` and `cl100k_base` only, so the ≥40% claim is a
-proxy — judge savings, and ≥40% membership, on the tokenizer of the model you
-actually use. The gap is not cosmetic: ripgrep aggressive is -38.2% on
-`o200k_base` but -42.7% on Qwen3.6 in `RESULTS.md`'s historical table, so it
-already clears 40% on Qwen while missing it here. Separate candidate lists for
-Qwen3.6, GLM-5.2, Kimi K3 and Gemma are pending an environment with
-huggingface.co access; Gemma is not in the benchmark tokenizer set yet.
+**Which projects clear 40% depends on the tokenizer.** This is now measured,
+not hypothesized: the per-tokenizer lists above show three of Qwen3.6's four
+candidates are invisible on `o200k_base`. Judge savings, and ≥40%
+membership, on the tokenizer of the model you actually use. Each list is
+valid only for models using that tokenizer; Gemma-tokenizer models have no
+list, because Gemma is not in the benchmark tokenizer set (gated repos).
 
 **Line endings shift the baseline slightly.** These runs are a Linux LF
 checkout; the earlier tables in `RESULTS.md` were measured on Windows with
