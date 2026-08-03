@@ -1841,6 +1841,7 @@ dependencies = [
 name = "tokenpress-go"
 version = "0.1.0"
 dependencies = [
+ "tokenpress-core",
  "tokenpress-treesitter",
  "tree-sitter-go",
 ]
