@@ -1838,6 +1838,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokenpress-go"
+version = "0.1.0"
+dependencies = [
+ "tokenpress-treesitter",
+ "tree-sitter-go",
+]
+
+[[package]]
 name = "tokenpress-js"
 version = "0.1.0"
 dependencies = [

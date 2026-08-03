@@ -1,0 +1,31 @@
+[package]
+name = "tokenpress-go"
+description = "TokenPress for Go: the Go-specific half of the tree-sitter backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Path dependency, not `workspace = true`, for the reason the sibling crates
+# record: `default-features = false` is ignored on an inherited dependency.
+# The engine's `hf-tokenizer` default forwards to `tokenpress-core`, and this
+# crate uses nothing behind it, so it is switched off here rather than
+# hard-wired on. The `[features]` block that forwards it belongs with the
+# formatter (G3), which is the first code here that touches `tokenpress-core`
+# at all — hence no `tokenpress-core` dependency yet either.
+tokenpress-treesitter = { path = "../tokenpress-treesitter", default-features = false }
+# Grammar crates are pre-1.0 and version-locked to a generated parser ABI, so
+# the ruff/oxc/prism rule applies unchanged: pin the exact version and confine
+# **all** grammar API access to one module — `src/config.rs` here, the way
+# `tokenpress-python` confines ruff to `src/parser.rs`. The pin is the same
+# `=0.25.0` the engine tests against, and `src/config.rs` ships the
+# `abi_version()` test every grammar pin owes.
+#
+# Build prerequisite: `cc` compiles the grammar's generated `parser.c` (C11).
+# No C++, no bindgen/libclang.
+#
+# There is deliberately no direct `tree-sitter` dependency: the runtime is the
+# engine's, and `tree_sitter_go::LANGUAGE` converts into the engine's
+# re-exported `Language` type without naming the runtime crate here.
+tree-sitter-go = "=0.25.0"
