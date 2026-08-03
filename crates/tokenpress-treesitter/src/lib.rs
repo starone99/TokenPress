@@ -49,5 +49,6 @@
 pub mod comparable;
 pub mod emit;
 pub mod parser;
+pub mod verify;
 
 pub use tokenpress_core::{Error, Result};
