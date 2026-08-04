@@ -1,6 +1,6 @@
 # TokenPress Showcase
 
-Measured token reduction on ten commit-pinned open-source repositories, at
+Measured token reduction on eleven commit-pinned open-source repositories, at
 the *aggressive* (lossy) settings. Every number on this page is taken from
 [`RESULTS.md`](RESULTS.md), which holds the full methodology, the platform
 notes, and the default-setting numbers. Nothing here is extrapolated.
@@ -15,7 +15,7 @@ Candidate lists are per-tokenizer (see below); Gemma is not measured.
 
 ## Headline: tokio, -50.5%
 
-The only corpus of the ten that clears a 40% reduction on every tokenizer
+The only corpus of the eleven that clears a 40% reduction on every tokenizer
 measured — -50.5% on `o200k_base`, and **-55.2% on Qwen3.6** (1,542,030 →
 690,601). On Qwen3.6 specifically, three more corpora clear the bar; see
 "Per-tokenizer ≥40% candidates" below.
@@ -49,8 +49,8 @@ target/release/tokenpress stats benchmarks/corpus/tokio \
 ## Full corpus table (aggressive settings)
 
 Measured 2026-08-01 on a Linux LF checkout of the pinned commits (express and
-rack 2026-08-02, same way). `Files` is the number of files successfully
-formatted.
+rack 2026-08-02, gin 2026-08-04, same way). `Files` is the number of files
+successfully formatted.
 
 | Project | Lang | Pinned commit | Files | `o200k_base` | `cl100k_base` |
 |---|---|---|---|---|---|
@@ -64,6 +64,7 @@ formatted.
 | [django/django](https://github.com/django/django) | Python | `50d706d0aebcc2d073c8d034b6e22fc98fad49f2` | 2,924 | -23.1% | -23.8% |
 | [rack/rack](https://github.com/rack/rack) | Ruby | `e1f22fdbe99afd2126b6fbf05bb12399359574b7` (tag v3.2.6) | 104 | -20.8% | -20.5% |
 | [astral-sh/uv](https://github.com/astral-sh/uv) | Rust + Python | `be765050837d81badb20e1f70eec62146c586902` | 718 | -21.5% | -21.8% |
+| [gin-gonic/gin](https://github.com/gin-gonic/gin) | Go | `6ad6205e9c94a4b8a320219e28c37c29d22a7a2c` (tag v1.11.0) | 95 | -19.4% | -19.9% |
 
 Raw token counts for the same runs:
 
@@ -79,6 +80,7 @@ Raw token counts for the same runs:
 | django | 4,191,951 | 3,221,811 | 4,122,515 | 3,141,905 |
 | rack | 187,175 | 148,273 | 186,474 | 148,157 |
 | uv | 4,806,817 | 3,773,907 | 4,779,673 | 3,739,347 |
+| gin | 173,337 | 139,758 | 172,761 | 138,297 |
 
 ### Flags used
 
@@ -88,17 +90,19 @@ Raw token counts for the same runs:
 | Rust (ripgrep, tokio) | `--rs-strip-doc-comments` |
 | JavaScript (express) | `--js-strip-comments` |
 | Ruby (rack: 93 `.rb`, 9 `.ru`, `rack.gemspec`, `Gemfile`, `Rakefile`) | `--ruby-strip-comments` |
+| Go (gin: 95 `.go`) | `--go-strip-comments` |
 | Mixed (uv: 624 `.rs` + 94 `.py`) | all four Python/Rust flags — per-language flags are language-scoped, so passing a Rust flag to a Python tree is a verified no-op |
 
 ### Why rack is low, and what its default number is
 
-rack is the only Ruby corpus, and Ruby is the one backend whose *default*
-settings discard nothing at all: every `#` comment and every `=begin`/`=end`
-embdoc survives, so the default-settings figure — **-9.2% on `o200k_base`,
+rack is the only Ruby corpus, and Ruby is one of the two backends (with Go)
+whose *default* settings discard nothing at all: every `#` comment and every
+`=begin`/`=end` embdoc survives, so the default-settings figure — **-9.2% on `o200k_base`,
 -8.9% on `cl100k_base`** — is genuinely context-lossless, unlike the Rust and
 JavaScript defaults. `--ruby-strip-comments` is the entire
-comments-kept-vs-dropped difference and adds +11.6pp on top, the largest
-comment-stripping delta of any backend on this page. rack is also
+comments-kept-vs-dropped difference and adds +11.6pp on top — the second
+largest of the three measured comment-stripping deltas, behind Go's +13.0pp,
+which is the same structural case. rack is also
 comment-dense rather than prose-dense, which is why the total lands near
 django's. **No Ruby project has been hunted for a ≥40% result**, so this page
 makes **no ≥40% claim for Ruby in either direction**.
@@ -108,6 +112,29 @@ and runs, but its test count varied run to run (1,114 vs 1,120 tests), one of
 its integration tests rewrites the repository's own `Gemfile.lock` mid-run,
 and it randomizes test order, so runs were not comparable to each other — let
 alone across two copies. rack's 1,177 tests are bit-for-bit reproducible.
+
+### Why gin is last, and what its default number is
+
+gin is the only Go corpus, and at **-19.4%** it is the smallest total on this
+page. The reason is `gofmt`. Go source in the wild arrives already
+whitespace-canonical — one tab per nesting level rather than a run of spaces
+(14,008 of gin's 21,590 lines start with a tab; exactly 11 start with a
+space), no trailing whitespace, and consecutive blank lines already collapsed
+to one. On top of that, Go's automatic semicolon insertion makes a line break
+a syntactic token, so the backend removes indentation and blank lines but
+never joins two lines the way the Rust backend does. There is simply less
+whitespace to take.
+
+Its **default-settings figure is -6.4% on `o200k_base`, -6.2% on
+`cl100k_base`** — the lowest on this page, and, like Ruby's and unlike Rust's
+and JavaScript's, genuinely context-lossless: every comment survives, including
+the ones the Go toolchain reads as directives. `--go-strip-comments` is the
+entire comments-kept-vs-dropped difference and adds **+13.0pp** — the largest
+of the three comment-stripping deltas measured (Ruby +11.6pp, JS/TS +8.1pp;
+Rust's `--rs-strip-doc-comments` has no equivalent measurement). Go convention
+puts a doc comment on every exported identifier, so the prose is where gin's
+compressible bulk actually is. **No Go project has been hunted for a ≥40% result**, so this page
+makes **no ≥40% claim for Go in either direction**.
 
 ### Why express is mid-table
 
@@ -169,11 +196,13 @@ would have missed three of Qwen's four. No list exists for Gemma-tokenizer
 models: the official Gemma repos are gated, so its tokenizer is not in the
 benchmark set (maintainer decision, 2026-08-02).
 
-This run covers the nine corpora that existed when it was made. rack, the
-tenth (Ruby), was added later the same day and has **no open-model figures**;
-it reaches -20.8% on `o200k_base`, far below the bar, so it cannot change any
-list above, but no Qwen3.6 / GLM-5.2 / Kimi K3 number should be quoted for
-Ruby until it is re-measured.
+This run covers the nine corpora that existed when it was made. Two are
+missing from it: rack (Ruby), added later the same day, and gin (Go), added
+2026-08-04. **Neither has any open-model figures.** They reach -20.8% and
+-19.4% on `o200k_base`, far below the bar, so neither can change any list
+above — but no Qwen3.6 / GLM-5.2 / Kimi K3 number should be quoted for Ruby
+or for Go until they are re-measured, and the `o200k_base` figure is not a
+substitute: the table above is the evidence that it is not.
 
 ---
 
@@ -201,7 +230,7 @@ Ruby until it is re-measured.
 ### Behavioral verification against upstream test suites
 
 Structural equivalence is not behavioral equivalence, so
-`benchmarks/verify-upstream.sh` runs four projects' own upstream test suites
+`benchmarks/verify-upstream.sh` runs five projects' own upstream test suites
 against a TokenPress-formatted copy and diffs the outcome **per test id**
 against an unformatted baseline copy.
 
@@ -211,6 +240,7 @@ against an unformatted baseline copy.
 | ripgrep 14.1.1 (`cargo test --workspace`) | 98 `.rs` | 98 | 0 | **IDENTICAL after a fix** — 1106 ok / 3 ignored, exit 0 |
 | express v5.2.1 (`mocha`, express's own `npm test` arguments) | 142 `.js` | 141 | 0 | **IDENTICAL** — 1238 passed / 0 failed on both copies, exit 0 |
 | rack v3.2.6 (`rake test:regular` + `rake test:separate`) | 105 Ruby | 103 | 1 | **DIVERGED** — 1 of 2,354 outcomes; 2,348→2,346 passed, 2→4 failed, exit 1 |
+| gin v1.11.0 (`go test -json -count=1 ./...`) | 95 `.go` | 94 | 0 | **IDENTICAL** — 592 passed / 0 failed / 3 skipped on both copies, exit 0 |
 
 All caveats matter:
 
@@ -234,6 +264,18 @@ All caveats matter:
   triage. rack's other 2 failures are a root-user filesystem-permission
   artifact and fail identically on both copies. The rack target needs `ruby`,
   `bundler` and rubygems.org access to run at all.
+* **gin's IDENTICAL verdict is not evidence that Go preserves line numbers.**
+  It does not, and no backend does. Go's `testing` prints `file:line`, and
+  gin's own `recovery.go` builds a stack trace from `runtime.Caller` — the
+  ingredient for exactly rack's divergence is present. What is absent is any
+  gin test that *asserts* on a line number; its recovery tests match the log
+  against the panic message and the test name instead. The class is untested
+  by this corpus, not disproved by it. Note also that 5 of gin's 95 files sit
+  behind build constraints (`appengine`, `nomsgpack`, `jsoniter`, `go_json`,
+  `sonic`) and are formatted but never compiled by the default-tag test run;
+  checked by hand, `go build -tags <t> ./...` exits 0 on both copies for each
+  of the five. The go target needs the Go toolchain and Go module proxy
+  access to run at all.
 * These runs cover **default settings only**. The aggressive flags on this
   page are not covered by that harness — stripping doc comments would delete
   the doc tests being compared.
@@ -256,6 +298,7 @@ each removes information from the source:
 | `--rs-strip-doc-comments` | Rust `///` and `//!` doc comments, and with them rustdoc and doctests |
 | `--js-strip-comments` | the JS/TS comments that survive re-emission at all — leading statement-level comments, jsdoc, annotation comments (`#__PURE__`) and legal comments (`//!`, `/*!`, `@license`, `@preserve`) |
 | `--ruby-strip-comments` | Ruby `#` comments and `=begin`/`=end` embdocs — all of them, this being the only Ruby lever. The shebang and the leading magic-comment window (`# frozen_string_literal: true` and friends) survive, being semantic rather than prose |
+| `--go-strip-comments` | Go `//` and `/* */` comments — all of them, this being the only Go lever. The comments the toolchain reads as directives (`//go:` lines, `/*line*/`, build constraints and the cgo preamble) survive, being semantic rather than prose |
 
 **Token savings are not free context.** Every comment and docstring stripped
 above is prose the model can no longer read. Whether that degrades the quality
@@ -292,8 +335,8 @@ with no TypeScript and no JSX, so **nothing on this page measures the
 less than -25.4%.
 
 **Ruby keeps every comment at default settings — but no backend keeps line
-numbers.** Ruby is the one language on this page whose default settings
-discard nothing: comments and embdocs all survive, so rack's default `-9.2%`
+numbers.** Ruby is one of the two languages on this page (with Go) whose
+default settings discard nothing: comments and embdocs all survive, so rack's default `-9.2%`
 is context-lossless and `--ruby-strip-comments` is a pure opt-in. What Ruby
 shares with every other backend is that removing blank lines and indentation
 **moves every line below the removal**, so `__LINE__`, `caller` and backtraces
@@ -305,6 +348,21 @@ that particular file the deleted blank line saved **zero tokens** (35 before,
 35 after at `o200k_base`), because a blank line and a plain newline cost the
 same one token. If your code, your tests or your tooling depend on line
 numbers, TokenPress output is not a drop-in replacement for the original.
+Go is in exactly the same position, and its upstream run does *not* clear it:
+gin's suite is IDENTICAL only because nothing in it asserts on a line number,
+not because Go output keeps them.
+
+**Go keeps every comment at default settings, and the number is low because
+`gofmt` got there first.** Go is the second language on this page whose
+default settings discard nothing. Its -6.4% default is the smallest on the
+page, and that is a fact about Go's culture rather than about the backend:
+`gofmt` has already reduced the file to one tab per nesting level, no trailing
+whitespace and no runs of blank lines before TokenPress ever sees it, and Go's
+automatic semicolon insertion means the line breaks can never be joined away
+the way Rust's are. What remains compressible is the prose, which is why
+`--go-strip-comments` moves gin further (+13.0pp) than
+`--ruby-strip-comments` moves rack (+11.6pp) or `--js-strip-comments` moves
+express (+8.1pp).
 
 **Ruby has known over-refusal classes, and one of them fires on rack.** Two
 shapes make the Ruby verifier reject a rewrite that was in fact harmless — a
@@ -341,11 +399,11 @@ CRLF, which raises the before-counts (requests: 86,331 LF vs 86,922 CRLF at
 aggressive table — the flag set is unchanged. Converting the LF checkout back
 to CRLF reproduces the historical numbers exactly.
 
-**Ten corpora is not a population.** These are the repositories measured,
+**Eleven corpora is not a population.** These are the repositories measured,
 not a sample chosen to be representative. Savings depend heavily on how much
-of a tree is prose documentation. JavaScript and Ruby are each represented by
-exactly one project, so `-25.4%` and `-20.8%` are data points, not
-language-level expectations.
+of a tree is prose documentation. JavaScript, Ruby and Go are each represented
+by exactly one project, so `-25.4%`, `-20.8%` and `-19.4%` are data points,
+not language-level expectations.
 
 ---
 
@@ -379,6 +437,11 @@ find benchmarks/corpus/rack -not -path '*/.git/*' \
     xargs -0 target/release/tokenpress stats --tokenizer o200k_base \
         --ruby-strip-comments
 
+# Go corpus - the pin holds no file of any other supported language, so the
+# tree can be passed directly
+target/release/tokenpress stats benchmarks/corpus/gin --tokenizer o200k_base \
+    --go-strip-comments
+
 # Mixed tree
 target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
     --py-strip-comments --py-strip-annotations --py-strip-docstrings \
@@ -388,9 +451,11 @@ target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
 
 # upstream behavioral check (default settings)
 # express additionally needs node, npm and npm registry access; rack needs
-# ruby, bundler and rubygems.org access
+# ruby, bundler and rubygems.org access; go needs the Go toolchain and Go
+# module proxy access
 ./benchmarks/verify-upstream.sh all   # 0 = identical, 1 = diverged, 2 = never ran
-# this currently exits 1: the rack target diverges on the __LINE__ test above
+# this currently exits 1: the rack target diverges on the __LINE__ test above.
+# the go target on its own exits 0.
 ```
 
 `fetch.sh` exits non-zero at the tokenizer-download step when huggingface.co

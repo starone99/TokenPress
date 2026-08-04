@@ -7,7 +7,7 @@
 # settings, and runs the project's real test suite against both. The run only
 # succeeds if every test reaches the same outcome on both copies.
 #
-# Usage: verify-upstream.sh <requests|ripgrep|express|rack|all>
+# Usage: verify-upstream.sh <requests|ripgrep|express|rack|go|all>
 #
 # Exit codes: 0 = outcomes identical, 1 = outcomes diverged, 2 = usage or
 # infrastructure error (the comparison never ran).
@@ -36,6 +36,13 @@ express_sha="dbac741a49a5a64336b70c06e85c2e2706e36336"
 rack_tag="v3.2.6"
 rack_sha="e1f22fdbe99afd2126b6fbf05bb12399359574b7"
 
+# Same pin as fetch.sh (gin-gonic/gin v1.11.0), asserted the same way. The
+# target is spelled `go` rather than `gin`; the corpus directory, the pin
+# variables and the work-directory names all keep the project name, so a second
+# Go corpus can be added later without renaming anything.
+gin_tag="v1.11.0"
+gin_sha="6ad6205e9c94a4b8a320219e28c37c29d22a7a2c"
+
 work_dir=""
 cleanup() {
     status=$?
@@ -62,7 +69,9 @@ targets:
              suite (needs node, npm and npm registry access)
   rack       rack/rack v3.2.6 - the same comparison against its minitest suite
              (needs ruby, bundler and rubygems.org access)
-  all        every target (requests, ripgrep, express, then rack)
+  go         gin-gonic/gin v1.11.0 - the same comparison against its `go test`
+             suite (needs the go toolchain and Go module proxy access)
+  all        every target (requests, ripgrep, express, rack, then go)
 EOF
 }
 
@@ -137,6 +146,22 @@ ensure_rack_corpus() {
         die "corpus $dest is at $head, expected the pinned $rack_sha"
     fi
     echo "corpus: rack/rack $rack_tag ($rack_sha)"
+}
+
+# The same for the pinned gin corpus.
+ensure_gin_corpus() {
+    local dest="$corpus/gin"
+    if [ ! -e "$dest" ]; then
+        mkdir -p "$corpus"
+        git clone --quiet --depth 1 --branch "$gin_tag" \
+            https://github.com/gin-gonic/gin "$dest"
+    fi
+    local head
+    head="$(git -C "$dest" rev-parse HEAD)"
+    if [ "$head" != "$gin_sha" ]; then
+        die "corpus $dest is at $head, expected the pinned $gin_sha"
+    fi
+    echo "corpus: gin-gonic/gin $gin_tag ($gin_sha)"
 }
 
 # --- helpers ----------------------------------------------------------------
@@ -870,6 +895,249 @@ verify_rack() {
     return 1
 }
 
+# --- go ---------------------------------------------------------------------
+
+# Writes the `go test -json` event reducer into $1 and echoes its path.
+#
+# Why -json rather than the console output: `go test` prints "--- PASS: Name"
+# lines, but a package that runs tests in parallel interleaves the output of
+# several tests between a test's start and its result line, and subtest results
+# are indented under their parent. Reconstructing per-test outcomes from that
+# text is the fragile exercise the ripgrep target has to do for libtest, which
+# has no machine-readable mode. `go test` does have one, and it emits exactly
+# one terminal event per test, whatever the concurrency - so it is used.
+#
+# The reducer is a Go program, run with `go run`. The go target already
+# requires the Go toolchain, so this adds no prerequisite it did not have, the
+# same reasoning the express target uses for parsing its report with node. It
+# only imports the standard library, so `go run` needs no network and no
+# module: it is compiled as a command-line-arguments package.
+#
+# Rows are "outcome<TAB>package<TAB>test id". Events with no Test field are the
+# package's own verdict and are kept under the id "<package>" - an import path
+# can never be that string, so the two cannot collide. Keeping them matters:
+# a package that fails to build, or whose binary panics before any test
+# reports, produces a package-level fail and no test rows at all, and that has
+# to show up as a difference rather than as silence.
+write_go_reducer() {
+    local dir="$1"
+    mkdir -p "$dir" || die "cannot create the go reducer directory $dir"
+    cat >"$dir/reduce.go" <<'GO'
+// Reduces a `go test -json` event stream into "outcome<TAB>package<TAB>test"
+// rows, one per terminal event. Usage: go run reduce.go <events.json>
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+type event struct {
+	Action  string `json:"Action"`
+	Package string `json:"Package"`
+	Test    string `json:"Test"`
+}
+
+func main() {
+	if len(os.Args) != 2 {
+		fmt.Fprintln(os.Stderr, "usage: reduce.go <events.json>")
+		os.Exit(2)
+	}
+	file, err := os.Open(os.Args[1])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	defer file.Close()
+
+	out := bufio.NewWriter(os.Stdout)
+	lines := bufio.NewScanner(file)
+	// Test output is echoed into the stream verbatim, so a single event can be
+	// far longer than the default 64 KiB token limit.
+	lines.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for lines.Scan() {
+		var ev event
+		// `go test -json` can interleave non-JSON lines (a toolchain message
+		// on stderr, for instance). They carry no outcome, so they are
+		// skipped rather than treated as a parse failure.
+		if json.Unmarshal(lines.Bytes(), &ev) != nil {
+			continue
+		}
+		switch ev.Action {
+		case "pass", "fail", "skip":
+		default:
+			continue
+		}
+		test := ev.Test
+		if test == "" {
+			test = "<package>"
+		}
+		fmt.Fprintf(out, "%s\t%s\t%s\n", ev.Action, ev.Package, test)
+	}
+	if err := lines.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	// Flushed explicitly, and its error checked: a silently truncated listing
+	// would be a wrong answer rather than a missing one.
+	if err := out.Flush(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+}
+GO
+    echo "$dir/reduce.go"
+}
+
+# Runs the upstream Go suite in $1, its event stream to $2 and any toolchain
+# diagnostics to $3. $4 is "baseline" or "formatted" and only decides how a
+# build failure is reported. $5 is the build cache shared by both runs.
+#
+# Isolation, mirroring the other runners:
+#   * a private TMPDIR per run, because parts of the suite write fixture files
+#     under the temp directory;
+#   * `-count=1`, which disables Go's test result cache, so neither run can be
+#     answered from a cached verdict;
+#   * a GOCACHE inside the work directory, so the user's build cache is never
+#     written to. Unlike cargo's target directory this one is *shared* by both
+#     runs on purpose: Go's build cache is content-addressed, so a hit implies
+#     byte-identical inputs and cannot carry one run's artifacts into the
+#     other, while sharing it means the dependencies are compiled once;
+#   * the proxy environment variables of the calling shell are dropped, exactly
+#     as for requests and rack: the suite drives ephemeral localhost servers
+#     and Go's http client honours HTTP(S)_PROXY, so an inherited proxy would
+#     fail tests for reasons that have nothing to do with formatting. The
+#     module download above happens before this and keeps the proxy.
+#
+# Failing tests are the thing being measured, so a non-zero exit is expected.
+# `go test` reports a failing test and a package that does not build with the
+# same exit code, so a build failure is detected from the stream instead: it
+# emits `FAIL <pkg> [build failed]` as an output event and no test rows for
+# that package. Matching on the marker is a heuristic - a test that printed the
+# same text would trip it - but it errs in the safe direction only: on the
+# baseline it aborts the comparison, on the formatted copy it reports a
+# divergence. It can never turn a real difference into an IDENTICAL verdict.
+run_go_test() {
+    local dir="$1" events="$2" log="$3" role="$4" gocache="$5"
+    local tmp="$log.tmpdir"
+    mkdir -p "$tmp" || die "cannot create the run directory for $log"
+    local rc=0
+    (
+        cd "$dir"
+        env -u http_proxy -u https_proxy -u all_proxy -u no_proxy \
+            -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
+            TMPDIR="$tmp" GOCACHE="$gocache" \
+            go test -json -count=1 ./...
+    ) >"$events" 2>"$log" || rc=$?
+    if grep -q '\[build failed\]\|\[setup failed\]' "$events"; then
+        tail -n 30 "$log" >&2
+        if [ "$role" = "baseline" ]; then
+            die "the unformatted copy does not build, so nothing can be compared"
+        fi
+        # A formatted copy that no longer builds is the strongest divergence
+        # there is, but the packages that failed yield no per-test outcomes to
+        # diff, so it is called out here rather than left to the caller.
+        echo "verdict: DIVERGED - the formatted copy no longer builds"
+        exit 1
+    fi
+    if [ ! -s "$events" ]; then
+        tail -n 30 "$log" >&2
+        die "go test exited $rc in $dir without emitting any events (it never produced a comparable result)"
+    fi
+}
+
+verify_go() {
+    ensure_gin_corpus
+
+    local tokenpress
+    tokenpress="$(build_tokenpress)"
+
+    local baseline="$work_dir/gin-baseline"
+    local formatted="$work_dir/gin-formatted"
+    cp -a "$corpus/gin" "$baseline" || die "cannot copy the gin corpus"
+    cp -a "$corpus/gin" "$formatted" || die "cannot copy the gin corpus"
+
+    # Default settings only - no --go-strip-comments. Like Ruby and unlike Rust
+    # and JS/TS, the Go backend drops nothing at this level: every comment
+    # survives and the rewrite is whitespace only. The whole tree is handed to
+    # the formatter rather than an explicit file list, because this pin holds
+    # no file of any other language TokenPress claims - no `.js`, `.py`, `.rs`
+    # or Ruby path anywhere - so nothing can be misrouted to another backend.
+    local format_log="$work_dir/gin-format.log"
+    local rc=0
+    "$tokenpress" format "$formatted" >"$format_log" 2>&1 || rc=$?
+    local refused
+    refused="$(grep -c '^error: ' "$format_log" || true)"
+    if [ "$rc" -ne 0 ] && [ "$refused" -eq 0 ]; then
+        tail -n 30 "$format_log" >&2
+        die "tokenpress format exited $rc"
+    fi
+    local changed
+    changed="$(git -C "$formatted" status --porcelain | wc -l)"
+    # -type f is deliberate: Go's own tree contains a *directory* named
+    # `not_a_file.go`, so a bare -name test is not a file count anywhere in
+    # this project.
+    local total
+    total="$(find "$formatted" -type f -name '*.go' -not -path '*/.git/*' | wc -l)"
+
+    # Warmed once, from the unformatted copy, with the calling shell's proxy
+    # settings intact - the test runs below drop them. Formatting never touches
+    # go.mod or go.sum, so both copies resolve to the same module versions;
+    # go.sum additionally pins each one by content hash, so the two runs share
+    # provably identical dependencies without any of the copying the express
+    # and rack targets need.
+    (cd "$baseline" && go mod download) ||
+        die "go mod download failed - the go target needs Go module proxy access"
+
+    local gocache="$work_dir/gin-gocache"
+    mkdir -p "$gocache" || die "cannot create the shared build cache $gocache"
+
+    run_go_test "$baseline" "$work_dir/gin-baseline.json" \
+        "$work_dir/gin-baseline.log" baseline "$gocache"
+    run_go_test "$formatted" "$work_dir/gin-formatted.json" \
+        "$work_dir/gin-formatted.log" formatted "$gocache"
+
+    local reducer
+    reducer="$(write_go_reducer "$work_dir/gin-reducer")"
+    # Reduced first, sorted second: a pipeline would hide a failing reducer
+    # behind sort's exit status, and an empty listing would then read as "no
+    # tests" instead of "the reduction never ran".
+    local side
+    for side in baseline formatted; do
+        (cd "$work_dir" && env GOCACHE="$gocache" go run "$reducer" \
+            "$work_dir/gin-$side.json") >"$work_dir/gin-$side.rows" ||
+            die "cannot reduce the $side event stream"
+        sort "$work_dir/gin-$side.rows" >"$work_dir/gin-$side.outcomes" ||
+            die "cannot sort the $side outcomes"
+    done
+    if [ ! -s "$work_dir/gin-baseline.outcomes" ]; then
+        die "no test results were parsed from the baseline run"
+    fi
+
+    echo
+    echo "gin $gin_tag"
+    echo "  .go files          $total"
+    echo "  rewritten          $changed"
+    echo "  refused by verify  $refused"
+    echo "  unchanged          $((total - changed - refused))"
+    echo "baseline outcomes:"
+    tally "$work_dir/gin-baseline.outcomes"
+    echo "formatted outcomes:"
+    tally "$work_dir/gin-formatted.outcomes"
+
+    if diff -u "$work_dir/gin-baseline.outcomes" \
+        "$work_dir/gin-formatted.outcomes" \
+        >"$work_dir/gin-outcomes.diff"; then
+        echo "verdict: IDENTICAL - every test reached the same outcome on both copies"
+        return 0
+    fi
+    echo "verdict: DIVERGED - the formatted copy behaves differently:"
+    sed 's/^/  /' "$work_dir/gin-outcomes.diff"
+    return 1
+}
+
 # --- main -------------------------------------------------------------------
 
 main() {
@@ -882,7 +1150,7 @@ main() {
         usage
         exit 0
         ;;
-    requests | ripgrep | express | rack | all) ;;
+    requests | ripgrep | express | rack | go | all) ;;
     *)
         usage
         exit 2
@@ -908,6 +1176,11 @@ main() {
         command -v bundle >/dev/null || die "bundler is required for the rack target"
         ;;
     esac
+    case "$1" in
+    go | all)
+        command -v go >/dev/null || die "the go toolchain is required for the go target"
+        ;;
+    esac
     work_dir="$(mktemp -d "${TMPDIR:-/tmp}/tokenpress-verify-XXXXXX")"
 
     # A target returns 1 when the outcomes diverged; that is a result, not an
@@ -920,11 +1193,13 @@ main() {
     ripgrep) verify_ripgrep || diverged=1 ;;
     express) verify_express || diverged=1 ;;
     rack) verify_rack || diverged=1 ;;
+    go) verify_go || diverged=1 ;;
     all)
         verify_requests || diverged=1
         verify_ripgrep || diverged=1
         verify_express || diverged=1
         verify_rack || diverged=1
+        verify_go || diverged=1
         ;;
     esac
     return "$diverged"
