@@ -80,39 +80,42 @@ fi
 
 rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
 
-# Go's grammar is C, and wasm32-unknown-unknown ships no libc headers, so
-# `tree-sitter-go`'s `src/parser.c` cannot find <stdlib.h> on its own.
+# Every tree-sitter grammar in this bundle is C (Go's and Java's today), and
+# wasm32-unknown-unknown ships no libc headers, so a grammar's generated
+# `src/parser.c` cannot find <stdlib.h> on its own.
 #
 # The shim already exists: `tree-sitter-language` ships one under wasm/include
 # (headers) and wasm/src (stdio.c, stdlib.c, string.c) and advertises both
 # paths as `links` metadata (DEP_TREE_SITTER_LANGUAGE_WASM_HEADERS /
 # ..._WASM_SRC). The `tree-sitter` runtime's own build script reads that
 # metadata, which is why the runtime builds for wasm *and* compiles the shim's
-# .c files into the link. Upstream `tree-sitter-go`'s build script does not
-# read it — it just compiles src/parser.c with `include("src")` — and that gap
-# is the whole failure. Putting the shim's headers on the C include path is
-# enough: cc-rs honours CFLAGS_<target>, parser.c then compiles, and the
-# symbols resolve against the shim objects the runtime already contributes.
+# .c files into the link. The upstream grammar build scripts do not read it —
+# they just compile src/parser.c with `include("src")` — and that gap is the
+# whole failure. Putting the shim's headers on the C include path is enough:
+# cc-rs honours CFLAGS_<target>, parser.c then compiles, and the symbols
+# resolve against the shim objects the runtime already contributes. This is a
+# general facility, not a per-grammar workaround: Java was added with no
+# build-script change and no second export.
 #
 # Do not delete this: without it the build dies with
 # `src/tree_sitter/parser.h:10:10: fatal error: 'stdlib.h' file not found`.
 # The path is discovered from `cargo metadata` rather than hardcoded, because
 # the registry checkout directory carries a hash that varies by machine.
 if ! command -v jq >/dev/null 2>&1; then
-    echo "error: jq is required to locate the wasm libc shim the Go grammar needs" >&2
+    echo "error: jq is required to locate the wasm libc shim the C grammars need" >&2
     exit 1
 fi
 ts_language_manifest="$(cargo metadata --format-version 1 |
     jq -r 'first(.packages[] | select(.name == "tree-sitter-language") | .manifest_path) // empty')"
 if [ -z "$ts_language_manifest" ]; then
     echo "error: no tree-sitter-language package in cargo metadata" >&2
-    echo "       it is what ships the wasm libc shim the Go grammar needs" >&2
+    echo "       it is what ships the wasm libc shim the C grammars need" >&2
     exit 1
 fi
 ts_wasm_include="$(dirname "$ts_language_manifest")/wasm/include"
 if [ ! -d "$ts_wasm_include" ]; then
     echo "error: no wasm libc shim headers at $ts_wasm_include" >&2
-    echo "       tree-sitter-language changed its layout; the Go grammar" >&2
+    echo "       tree-sitter-language changed its layout; the C grammars" >&2
     echo "       cannot be compiled for wasm32-unknown-unknown without them" >&2
     exit 1
 fi

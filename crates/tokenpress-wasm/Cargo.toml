@@ -1,6 +1,6 @@
 [package]
 name = "tokenpress-wasm"
-description = "WebAssembly bindings for TokenPress: the Python, Rust, JavaScript/TypeScript and Go formatters behind a thin wasm-bindgen boundary"
+description = "WebAssembly bindings for TokenPress: the Python, Rust, JavaScript/TypeScript, Go and Java formatters behind a thin wasm-bindgen boundary"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -27,6 +27,11 @@ tokenpress-js = { path = "../tokenpress-js", default-features = false }
 # `tree-sitter-go`'s build script does not read the `DEP_TREE_SITTER_LANGUAGE_*`
 # metadata that would put them there. site/build.sh exports the CFLAGS that do.
 tokenpress-go = { path = "../tokenpress-go", default-features = false }
+# Java's C grammar builds for wasm32-unknown-unknown under the very same
+# export, with no build-script change of its own: the CFLAGS site/build.sh
+# sets are a general facility for the shared tree-sitter engine's grammars,
+# not a Go workaround. Measured — see the J6(b) entry in ROADMAP.md.
+tokenpress-java = { path = "../tokenpress-java", default-features = false }
 wasm-bindgen.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

@@ -1,10 +1,11 @@
 //! WebAssembly bindings for TokenPress.
 //!
-//! The Python, Rust, JavaScript/TypeScript and Go formatters are exposed. Each
-//! `#[wasm_bindgen]` export ([`format_python_json`], [`format_rust_json`],
-//! [`format_js_json`], [`format_go_json`]) is a JSON-in/JSON-out delegation;
-//! every decision lives in the plain functions below, so the whole crate is
-//! exercised — and covered — by ordinary host tests.
+//! The Python, Rust, JavaScript/TypeScript, Go and Java formatters are
+//! exposed. Each `#[wasm_bindgen]` export ([`format_python_json`],
+//! [`format_rust_json`], [`format_js_json`], [`format_go_json`],
+//! [`format_java_json`]) is a JSON-in/JSON-out delegation; every decision
+//! lives in the plain functions below, so the whole crate is exercised — and
+//! covered — by ordinary host tests.
 //!
 //! The core invariant is preserved across the boundary: when a formatter
 //! refuses output (parse failure, or output that fails verification) the
@@ -34,6 +35,20 @@
 //! would start obeying it), a build-constraint prologue is reproduced verbatim
 //! (blank lines included), and a file that imports `"C"` is left byte for byte
 //! identical and so reports no savings at all.
+//!
+//! Java's caveat set is the same shape as Go's with **less to defend**. The
+//! defaults are context-lossless in the same way — every comment survives
+//! byte for byte, whitespace only is minimized — and
+//! [`WasmJavaOptions::strip_comments`] is the lossy opt-in. But `javac` reads
+//! nothing out of a comment, so there is no keep-list: the opt-in deletes
+//! **every** comment including Javadoc, which is an ordinary block comment to
+//! the grammar. There is likewise no promotion rule and no verbatim prologue,
+//! because Java has no column-sensitive comment syntax and no file-header
+//! construct that reaches the compiler. One unconditional rule remains, the
+//! analogue of Go's cgo bail-out: `javac` decodes a `\uXXXX` escape before
+//! lexing (JLS 3.3) and tree-sitter-java does not, so a file where that
+//! asymmetry could bite is left byte for byte identical at both settings and
+//! reports no savings at all.
 
 use std::path::Path;
 
@@ -42,6 +57,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tokenpress_core::{Error, FormatOptions, FormatResult, Formatter, TokenizerKind, VerifyLevel};
 use tokenpress_go::{GoFormatter, GoOptions};
+use tokenpress_java::{JavaFormatter, JavaOptions};
 use tokenpress_js::{JsFormatter, JsOptions};
 use tokenpress_python::{PythonFormatter, PythonOptions};
 use tokenpress_rust::{RustFormatter, RustOptions};
@@ -59,8 +75,9 @@ const REPORTED_TOKENIZERS: [(&str, TokenizerKind); 2] = [
 ///
 /// It must never become [`VerifyLevel::External`]: that level runs the
 /// language's own toolchain in a child process (`tsc --noEmit`, falling back
-/// to `node --check`, for JavaScript/TypeScript; `gofmt -e` for Go), and a
-/// wasm module cannot spawn processes — every call would fail.
+/// to `node --check`, for JavaScript/TypeScript; `gofmt -e` for Go; `javac`
+/// stopped after its parse phase for Java), and a wasm module cannot spawn
+/// processes — every call would fail.
 /// [`VerifyLevel::AstEquiv`] is the strongest level that is purely
 /// in-process: the output is re-parsed and compared with the input for
 /// equivalence.
@@ -225,6 +242,31 @@ impl Default for WasmGoOptions {
 
 impl From<&WasmGoOptions> for GoOptions {
     fn from(options: &WasmGoOptions) -> Self {
+        Self {
+            strip_comments: options.strip_comments,
+        }
+    }
+}
+
+/// Java formatting flags accepted at the boundary.
+///
+/// Deserialized like [`WasmPythonOptions`]: every field optional, unknown
+/// fields rejected.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WasmJavaOptions {
+    pub strip_comments: bool,
+}
+
+impl Default for WasmJavaOptions {
+    fn default() -> Self {
+        let JavaOptions { strip_comments } = JavaOptions::default();
+        Self { strip_comments }
+    }
+}
+
+impl From<&WasmJavaOptions> for JavaOptions {
+    fn from(options: &WasmJavaOptions) -> Self {
         Self {
             strip_comments: options.strip_comments,
         }
@@ -420,6 +462,15 @@ pub fn format_go(source: &str, options: &WasmGoOptions) -> Result<WasmFormatOutp
     )
 }
 
+/// Formats Java source with the given flags.
+pub fn format_java(source: &str, options: &WasmJavaOptions) -> Result<WasmFormatOutput, WasmError> {
+    run(
+        &JavaFormatter::new(options.into()),
+        Path::new("Input.java"),
+        source,
+    )
+}
+
 /// Renders either outcome as the JSON the JavaScript side sees.
 fn to_json_result(outcome: Result<WasmFormatOutput, WasmError>) -> Result<String, String> {
     match outcome {
@@ -506,6 +557,35 @@ pub fn format_go_json(source: &str, options_json: &str) -> Result<String, String
     to_json_result(parse_options(options_json).and_then(|options| format_go(source, &options)))
 }
 
+/// Formats Java source.
+///
+/// `options_json` is a JSON object with the optional boolean flag
+/// `strip_comments`; pass `"{}"` for the defaults. Resolves and rejects
+/// exactly like [`format_python_json`].
+///
+/// Verification is **internal only** — re-parse plus AST equivalence. A wasm
+/// module cannot spawn processes, so the external level (`javac` stopped
+/// after its parse phase, which the CLI offers as `--verify external`) is not
+/// available here and is never used; see [`VERIFY`].
+///
+/// Comments: at the defaults the output is comment-preserving — every comment
+/// survives byte for byte, trailing and inline ones included, and only
+/// whitespace is minimized. `strip_comments` is the lossy opt-in, and unlike
+/// Go's it keeps nothing back: `javac` reads nothing out of a comment, so
+/// there is no keep-list, and the Javadoc blocks a file carries are deleted
+/// with every other comment. Whichever setting is chosen, a file whose
+/// comments carry a unicode escape that could decode into a comment marker is
+/// left byte for byte identical and reports no savings at all.
+///
+/// The Javadoc and block comment markers are spelled out in words rather than
+/// shown, on purpose: `wasm-bindgen` copies this text into a JSDoc block in
+/// the generated glue, and a literal comment terminator inside it would close
+/// that block early and emit unparsable JavaScript. See the guard test.
+#[wasm_bindgen(js_name = formatJava)]
+pub fn format_java_json(source: &str, options_json: &str) -> Result<String, String> {
+    to_json_result(parse_options(options_json).and_then(|options| format_java(source, &options)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,6 +605,10 @@ mod tests {
 
     fn format_go_ok(source: &str, options: WasmGoOptions) -> WasmFormatOutput {
         format_go(source, &options).expect("formatting succeeds")
+    }
+
+    fn format_java_ok(source: &str, options: WasmJavaOptions) -> WasmFormatOutput {
+        format_java(source, &options).expect("formatting succeeds")
     }
 
     fn js_dialect(dialect: WasmJsDialect) -> WasmJsOptions {
@@ -693,6 +777,11 @@ mod tests {
                 "{}",
             )
             .expect("formatting succeeds"),
+            format_java_json(
+                "class A {\n    int f() {\n        return 1;\n    }\n}\n",
+                "{}",
+            )
+            .expect("formatting succeeds"),
         ] {
             let value = parsed(&json);
             for name in ["o200k_base", "cl100k_base"] {
@@ -742,6 +831,9 @@ mod tests {
         let go_options = WasmGoOptions::default();
         assert!(format!("{:?}", go_options.clone()).contains("strip_comments"));
         assert!(!go_options.strip_comments);
+        let java_options = WasmJavaOptions::default();
+        assert!(format!("{:?}", java_options.clone()).contains("strip_comments"));
+        assert!(!java_options.strip_comments);
         let output = WasmFormatOutput {
             code: "x=1".into(),
             changed: true,
@@ -866,6 +958,10 @@ mod tests {
                 "package main\n\nfunc f() {\n    g(a, b)\n}\n",
                 WasmGoOptions::default(),
             ),
+            format_java_ok(
+                "class A {\n    void f() {\n        g(a, b);\n    }\n}\n",
+                WasmJavaOptions::default(),
+            ),
         ] {
             let names: Vec<_> = out.tokens.iter().map(|stats| stats.tokenizer).collect();
             assert_eq!(names, ["o200k_base", "cl100k_base"]);
@@ -879,11 +975,14 @@ mod tests {
         let js = "function add(a, b) {\n    const sum = a + b;\n    return sum;\n}\n";
         let go =
             "package main\n\nfunc add(a int, b int) int {\n    sum := a + b\n    return sum\n}\n";
+        let java =
+            "class A {\n    int add(int a, int b) {\n        int sum = a + b;\n        return sum;\n    }\n}\n";
         for (source, out) in [
             (python, format(python, WasmPythonOptions::default())),
             (rust, format_rs(rust, WasmRustOptions::default())),
             (js, format_js_ok(js, WasmJsOptions::default())),
             (go, format_go_ok(go, WasmGoOptions::default())),
+            (java, format_java_ok(java, WasmJavaOptions::default())),
         ] {
             for (name, kind) in [
                 ("o200k_base", TokenizerKind::O200kBase),
@@ -908,6 +1007,7 @@ mod tests {
             format_rs("", WasmRustOptions::default()),
             format_js_ok("", WasmJsOptions::default()),
             format_go_ok("", WasmGoOptions::default()),
+            format_java_ok("", WasmJavaOptions::default()),
         ] {
             assert_eq!(out.code, "");
             assert!(!out.changed);
@@ -1187,7 +1287,9 @@ mod tests {
         // parse in the browser — a break `cargo build`, `cargo test` and
         // clippy all wave through, because the Rust side of it is fine. Go's
         // comment policy is the natural place to write one (its `line`
-        // directive has a block-comment form), so this is guarded rather than
+        // directive has a block-comment form), and Java's is a worse one
+        // still (Javadoc *is* a block comment, and is exactly what the
+        // strip-comments flag deletes), so this is guarded rather than
         // remembered.
         assert_eq!(
             doc_lines_closing_a_comment_block(include_str!("lib.rs")),
@@ -1309,6 +1411,157 @@ mod tests {
         for options in ["", "{\"nope\":true}", "{\"strip_comments\":\"yes\"}"] {
             let err = format_go_json("package main\nfunc f(){}\n", options)
                 .expect_err("bad options are refused");
+            assert!(
+                err.starts_with("{\"kind\":\"options\",\"message\":\""),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn java_default_options_minimize_whitespace_and_keep_every_comment() {
+        let out = format_java_ok(
+            "class A {\n    // leading\n    int x = 1; // trailing\n\n    /* inline */ int y = 2;\n}\n",
+            WasmJavaOptions::default(),
+        );
+        // Like Go and unlike Rust and JS/TS, nothing is dropped at the
+        // defaults: the trailing and inline comments survive with the leading
+        // one, and only whitespace is minimized.
+        assert_eq!(
+            out.code,
+            "class A {\n// leading\nint x = 1; // trailing\n/* inline */ int y = 2;\n}\n"
+        );
+        assert!(out.changed);
+    }
+
+    #[test]
+    fn java_already_minimal_source_is_reported_as_unchanged() {
+        let out = format_java_ok("class A {\nint x = 1;\n}\n", WasmJavaOptions::default());
+        assert_eq!(out.code, "class A {\nint x = 1;\n}\n");
+        assert!(!out.changed);
+    }
+
+    #[test]
+    fn java_strip_comments_toggles_comment_removal() {
+        let source = "class A {\n    // note\n    int x = 1;\n}\n";
+        assert_eq!(
+            format_java_ok(source, WasmJavaOptions::default()).code,
+            "class A {\n// note\nint x = 1;\n}\n"
+        );
+        assert_eq!(
+            format_java_ok(
+                source,
+                WasmJavaOptions {
+                    strip_comments: true
+                }
+            )
+            .code,
+            "class A {\nint x = 1;\n}\n"
+        );
+    }
+
+    #[test]
+    fn java_strip_comments_deletes_javadoc_with_every_other_comment() {
+        // Where Go's opt-in keeps a toolchain keep-list, Java's keeps nothing:
+        // `javac` reads nothing out of a comment, and a Javadoc block is an
+        // ordinary block comment to the grammar. Pinned at the boundary
+        // because it is the one consequence of the flag a demo user meets.
+        let source =
+            "/**\n * The class.\n */\nclass A {\n    /** The field. */\n    int x = 1;\n}\n";
+        assert_eq!(
+            format_java_ok(source, WasmJavaOptions::default()).code,
+            "/**\n * The class.\n */\nclass A {\n/** The field. */\nint x = 1;\n}\n"
+        );
+        assert_eq!(
+            format_java_ok(
+                source,
+                WasmJavaOptions {
+                    strip_comments: true
+                }
+            )
+            .code,
+            "class A {\nint x = 1;\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_java_escape_hazard_file_is_untouched_and_reports_no_savings() {
+        // Java's one unconditional rule, the analogue of Go's cgo bail-out:
+        // `javac` decodes a unicode escape before lexing and the grammar does
+        // not, so a file where that could bite is left byte for byte
+        // identical at both settings.
+        let source = "class A {\nint x = 1; // c \\u000A int y = 2;\nint z = 3;\n}\n";
+        for options in [
+            WasmJavaOptions::default(),
+            WasmJavaOptions {
+                strip_comments: true,
+            },
+        ] {
+            let out = format_java_ok(source, options);
+            assert_eq!(out.code, source);
+            assert!(!out.changed);
+            for stats in &out.tokens {
+                assert_eq!(stats.saved, 0);
+                assert_eq!(stats.saving_ratio, 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_java_returns_a_structured_error_and_no_output() {
+        let err = format_java("class A {{{", &WasmJavaOptions::default())
+            .expect_err("invalid Java cannot be formatted");
+        assert_eq!(err.kind, "parse");
+        assert!(!err.message.is_empty());
+        // As for the other languages: a refusal carries no code at all.
+        assert_eq!(
+            err.to_json(),
+            format!(
+                "{{\"kind\":\"parse\",\"message\":{}}}",
+                serde_json::Value::from(err.message.clone())
+            )
+        );
+    }
+
+    #[test]
+    fn json_boundary_formats_java() {
+        let json = format_java_json("class  A  {\n    int x = 1;\n}\n", "{}")
+            .expect("formatting succeeds");
+        let value = parsed(&json);
+        assert_eq!(value["changed"], serde_json::json!(true));
+        assert_eq!(
+            value["code"],
+            serde_json::json!("class A {\nint x = 1;\n}\n")
+        );
+    }
+
+    #[test]
+    fn json_boundary_reads_java_option_flags() {
+        let json = format_java_json(
+            "class A {\n    // note\n    int x = 1;\n}\n",
+            "{\"strip_comments\":true}",
+        )
+        .expect("formatting succeeds");
+        assert_eq!(
+            parsed(&json)["code"],
+            serde_json::json!("class A {\nint x = 1;\n}\n")
+        );
+    }
+
+    #[test]
+    fn json_boundary_reports_java_failures_as_structured_json() {
+        let err = format_java_json("class A {{{", "{}").expect_err("invalid Java is refused");
+        assert!(
+            err.starts_with("{\"kind\":\"parse\",\"message\":\""),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn json_boundary_rejects_malformed_java_option_objects() {
+        for options in ["", "{\"nope\":true}", "{\"strip_comments\":\"yes\"}"] {
+            let err =
+                format_java_json("class A {}\n", options).expect_err("bad options are refused");
             assert!(
                 err.starts_with("{\"kind\":\"options\",\"message\":\""),
                 "{err}"

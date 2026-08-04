@@ -263,8 +263,13 @@ before it lexes, and tree-sitter does not, so a file whose comment carries an
 escape that decodes to a comment terminator is left byte for byte identical
 and reports no savings — the analogue of Go's cgo bail-out. There is
 therefore no Java caveat warning on stderr, for the same reason there is no
-Ruby or Go one: nothing is dropped behind your back. Java is also CLI-only
-for now: the browser demo does not offer it.
+Ruby or Go one: nothing is dropped behind your back. Java **is** in the
+browser demo, alongside Go and unlike Ruby — the tree-sitter grammar compiles
+for `wasm32-unknown-unknown` under the very libc-shim include path
+`site/build.sh` already exports for Go, with no build-script change of its
+own. The demo runs Java at `--verify ast` (in-process re-parse plus AST
+equivalence) and not at `--verify external`, because a WebAssembly module
+cannot spawn `javac`.
 
 **Java source has to be UTF-8 to be formatted at all.** Java has no fixed
 source encoding — `javac`'s is `-encoding`-configurable and defaults to the
@@ -717,7 +722,7 @@ Cargo workspace with a single distributed binary:
 | `tokenpress-go` | Go: the grammar configuration, path set and comment policy the engine is driven with |
 | `tokenpress-java` | Java: the same, for the Java grammar |
 | `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
-| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python, Rust, JavaScript/TypeScript and Go — not Ruby, not Java, per-tokenizer token stats) |
+| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python, Rust, JavaScript/TypeScript, Go and Java — not Ruby, per-tokenizer token stats) |
 
 ## Development
 

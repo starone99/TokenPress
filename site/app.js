@@ -6,11 +6,12 @@ import init, {
   formatRust,
   formatJs,
   formatGo,
+  formatJava,
 } from "./pkg/tokenpress_wasm.js";
 
 // Indirection so the rendering paths can be exercised without the wasm bundle
 // (see window.tokenpressDemo at the bottom of this file).
-const backend = { formatPython, formatRust, formatJs, formatGo };
+const backend = { formatPython, formatRust, formatJs, formatGo, formatJava };
 
 // The four JavaScript/TypeScript entries are one backend with one dialect
 // each: formatJs has no file to read an extension from, so the dialect is
@@ -125,6 +126,31 @@ func main() {
 	fmt.Println(wordCounts("a b a")["a"])
 }
 `,
+  java: `import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Word frequencies for a line of text.
+ *
+ * <p>Javadoc is an ordinary block comment to the grammar, so the strip flag
+ * deletes this too — at the default settings not one byte of it is lost.
+ */
+public final class WordCounts {
+
+    // Regular comments survive at the defaults as well.
+    public static Map<String, Integer> of(String text) {
+        Map<String, Integer> counts = new HashMap<>();
+        for (String word : text.split("\\\\s+")) {
+            counts.merge(word, 1, Integer::sum); /* inline comments too */
+        }
+        return counts;
+    }
+
+    public static void main(String[] args) {
+        System.out.println(of("a b a").get("a"));
+    }
+}
+`,
 };
 
 // Report order. The boundary emits the tokenizer stats as a JSON object,
@@ -145,6 +171,7 @@ const dom = {
   rustOptions: el("rust-options"),
   jsOptions: el("js-options"),
   goOptions: el("go-options"),
+  javaOptions: el("java-options"),
   result: el("result"),
   placeholder: el("placeholder"),
   changed: el("changed"),
@@ -165,6 +192,9 @@ function currentOptions(language) {
   }
   if (language === "go") {
     return { strip_comments: el("go-strip-comments").checked };
+  }
+  if (language === "java") {
+    return { strip_comments: el("java-strip-comments").checked };
   }
   if (language in JS_DIALECTS) {
     return {
@@ -187,6 +217,9 @@ function backendFor(language) {
   if (language === "go") {
     return backend.formatGo;
   }
+  if (language === "java") {
+    return backend.formatJava;
+  }
   return language in JS_DIALECTS ? backend.formatJs : backend.formatPython;
 }
 
@@ -196,6 +229,7 @@ function syncLanguage() {
   dom.rustOptions.hidden = language !== "rust";
   dom.jsOptions.hidden = !(language in JS_DIALECTS);
   dom.goOptions.hidden = language !== "go";
+  dom.javaOptions.hidden = language !== "java";
 }
 
 function percent(ratio) {

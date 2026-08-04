@@ -1916,6 +1916,7 @@ dependencies = [
  "serde_json",
  "tokenpress-core",
  "tokenpress-go",
+ "tokenpress-java",
  "tokenpress-js",
  "tokenpress-python",
  "tokenpress-rust",
