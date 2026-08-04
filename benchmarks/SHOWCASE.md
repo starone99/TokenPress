@@ -8,7 +8,8 @@ notes, and the default-setting numbers. Nothing here is extrapolated.
 Five public tokenizers: `o200k_base` (OpenAI GPT-4o / GPT-4.1 / o-series,
 including Codex models) and `cl100k_base` (GPT-4 / GPT-3.5-turbo), both
 embedded in the binary, plus three open-model tokenizers measured
-2026-08-02 from revision-pinned files — Qwen3.6, GLM-5.2 and Kimi K3.
+2026-08-02 from revision-pinned files — Qwen3.6, GLM-5.2 and Kimi K3
+(gin added to those three on 2026-08-04; rack is still outstanding).
 Candidate lists are per-tokenizer (see below); Gemma is not measured.
 
 ---
@@ -196,13 +197,22 @@ would have missed three of Qwen's four. No list exists for Gemma-tokenizer
 models: the official Gemma repos are gated, so its tokenizer is not in the
 benchmark set (maintainer decision, 2026-08-02).
 
-This run covers the nine corpora that existed when it was made. Two are
+This run covers the nine corpora that existed when it was made. Two were
 missing from it: rack (Ruby), added later the same day, and gin (Go), added
-2026-08-04. **Neither has any open-model figures.** They reach -20.8% and
--19.4% on `o200k_base`, far below the bar, so neither can change any list
-above — but no Qwen3.6 / GLM-5.2 / Kimi K3 number should be quoted for Ruby
-or for Go until they are re-measured, and the `o200k_base` figure is not a
-substitute: the table above is the evidence that it is not.
+2026-08-04.
+
+**gin now has all five**, measured 2026-08-04: aggressive -19.4% / -19.9% /
+**-18.7%** (Qwen3.6) / **-20.0%** (GLM-5.2) / **-20.0%** (Kimi K3). Every one
+is far below the bar, so **the lists above are unchanged** — and this is the
+first case where that conclusion rests on measurement rather than on the
+absence of a figure. Qwen3.6, the tokenizer that promoted three corpora into
+its list, gives Go the *lowest* of the five, so the one plausible route to a
+Go candidate is closed for this pin.
+
+**rack still has none.** Its Qwen3.6 / GLM-5.2 / Kimi K3 rows remain
+`*pending*`, so no open-model number may be quoted for Ruby, and the
+`o200k_base` figure is not a substitute: the table above is the evidence that
+it is not.
 
 ---
 

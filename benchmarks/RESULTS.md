@@ -3,7 +3,8 @@
 Measured: 2026-07-31 (open-model tokenizers added 2026-08-01; the
 JavaScript/TypeScript corpus added 2026-08-02; the Ruby corpus added
 2026-08-02; per-tokenizer aggressive run and the express open-model rows
-added 2026-08-02; the Go corpus added 2026-08-04)
+added 2026-08-02; the Go corpus added 2026-08-04; the gin open-model rows,
+default and aggressive, added 2026-08-04)
 Binary: `cargo build --release -p tokenpress-cli` at the commit containing this file
 Command: `tokenpress stats <corpus> --tokenizer <name> [options]`
 Platform: Windows 11, rustc 1.95.0
@@ -268,12 +269,19 @@ for the same reason express and rack are: the tables above were measured on
 Windows with a CRLF checkout, and the line-ending caveat further down applies
 to any comparison across the two.
 
-**Only the two embedded tokenizers were measured** — the measurement
-environment cannot reach huggingface.co, so the Qwen3.6 / GLM-5.2 / Kimi K3
-columns are pending here exactly as they are for rack. **No open-model number
-exists for Go yet, and none may be quoted until one is measured on the
-maintainer's machine**; in particular the `o200k_base` figure is not a usable
-proxy for them, as the Qwen3.6 column elsewhere in this file makes plain.
+**All five tokenizers are measured.** The two embedded ones were measured with
+the rest of the corpus on 2026-08-04; the three open-model columns were filled
+in on 2026-08-04 on the maintainer's machine, which can reach huggingface.co —
+the measurement container cannot, which is why they were `*pending*` for one day.
+rack's three are still pending; see its table above.
+
+Because the open-model rows were measured separately, the embedded rows were
+**re-run first as a control and reproduced exactly** — 95 files, 173,337 →
+162,297 at `o200k_base` and 173,337 → 139,758 with `--go-strip-comments`,
+matching the recorded figures to the token. The corpus was re-checked out with
+`core.autocrlf false` to get the same LF tree the original run measured, so
+the open-model rows sit on the same side of the line-ending boundary as the
+embedded ones and the five are directly comparable.
 
 The whole tree is measured, all 95 files being `.go`. This pin holds no file
 of any other language TokenPress claims — no `.js`, `.py`, `.rs` or Ruby path
@@ -287,12 +295,25 @@ in this project.
 |---|---|---|---|---|---|
 | gin | o200k_base | 95 | 173,337 | 162,297 | **-6.4%** |
 | gin | cl100k_base | 95 | 172,761 | 162,002 | **-6.2%** |
-| gin | Qwen3.6 | — | — | — | *pending* |
-| gin | GLM-5.2 | — | — | — | *pending* |
-| gin | Kimi K3 | — | — | — | *pending* |
+| gin | Qwen3.6 | 95 | 191,866 | 181,174 | **-5.6%** |
+| gin | GLM-5.2 | 95 | 172,972 | 162,213 | **-6.2%** |
+| gin | Kimi K3 | 95 | 174,919 | 163,740 | **-6.4%** |
 
-**0 verification refusals** across all 95 files, at both tokenizers and at
+**0 verification refusals** across all 95 files, at all five tokenizers and at
 both settings. Absolute saving at o200k: 11,040 tokens per full-repo prompt.
+
+The five agree closely here — **-5.6% to -6.4%**, a 0.8pp spread. Qwen3.6 is
+the outlier in both columns: it counts gin **10.7% larger** before compression
+than `o200k_base` does (191,866 vs 173,337), the same vocabulary difference it
+shows on the Python corpora (requests: 94,786 vs 86,922, 9.0% larger), and it
+reports the **smallest** saving of the five. That second half is specific to
+Go and does not generalize — on requests, Qwen3.6 reports the *largest* saving
+(-9.7% against o200k's -9.0%). Which direction it falls is a property of the
+corpus, which is exactly why the project rule forbids quoting one tokenizer's
+percentage for another model family in either direction.
+
+What does hold across all five: gin is the lowest-saving corpus in this file
+at **every** tokenizer measured, not just at `o200k_base`.
 
 Like rack's `-9.2%` and unlike express's `-17.3%`, this `-6.4%` **is**
 context-lossless: every comment survives and only whitespace was removed.
@@ -386,7 +407,8 @@ and the gin row on 2026-08-04 when the Go corpus was added.
 measurement environment cannot reach huggingface.co. The Qwen3.6 / GLM-5.2 /
 Kimi K3 columns were measured separately on 2026-08-02 from the maintainer's
 Windows machine and are reported under "Open-model tokenizers" below; that
-run predates the rack corpus, so rack has no open-model figures.
+run predates the rack corpus, so rack has no open-model figures. gin, which
+also postdates it, was measured separately on 2026-08-04 and does.
 
 Exact flags:
 
@@ -447,6 +469,9 @@ formatter change.**
 | rack | cl100k_base | 104 | 186,474 | 148,157 | **-20.5%** |
 | gin | o200k_base | 95 | 173,337 | 139,758 | **-19.4%** |
 | gin | cl100k_base | 95 | 172,761 | 138,297 | **-19.9%** |
+| gin | Qwen3.6 | 95 | 191,866 | 155,999 | **-18.7%** |
+| gin | GLM-5.2 | 95 | 172,972 | 138,461 | **-20.0%** |
+| gin | Kimi K3 | 95 | 174,919 | 139,936 | **-20.0%** |
 
 `Files` counts files that were successfully formatted; refused files (next
 subsection) are excluded from both the file count and the token totals. The
@@ -609,6 +634,17 @@ Same corpus, same LF checkout, the added flag being the only difference:
 |---|---|---|---|---|
 | gin | o200k_base | -6.4% | **-19.4%** | +13.0pp |
 | gin | cl100k_base | -6.2% | **-19.9%** | +13.7pp |
+| gin | Qwen3.6 | -5.6% | **-18.7%** | +13.1pp |
+| gin | GLM-5.2 | -6.2% | **-20.0%** | +13.8pp |
+| gin | Kimi K3 | -6.4% | **-20.0%** | +13.6pp |
+
+The three open-model rows were added on 2026-08-04 and **the lever is the same
+size for all five**: +13.0pp to +13.8pp, a 0.8pp spread. This is the first
+corpus in the file where a comment-stripping delta has been checked against
+more than the two embedded tokenizers, and the answer is that the delta is a
+property of the source, not of the vocabulary — worth stating because the
+per-tokenizer rule elsewhere in this file is a warning about *totals*, and it
+would have been just as easy for the deltas to scatter.
 
 **+13.0pp is the largest comment-stripping delta measured in this file**,
 ahead of rack's +11.6pp and express's +8.1pp, and it is the same structural
@@ -695,13 +731,20 @@ export). The langchain run still reports only the known non-UTF-8 fixture.
 **Coverage limit:** this run covers the nine corpora that existed on
 2026-08-02 when it was made. Two corpora are missing from it. The rack (Ruby)
 corpus was added later the same day; the gin (Go) corpus was added
-2026-08-04. **Neither has any open-model figures.** Their embedded-tokenizer
-aggressive results (-20.8% / -20.5% and -19.4% / -19.9%) are far below the
-≥40% bar, so their absence cannot change any candidate list below — but no
-Qwen3.6 / GLM-5.2 / Kimi K3 number should be quoted for Ruby or for Go until
-they are re-measured on the maintainer's machine. The `o200k_base` figure is
-explicitly *not* a proxy for them: the table above shows Qwen3.6 diverging
-from `o200k_base` by up to +7.9pp on a single corpus.
+2026-08-04.
+
+**gin was measured on all three open-model tokenizers on 2026-08-04** and is
+no longer a gap: aggressive -18.7% (Qwen3.6), -20.0% (GLM-5.2), -20.0%
+(Kimi K3), against -19.4% / -19.9% embedded. All five are far below the ≥40%
+bar, so **no candidate list below changes** — now on evidence rather than on
+the assumption that a missing figure could not have cleared it.
+
+**rack still has no open-model figures.** Its embedded-tokenizer aggressive
+result (-20.8% / -20.5%) is far below the bar, so its absence cannot change
+any list either, but no Qwen3.6 / GLM-5.2 / Kimi K3 number may be quoted for
+Ruby until it is re-measured on the maintainer's machine. The `o200k_base`
+figure is explicitly *not* a proxy for them: the table above shows Qwen3.6
+diverging from `o200k_base` by up to +7.9pp on a single corpus.
 
 #### Showcase candidates (≥40% aggressive reduction)
 
