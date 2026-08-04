@@ -15,10 +15,11 @@ if (-not (Test-Path (Join-Path $corpus "ripgrep"))) {
 "ripgrep:  $(git -C (Join-Path $corpus 'ripgrep') rev-parse HEAD)"
 
 # Well-known projects, pinned to the exact commits measured in RESULTS.md.
-# Three of them are pinned at a tagged release rather than a snapshot: express
-# `dbac741a` is tag v5.2.1, rack `e1f22fdb` is tag v3.2.6 and gin `6ad6205e` is
-# tag v1.11.0. Those are the tags verify-upstream.sh clones, and it asserts the
-# same SHAs after the clone.
+# Four of them are pinned at a tagged release rather than a snapshot: express
+# `dbac741a` is tag v5.2.1, rack `e1f22fdb` is tag v3.2.6, gin `6ad6205e` is
+# tag v1.11.0 and commons-lang `29ccc766` is tag rel/commons-lang-3.17.0. Those
+# are the tags verify-upstream.sh clones, and it asserts the same SHAs after
+# the clone.
 $known = @(
     @{ name = "django";       url = "https://github.com/django/django";            sha = "50d706d0aebcc2d073c8d034b6e22fc98fad49f2" },
     @{ name = "fastapi";      url = "https://github.com/fastapi/fastapi";          sha = "95f8322ee1dcda7ceace7b1c4f6c9915b36d748f" },
@@ -28,7 +29,8 @@ $known = @(
     @{ name = "uv";           url = "https://github.com/astral-sh/uv";             sha = "be765050837d81badb20e1f70eec62146c586902" },
     @{ name = "express";      url = "https://github.com/expressjs/express";        sha = "dbac741a49a5a64336b70c06e85c2e2706e36336" },
     @{ name = "rack";         url = "https://github.com/rack/rack";                sha = "e1f22fdbe99afd2126b6fbf05bb12399359574b7" },
-    @{ name = "gin";          url = "https://github.com/gin-gonic/gin";            sha = "6ad6205e9c94a4b8a320219e28c37c29d22a7a2c" }
+    @{ name = "gin";          url = "https://github.com/gin-gonic/gin";            sha = "6ad6205e9c94a4b8a320219e28c37c29d22a7a2c" },
+    @{ name = "commons-lang"; url = "https://github.com/apache/commons-lang";      sha = "29ccc7665f3bc5d84155a3092ab2209a053324e6" }
 )
 foreach ($k in $known) {
     $dest = Join-Path $corpus $k.name

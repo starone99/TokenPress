@@ -1,6 +1,6 @@
 # TokenPress Showcase
 
-Measured token reduction on eleven commit-pinned open-source repositories, at
+Measured token reduction on twelve commit-pinned open-source repositories, at
 the *aggressive* (lossy) settings. Every number on this page is taken from
 [`RESULTS.md`](RESULTS.md), which holds the full methodology, the platform
 notes, and the default-setting numbers. Nothing here is extrapolated.
@@ -9,18 +9,29 @@ Five public tokenizers: `o200k_base` (OpenAI GPT-4o / GPT-4.1 / o-series,
 including Codex models) and `cl100k_base` (GPT-4 / GPT-3.5-turbo), both
 embedded in the binary, plus three open-model tokenizers measured
 2026-08-02 from revision-pinned files — Qwen3.6, GLM-5.2 and Kimi K3
-(gin and rack added to those three on 2026-08-04, completing the set —
-every corpus here is measured on every tokenizer).
+(gin and rack added to those three on 2026-08-04). **Eleven of the twelve
+corpora are measured on all five tokenizers; commons-lang, added 2026-08-04,
+is measured on the two embedded tokenizers only** — the container it was
+measured in cannot reach huggingface.co, so its Qwen3.6, GLM-5.2 and Kimi K3
+figures are `*pending*` a run on the maintainer's machine and are not
+estimated from `o200k_base`.
 Candidate lists are per-tokenizer (see below); Gemma is not measured.
 
 ---
 
 ## Headline: tokio, -50.5%
 
-The only corpus of the eleven that clears a 40% reduction on every tokenizer
-measured — -50.5% on `o200k_base`, and **-55.2% on Qwen3.6** (1,542,030 →
-690,601). On Qwen3.6 specifically, three more corpora clear the bar; see
-"Per-tokenizer ≥40% candidates" below.
+The only corpus that clears a 40% reduction on **all five** tokenizers —
+-50.5% on `o200k_base`, and **-55.2% on Qwen3.6** (1,542,030 → 690,601). On
+Qwen3.6 specifically, three more corpora clear the bar; see "Per-tokenizer
+≥40% candidates" below.
+
+apache/commons-lang clears 40% by a wider margin on both tokenizers it has
+been measured on (**-45.5%** / **-46.6%**, and a larger *absolute* saving than
+tokio's), but it has no Qwen3.6, GLM-5.2 or Kimi K3 figure, so the comparison
+tokio wins here cannot yet be made against it. tokio stays the headline
+because "on every tokenizer" is a claim only tokio can currently support —
+not because commons-lang saves less.
 
 | | |
 |---|---|
@@ -51,12 +62,13 @@ target/release/tokenpress stats benchmarks/corpus/tokio \
 ## Full corpus table (aggressive settings)
 
 Measured 2026-08-01 on a Linux LF checkout of the pinned commits (express and
-rack 2026-08-02, gin 2026-08-04, same way). `Files` is the number of files
-successfully formatted.
+rack 2026-08-02, gin and commons-lang 2026-08-04, same way). `Files` is the
+number of files successfully formatted.
 
 | Project | Lang | Pinned commit | Files | `o200k_base` | `cl100k_base` |
 |---|---|---|---|---|---|
 | [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | Rust | `adc2ae7af2caaea83985fbdfbc7884c159c486f2` | 790 | **-50.5%** | **-50.9%** |
+| [apache/commons-lang](https://github.com/apache/commons-lang) | Java | `29ccc7665f3bc5d84155a3092ab2209a053324e6` (tag `rel/commons-lang-3.17.0`) | 500 | **-45.5%** | **-46.6%** |
 | [langchain-ai/langchain](https://github.com/langchain-ai/langchain) | Python | `a1a1ad3bb3eb6cf7680b39ff0fb37f7150393a25` | 2,530 | -38.8% | -39.2% |
 | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) | Rust | `4649aa97` (tag 14.1.1) | 98 | -37.4% | -37.6% |
 | [fastapi/fastapi](https://github.com/fastapi/fastapi) | Python | `95f8322ee1dcda7ceace7b1c4f6c9915b36d748f` | 1,136 | -36.2% | -36.9% |
@@ -83,6 +95,7 @@ Raw token counts for the same runs:
 | rack | 187,175 | 148,273 | 186,474 | 148,157 |
 | uv | 4,806,817 | 3,773,907 | 4,779,673 | 3,739,347 |
 | gin | 173,337 | 139,758 | 172,761 | 138,297 |
+| commons-lang | 1,736,204 | 945,989 | 1,675,227 | 894,692 |
 
 ### Flags used
 
@@ -93,7 +106,38 @@ Raw token counts for the same runs:
 | JavaScript (express) | `--js-strip-comments` |
 | Ruby (rack: 93 `.rb`, 9 `.ru`, `rack.gemspec`, `Gemfile`, `Rakefile`) | `--ruby-strip-comments` |
 | Go (gin: 95 `.go`) | `--go-strip-comments` |
+| Java (commons-lang: 500 `.java`) | `--java-strip-comments` |
 | Mixed (uv: 624 `.rs` + 94 `.py`) | all four Python/Rust flags — per-language flags are language-scoped, so passing a Rust flag to a Python tree is a verified no-op |
+
+### Why commons-lang is second, and what its default number is
+
+commons-lang is the only Java corpus, and at **-45.5%** it is the second
+largest total on this page — and the largest in absolute terms anywhere here:
+**790,215 tokens** saved per full-repo prompt at `o200k_base`, against tokio's
+703,851, off a smaller starting tree (1,736,204 tokens vs tokio's 1,394,248).
+
+Almost all of that is Javadoc. Its **default-settings figure is -6.1% on
+`o200k_base`, -6.2% on `cl100k_base`** — the lowest on this page — and, like
+Ruby's and Go's and unlike Rust's and JavaScript's, genuinely
+context-lossless: checked file by file across all 500, the formatted output is
+identical to the original once every whitespace character is deleted from
+both, so nothing but whitespace changed. `--java-strip-comments` is therefore
+the entire comments-kept-vs-dropped difference, and it adds **+39.4pp**, by
+some distance the largest comment-stripping delta measured on this page (Go
++13.0pp, Ruby +11.6pp, JS/TS +8.1pp). Javadoc is an ordinary block comment to
+the grammar, so the flag deletes the library's whole published API
+documentation — the thing commons-lang is most made of. There is no
+Javadoc-only lever and no directive-comment carve-out the way Go has one:
+`--java-strip-comments` takes every comment or none.
+
+**On the tokenizers it has been measured on, commons-lang clears the 40% bar —
+and that claim covers OpenAI-family models only.** Its Qwen3.6, GLM-5.2 and
+Kimi K3 figures do not exist yet, and this project's rule is that a ≥40%
+result on `o200k_base` is evidence for `o200k_base` and nothing else; the
+per-tokenizer table below shows Qwen3.6 promoting three corpora that
+`o200k_base` ranked below the bar, so the inference does not run in either
+direction. It is listed under the two embedded tokenizers and deliberately
+absent from the other three.
 
 ### Why rack is low, and what its default number is
 
@@ -128,12 +172,14 @@ never joins two lines the way the Rust backend does. There is simply less
 whitespace to take.
 
 Its **default-settings figure is -6.4% on `o200k_base`, -6.2% on
-`cl100k_base`** — the lowest on this page, and, like Ruby's and unlike Rust's
+`cl100k_base`** — second-lowest on this page since commons-lang's -6.1%
+arrived, and, like Ruby's and unlike Rust's
 and JavaScript's, genuinely context-lossless: every comment survives, including
 the ones the Go toolchain reads as directives. `--go-strip-comments` is the
-entire comments-kept-vs-dropped difference and adds **+13.0pp** — the largest
-of the three comment-stripping deltas measured (Ruby +11.6pp, JS/TS +8.1pp;
-Rust's `--rs-strip-doc-comments` has no equivalent measurement). Go convention
+entire comments-kept-vs-dropped difference and adds **+13.0pp** — second only
+to Java's +39.4pp among the comment-stripping deltas measured, and ahead of
+Ruby's +11.6pp and JS/TS's +8.1pp
+(Rust's `--rs-strip-doc-comments` has no equivalent measurement). Go convention
 puts a doc comment on every exported identifier, so the prose is where gin's
 compressible bulk actually is. **No Go project has been hunted for a ≥40% result**, so this page
 makes **no ≥40% claim for Go in either direction**.
@@ -185,8 +231,8 @@ notes.
 
 | Tokenizer | Models | ≥40% candidates (aggressive flags) |
 |---|---|---|
-| `o200k_base` | GPT-4o / GPT-4.1 / o-series | tokio **-50.5%** |
-| `cl100k_base` | GPT-4 / GPT-3.5-turbo | tokio **-50.9%** |
+| `o200k_base` | GPT-4o / GPT-4.1 / o-series | tokio **-50.5%**, commons-lang **-45.5%** |
+| `cl100k_base` | GPT-4 / GPT-3.5-turbo | tokio **-50.9%**, commons-lang **-46.6%** |
 | Qwen3.6 | Qwen3.6 family | tokio **-55.2%**, ripgrep **-42.7%**, langchain **-41.1%**, fastapi **-40.1%** |
 | GLM-5.2 | GLM-5.2 | tokio **-50.9%** |
 | Kimi K3 | Kimi K3 | tokio **-50.6%** |
@@ -214,12 +260,25 @@ Go candidate is closed for this pin.
 (Qwen3.6), **-20.5%** (GLM-5.2) and **-20.5%** (Kimi K3), against -20.8% /
 -20.5% embedded. Also far below the bar.
 
-With those two runs **every corpus on this page has been measured on every
-tokenizer in the set**, and no list above moved. Both conclusions now rest on
-measurement rather than on the argument that a corpus far below the bar on
-`o200k_base` could not have cleared it elsewhere — an argument this very table
-undermines, since Qwen3.6 promoted three corpora that `o200k_base` had ranked
-below the bar.
+With those two runs every corpus on this page **that existed on 2026-08-04**
+had been measured on every tokenizer in the set, and no list above moved. Both
+conclusions rest on measurement rather than on the argument that a corpus far
+below the bar on `o200k_base` could not have cleared it elsewhere — an
+argument this very table undermines, since Qwen3.6 promoted three corpora that
+`o200k_base` had ranked below the bar.
+
+**commons-lang (Java), added later the same day, is the one corpus that breaks
+that completeness**, and it breaks it in the direction that matters most: it
+is a **≥40% candidate**, at -45.5% / -46.6%, so it is the first entry to join
+the `o200k_base` and `cl100k_base` lists since tokio. It appears in those two
+rows and **nowhere else**. Per the rule the table above exists to enforce, a
+≥40% result on `o200k_base` is a claim about OpenAI-family models and is not
+evidence for Qwen3.6, GLM-5.2 or Kimi K3 — in either direction. Whether Java
+becomes a candidate for those three is unmeasured until the tokenizer files
+can be downloaded, and the three lists stay as they are until then. It is the
+first non-Rust corpus to clear the bar on either embedded tokenizer (Python
+clears it only on Qwen3.6). No Java project beyond this one has been hunted,
+so **no general ≥40% claim is made for Java** — one corpus is not a search.
 
 ---
 
@@ -247,7 +306,7 @@ below the bar.
 ### Behavioral verification against upstream test suites
 
 Structural equivalence is not behavioral equivalence, so
-`benchmarks/verify-upstream.sh` runs five projects' own upstream test suites
+`benchmarks/verify-upstream.sh` runs six projects' own upstream test suites
 against a TokenPress-formatted copy and diffs the outcome **per test id**
 against an unformatted baseline copy.
 
@@ -258,6 +317,7 @@ against an unformatted baseline copy.
 | express v5.2.1 (`mocha`, express's own `npm test` arguments) | 142 `.js` | 141 | 0 | **IDENTICAL** — 1238 passed / 0 failed on both copies, exit 0 |
 | rack v3.2.6 (`rake test:regular` + `rake test:separate`) | 105 Ruby | 103 | 1 | **DIVERGED** — 1 of 2,354 outcomes; 2,348→2,346 passed, 2→4 failed, exit 1 |
 | gin v1.11.0 (`go test -json -count=1 ./...`) | 95 `.go` | 94 | 0 | **IDENTICAL** — 592 passed / 0 failed / 3 skipped on both copies, exit 0 |
+| commons-lang 3.17.0 (`mvn -B test`, surefire XML) | 500 `.java` | 500 | 0 | **IDENTICAL** — 11,707 passed / 0 failed / 13 skipped on both copies, exit 0 |
 
 All caveats matter:
 
@@ -293,6 +353,26 @@ All caveats matter:
   checked by hand, `go build -tags <t> ./...` exits 0 on both copies for each
   of the five. The go target needs the Go toolchain and Go module proxy
   access to run at all.
+* **commons-lang is the largest suite in the harness and the only corpus
+  where every file was rewritten** — 500 of 500, 0 refused, 11,720 test
+  outcomes identical on both copies. Two caveats on reading it. Its skip
+  count is *not* stable: six pristine runs of the unformatted tree in the
+  same container reported 19, 13, 19, 13, 19 and 13 skips, the difference
+  being six locale-parameterized time-zone tests that commons-lang itself
+  converts into assumption failures rather than hard failures — a class whose
+  own Javadoc says it "Breaks randomly on GitHub for Locale pt_PT". A control
+  run rules the formatter out: two copies of the *unformatted* tree, built and
+  tested back to back, reported 19 then 13 — the same split with nothing
+  formatted at all. The harness therefore
+  compares two runs made in the same invocation, never asserts an absolute
+  count, and folds `pass` and `skip` together **inside that one class only**
+  so a coin flip upstream cannot be reported as a formatter finding; `fail`
+  and `error` compare exactly everywhere. And, as with gin, an IDENTICAL
+  verdict is not evidence that Java
+  output preserves line numbers — it does not; nothing in commons-lang's
+  11,720 tests asserts on one. The java target needs `mvn`, a JDK and Maven
+  Central access to run at all, and unlike the go and rack dependencies
+  Maven's cannot be warmed once and then used offline.
 * These runs cover **default settings only**. The aggressive flags on this
   page are not covered by that harness — stripping doc comments would delete
   the doc tests being compared.
@@ -316,6 +396,7 @@ each removes information from the source:
 | `--js-strip-comments` | the JS/TS comments that survive re-emission at all — leading statement-level comments, jsdoc, annotation comments (`#__PURE__`) and legal comments (`//!`, `/*!`, `@license`, `@preserve`) |
 | `--ruby-strip-comments` | Ruby `#` comments and `=begin`/`=end` embdocs — all of them, this being the only Ruby lever. The shebang and the leading magic-comment window (`# frozen_string_literal: true` and friends) survive, being semantic rather than prose |
 | `--go-strip-comments` | Go `//` and `/* */` comments — all of them, this being the only Go lever. The comments the toolchain reads as directives (`//go:` lines, `/*line*/`, build constraints and the cgo preamble) survive, being semantic rather than prose |
+| `--java-strip-comments` | Java `//`, `/* */` **and `/** */`** comments — all of them, this being the only Java lever, and there is no carve-out: Javadoc is an ordinary block comment to the grammar, so a stripped file loses the library's entire API documentation |
 
 **Token savings are not free context.** Every comment and docstring stripped
 above is prose the model can no longer read. Whether that degrades the quality
@@ -459,6 +540,10 @@ find benchmarks/corpus/rack -not -path '*/.git/*' \
 target/release/tokenpress stats benchmarks/corpus/gin --tokenizer o200k_base \
     --go-strip-comments
 
+# Java corpus - same situation as the Go pin
+target/release/tokenpress stats benchmarks/corpus/commons-lang \
+    --tokenizer o200k_base --java-strip-comments
+
 # Mixed tree
 target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
     --py-strip-comments --py-strip-annotations --py-strip-docstrings \
@@ -469,10 +554,10 @@ target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
 # upstream behavioral check (default settings)
 # express additionally needs node, npm and npm registry access; rack needs
 # ruby, bundler and rubygems.org access; go needs the Go toolchain and Go
-# module proxy access
+# module proxy access; java needs mvn, a JDK and Maven Central access
 ./benchmarks/verify-upstream.sh all   # 0 = identical, 1 = diverged, 2 = never ran
 # this currently exits 1: the rack target diverges on the __LINE__ test above.
-# the go target on its own exits 0.
+# the go and java targets on their own exit 0.
 ```
 
 `fetch.sh` exits non-zero at the tokenizer-download step when huggingface.co

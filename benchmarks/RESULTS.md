@@ -5,7 +5,9 @@ JavaScript/TypeScript corpus added 2026-08-02; the Ruby corpus added
 2026-08-02; per-tokenizer aggressive run and the express open-model rows
 added 2026-08-02; the Go corpus added 2026-08-04; the gin and rack open-model
 rows, default and aggressive, added 2026-08-04 — with that, every corpus in
-this file has all five tokenizers)
+this file had all five tokenizers; the Java corpus added 2026-08-04 on the two
+embedded tokenizers only, so it is the one corpus here still missing its three
+open-model columns)
 Binary: `cargo build --release -p tokenpress-cli` at the commit containing this file
 Command: `tokenpress stats <corpus> --tokenizer <name> [options]`
 Platform: Windows 11, rustc 1.95.0
@@ -25,16 +27,18 @@ Platform: Windows 11, rustc 1.95.0
 | expressjs/express | v5.2.1 | `dbac741a` | 142 `.js` |
 | rack/rack | v3.2.6 | `e1f22fdb` | 105 Ruby (93 `.rb`, 9 `.ru`, `rack.gemspec`, `Gemfile`, `Rakefile`) |
 | gin-gonic/gin | v1.11.0 | `6ad6205e` | 95 `.go` (whole tree) |
+| apache/commons-lang | 3.17.0 | `29ccc766` | 500 `.java` (whole tree, all under `src/`) |
 
 **Every parseable file passed verification, with one measured exception**
-(re-parse + token/AST equivalence). The only skipped files across ~13,200 are
+(re-parse + token/AST equivalence). The only skipped files across ~13,800 are
 two intentionally broken test fixtures — Django's `tests_syntax_error.py`
 (invalid Python by design) and LangChain's `non-utf8-encoding.py` (invalid
 UTF-8 by design), both correctly rejected with per-file errors — plus one
 genuine refusal in rack, `lib/rack/utils.rb`, which is a known Ruby
 over-refusal class documented in the Ruby section below. The 95 Go files
 added 2026-08-04 add **no** refusals and no rejected inputs, at either
-setting and either tokenizer. A refusal writes
+setting and either tokenizer, and neither do the 500 Java files added the
+same day. A refusal writes
 nothing and leaves the file untouched; it is the core invariant working, not
 a corruption. Runs made with the JS/TS-enabled CLI (2026-08-02 onward)
 additionally reject three django `.js` files as invalid input —
@@ -358,13 +362,18 @@ corpus, which is exactly why the project rule forbids quoting one tokenizer's
 percentage for another model family in either direction.
 
 What does hold across all five: gin is the lowest-saving corpus in this file
-at **every** tokenizer measured, not just at `o200k_base`.
+at **every** tokenizer measured, not just at `o200k_base`. (Superseded in
+part on 2026-08-04 by the Java corpus below, which is lower still at both
+embedded tokenizers — -6.1% and -6.2%. It has no open-model figures, so on
+Qwen3.6, GLM-5.2 and Kimi K3 gin remains the lowest of everything measured,
+and that is all that can be said until commons-lang is measured there.)
 
 Like rack's `-9.2%` and unlike express's `-17.3%`, this `-6.4%` **is**
 context-lossless: every comment survives and only whitespace was removed.
 
-**-6.4% is the lowest default-settings figure of any corpus in this file, and
-the reason is `gofmt`.** Go source in the wild is already whitespace-canonical
+**-6.4% was the lowest default-settings figure of any corpus in this file
+until commons-lang's -6.1% arrived on 2026-08-04, and the reason is `gofmt`.**
+Go source in the wild is already whitespace-canonical
 before TokenPress sees it, which leaves far less to remove than in any other
 language here:
 
@@ -388,9 +397,10 @@ language here:
 
 In other words, the number is low because Go's ecosystem already did most of
 the whitespace work — which is a fact about the language's culture, not a
-weakness in the backend. The comment lever, when it is pulled, is the largest
-of the three comment-stripping deltas measured in this file (+13.0pp against
-Ruby's +11.6pp and JS/TS's +8.1pp; see `--go-strip-comments` below).
+weakness in the backend. The comment lever, when it is pulled, adds +13.0pp
+(see `--go-strip-comments` below) — the largest of the comment-stripping
+deltas in this file until Java's `--java-strip-comments` was measured at
++39.4pp on 2026-08-04, and still ahead of Ruby's +11.6pp and JS/TS's +8.1pp.
 
 ```bash
 target/release/tokenpress stats benchmarks/corpus/gin --tokenizer o200k_base
@@ -414,6 +424,118 @@ verification is one `gofmt` probe plus two `gofmt` spawns per file, so its
 wall time measures process startup, not TokenPress: the whole corpus takes
 **0.60–0.67 s** at `--verify ast` and **1.43 s** at `--verify external` on
 this machine — a 2.3× difference that is entirely `gofmt`.
+
+### Java — apache/commons-lang (default settings, added 2026-08-04)
+
+Measured 2026-08-04, Linux LF checkout, rustc 1.95.0, Maven 3.9.11,
+JDK 21.0.10, on the commit pinned in `fetch.sh`/`fetch.ps1`
+(`29ccc7665f3bc5d84155a3092ab2209a053324e6`, annotated tag
+`rel/commons-lang-3.17.0`). This is the first corpus for the
+`tokenpress-java` backend, and it is reported on its own for the same reason
+express, rack and gin are: the tables further up were measured on Windows with
+a CRLF checkout, and the line-ending caveat below applies to any comparison
+across the two.
+
+**Only the two embedded tokenizers are measured.** The Qwen3.6, GLM-5.2 and
+Kimi K3 rows are `*pending*`: this measurement container cannot reach
+huggingface.co, so the revision-pinned tokenizer files `fetch.sh` downloads
+are unavailable here, and the project rule is that an unmeasured column is
+written as pending rather than estimated from `o200k_base`. gin and rack sat
+pending for a day for the same reason and were filled in on the maintainer's
+machine; this corpus is waiting on the same run.
+
+The whole tree is measured, all 500 files being `.java` and all of them under
+`src/`. This pin holds no file of any other language TokenPress claims — no
+`.py`, `.rs`, `.js`/`.ts`, Ruby path or `.go` anywhere — so like gin and
+unlike rack it can be handed to the formatter as a directory with nothing
+misroutable to another backend. The count is taken with `find -type f` and
+excludes `target/`, so it means the same thing whether or not Maven has
+already built in the tree; a fresh clone has no `target/` at all.
+
+| Corpus | Tokenizer | Files | Before | After | Saved |
+|---|---|---|---|---|---|
+| commons-lang | o200k_base | 500 | 1,736,204 | 1,629,486 | **-6.1%** |
+| commons-lang | cl100k_base | 500 | 1,675,227 | 1,571,424 | **-6.2%** |
+| commons-lang | Qwen3.6 | 500 | *pending* | *pending* | *pending* |
+| commons-lang | GLM-5.2 | 500 | *pending* | *pending* | *pending* |
+| commons-lang | Kimi K3 | 500 | *pending* | *pending* | *pending* |
+
+**0 verification refusals** across all 500 files, on both embedded tokenizers
+and at both settings; `tokenpress format` over the tree exits 0 and rewrites
+500 of 500 files. Absolute saving at o200k: 106,718 tokens per full-repo
+prompt.
+
+#### What Java loses at default settings: nothing
+
+This was checked rather than assumed, because it does not follow from the
+other backends. For every one of the 500 files, the original and the formatted
+output are **identical once all whitespace characters are deleted from both**.
+That is a stronger statement than "comments are kept": nothing was dropped,
+added or reordered — Javadoc blocks and ordinary `//` and `/* */` comments all
+survive, in place, with their text intact. (It does not by itself speak for
+whitespace *inside* string literals and text blocks, which the test deletes on
+both sides; that is covered instead by the backend contract that string
+content is never touched and by the token/AST equivalence check that gates
+every write.) The CLI accordingly prints **no caveat warning** for a Java-only run — there is
+deliberately no `JAVA_CAVEAT_WARNING`, for the same reason there is no Ruby or
+Go one, and `crates/tokenpress-cli/src/cli.rs` has a test asserting its
+absence. So this `-6.1%`, like rack's `-9.2%` and gin's `-6.4%` and unlike
+express's `-17.3%` and any Rust figure, is genuinely context-lossless.
+
+What the whitespace-only rewrite actually removes on this corpus is
+indentation and blank lines. Interior lines of a block comment keep their
+original leading spaces, because they are part of the comment token rather
+than whitespace between tokens — visible in any diff as Javadoc bodies that
+stay indented under a `/**` that has moved to column 0.
+
+**-6.1% is now the lowest default-settings figure in this file**, taking that
+place from gin's -6.4% — the two are a rounding step apart and low for related
+reasons. commons-lang is Apache-style Java under a checkstyle configuration,
+so like `gofmt`-formatted Go it arrives without trailing whitespace and
+without runs of blank lines. It differs from Go in that its indentation *is*
+runs of spaces (4 per level, deeply nested), which is the more expensive kind
+to carry and should push the figure the other way. What outweighs that is how
+much of the file is comment: commons-lang is documentation-dense even by Java
+standards, and comments are exactly what the default setting does not touch,
+so a large share of the tree is untouchable at this setting.
+
+```bash
+target/release/tokenpress stats benchmarks/corpus/commons-lang \
+    --tokenizer o200k_base
+```
+
+**`--java-strip-comments` is the largest single lever measured anywhere in
+this file: +39.4pp**, taking commons-lang from -6.1% to **-45.5%** at o200k
+(Go's `--go-strip-comments` adds +13.0pp, Ruby's +11.6pp, JS/TS's +8.1pp).
+Javadoc is a block comment as far as the grammar is concerned, so the flag
+takes the entire API documentation of a library whose documentation is most of
+its text. The aggressive rows are in the aggressive section below.
+
+#### Upstream verification of this corpus
+
+`benchmarks/verify-upstream.sh java` runs commons-lang's own Maven surefire
+suite over an unformatted and a formatted copy and diffs the outcomes per test
+id; the full write-up is under "Behavioral verification against upstream test
+suites" below. The pristine baseline is `BUILD SUCCESS`, exit 0,
+**11,720 tests, 0 failures, 0 errors** — and either 13 or 19 skipped,
+depending on the run.
+
+**The skip count is not stable and no target may assert it.** Six of
+commons-lang's tests are `assumeTrue`-gated on a time-zone parse that
+succeeds or fails depending on JVM state the suite itself perturbs; six
+pristine runs here produced 19, 13, 19, 13, 19 and 13, including two
+unformatted copies run back to back as a control. An earlier ROADMAP note
+recorded 13 for this same pin. Nothing is wrong with any of those figures. It
+is the reason the harness compares a baseline run against a formatted run made
+in the same environment and the same invocation rather than against a recorded
+constant — and, for that one test class, folds `pass` and `skip` together so
+the coin flip cannot masquerade as a formatter finding. The full account is
+under "Behavioral verification against upstream test suites".
+
+Timing note, and the reason this target stays on `--verify ast`: Java's
+`--verify external` is one `javac` probe plus **three** ~0.4 s `javac` spawns
+per file, so over 500 files it would measure JVM startup rather than
+TokenPress. The external gate is exercised by the crate's own tests instead.
 
 ### Aggressive settings (accepting context loss)
 
@@ -479,6 +601,13 @@ Exact flags:
   comments-kept-vs-dropped difference and the only lossy lever the Go backend
   has. The directive comments survive it (`//go:` lines, `/*line*/`, build
   constraints and the cgo preamble are semantic, not prose).
+* Java corpus (commons-lang): `--java-strip-comments`. Structurally the same
+  case again — the Java default keeps every comment, so the flag is the whole
+  comments-kept-vs-dropped difference and the only lossy lever the Java
+  backend has. Nothing survives it: Javadoc is an ordinary block comment to
+  the grammar, so `--java-strip-comments` takes the library's entire API
+  documentation with the rest. That is why it is the largest lever in this
+  file (+39.4pp).
 
 **Line-ending caveat — read before comparing against the tables above.**
 The earlier tables were measured on Windows, where git checks the corpus out
@@ -520,6 +649,11 @@ formatter change.**
 | gin | Qwen3.6 | 95 | 191,866 | 155,999 | **-18.7%** |
 | gin | GLM-5.2 | 95 | 172,972 | 138,461 | **-20.0%** |
 | gin | Kimi K3 | 95 | 174,919 | 139,936 | **-20.0%** |
+| commons-lang | o200k_base | 500 | 1,736,204 | 945,989 | **-45.5%** |
+| commons-lang | cl100k_base | 500 | 1,675,227 | 894,692 | **-46.6%** |
+| commons-lang | Qwen3.6 | 500 | *pending* | *pending* | *pending* |
+| commons-lang | GLM-5.2 | 500 | *pending* | *pending* | *pending* |
+| commons-lang | Kimi K3 | 500 | *pending* | *pending* | *pending* |
 
 `Files` counts files that were successfully formatted; refused files (next
 subsection) are excluded from both the file count and the token totals. The
@@ -809,20 +943,25 @@ open-model subsection); open-model columns measured 2026-08-02. rack was
 added 2026-08-02 and gin 2026-08-04, both measured on the embedded tokenizers
 only (-20.8% / -20.5% and -19.4% / -19.9%, below the bar on all four); they
 are absent from the open-model columns. **Neither is a ≥40% candidate, so the
-lists below are unchanged by their addition.**
+lists below are unchanged by their addition.** commons-lang was added
+2026-08-04 on the embedded tokenizers only as well, and it **is** a candidate
+there (-45.5% / -46.6%), so it joins those two lists and only those two — a
+≥40% result on `o200k_base` is a claim about OpenAI-family models and is not
+evidence for Qwen3.6, GLM-5.2 or Kimi K3 in either direction.
 
 **Per-tokenizer candidate lists:**
 
 | Tokenizer | ≥40% candidates (aggressive flags) |
 |---|---|
-| o200k_base | tokio **-50.5%** |
-| cl100k_base | tokio **-50.9%** |
+| o200k_base | tokio **-50.5%**, commons-lang **-45.5%** |
+| cl100k_base | tokio **-50.9%**, commons-lang **-46.6%** |
 | Qwen3.6 | tokio **-55.2%**, ripgrep **-42.7%**, langchain **-41.1%**, fastapi **-40.1%** |
 | GLM-5.2 | tokio **-50.9%** |
 | Kimi K3 | tokio **-50.6%** |
 
-tokio clears the bar on every tokenizer measured and stays the headline
-everywhere; at Qwen3.6 it reaches **-55.2%** (1,542,030 → 690,601, an
+tokio clears the bar on all five tokenizers and stays the headline
+everywhere, commons-lang having only two measured columns; at Qwen3.6 tokio
+reaches **-55.2%** (1,542,030 → 690,601, an
 absolute saving of 851,429 tokens per full-repo prompt). The Qwen3.6 list
 is four deep because Qwen prices whitespace runs comparatively expensively;
 selecting candidates on the `o200k_base` proxy would have missed three of
@@ -832,20 +971,30 @@ plus auth token), so pinning its `tokenizer.json` needs an
 authenticated-download story nothing else needs; it was excluded from this
 run by maintainer decision (2026-08-02).
 
-**Clears ≥40% on the embedded tokenizers — 1 of 11 corpora:**
+**Clears ≥40% on the embedded tokenizers — 2 of 12 corpora:**
 
 | Project | Language | Commit | o200k_base | cl100k_base | Absolute saving (o200k) |
 |---|---|---|---|---|---|
 | tokio-rs/tokio | Rust | `adc2ae7a` | **-50.5%** | **-50.9%** | 703,851 tokens |
+| apache/commons-lang | Java | `29ccc766` | **-45.5%** | **-46.6%** | 790,215 tokens |
 
 ```bash
 target/release/tokenpress stats benchmarks/corpus/tokio \
     --tokenizer o200k_base --rs-strip-doc-comments
+target/release/tokenpress stats benchmarks/corpus/commons-lang \
+    --tokenizer o200k_base --java-strip-comments
 ```
 
-tokio is the strongest showcase in the corpus: it is doc-comment-dense, and
-Rust additionally loses all `//` / `/* */` comments through the `syn` token
-stream, so more than half of a full-repo prompt disappears.
+tokio is the strongest showcase in the corpus by percentage: it is
+doc-comment-dense, and Rust additionally loses all `//` / `/* */` comments
+through the `syn` token stream, so more than half of a full-repo prompt
+disappears. commons-lang saves **more tokens in absolute terms** off a smaller
+tree — 790,215 against tokio's 703,851 — because `--java-strip-comments`
+deletes Javadoc, and a library whose whole product is its documented API is
+mostly Javadoc by weight. It is the first non-Rust corpus to clear the bar on
+either embedded tokenizer (Python clears it only on Qwen3.6), and its
+open-model columns are unmeasured, so its candidacy is stated for
+OpenAI-family models only.
 
 **Near misses (35–40% on o200k_base):**
 
@@ -881,7 +1030,10 @@ holds for Ruby: rack is the only Ruby corpus, `--ruby-strip-comments` is the
 backend's only lossy flag, and **no ≥40% claim is made for Ruby in either
 direction** either. And it holds for Go: gin is the only Go corpus,
 `--go-strip-comments` is that backend's only lossy flag, and **no ≥40% claim
-is made for Go in either direction** either.
+is made for Go in either direction** either. Java is the one language where a
+single corpus did clear the bar — but one corpus is still not a search, so
+**no general ≥40% claim is made for Java** beyond this pin, and none at all
+for Java on the three open-model tokenizers, which are unmeasured.
 
 Two caveats on this list:
 
@@ -1008,6 +1160,17 @@ target/release/tokenpress stats benchmarks/corpus/gin --tokenizer o200k_base \
 target/release/tokenpress stats benchmarks/corpus/gin --tokenizer o200k_base \
     --verify external
 
+# Java corpus - like the Go pin, it holds no file of any other supported
+# language, so the tree can be passed directly
+target/release/tokenpress stats benchmarks/corpus/commons-lang \
+    --tokenizer o200k_base
+target/release/tokenpress stats benchmarks/corpus/commons-lang \
+    --tokenizer o200k_base --java-strip-comments   # full aggressive
+# no --verify external run is recorded for this corpus: it is one probe plus
+# three ~0.4 s javac spawns per file, which over 500 files measures JVM
+# startup rather than TokenPress. The external Java gate is covered by the
+# crate's own tests.
+
 # repeat any of the above with --tokenizer cl100k_base for the second column
 ```
 
@@ -1061,14 +1224,14 @@ compares the result, per test id, against an unformatted baseline copy.
 ### Methodology
 
 The script
-(`benchmarks/verify-upstream.sh <requests|ripgrep|express|rack|go|all>`) does
-the same thing for every target:
+(`benchmarks/verify-upstream.sh <requests|ripgrep|express|rack|go|java|all>`)
+does the same thing for every target:
 
 1. **Pinned corpus, SHA-asserted.** The corpus is cloned at the same tag as
    `fetch.ps1`/`fetch.sh` and its `HEAD` is asserted against a hard-coded
    commit SHA, so a retagged upstream cannot silently change what is verified
    (requests `0e322af8`, ripgrep `4649aa97`, express `dbac741a`, rack
-   `e1f22fdb`, gin `6ad6205e`).
+   `e1f22fdb`, gin `6ad6205e`, commons-lang `29ccc766`).
 2. **Two pristine copies** of that corpus in a private work directory:
    `*-baseline` (untouched) and `*-formatted`.
 3. **Format at default settings only** — no aggressive flags. Files that fail
@@ -1095,6 +1258,7 @@ Isolation, per target:
 | express | `mocha --require test/support/env --check-leaks test/ test/acceptance/` — the exact arguments of express's own `npm test`, only the reporter differs | one `npm install`, run in the baseline copy and then copied to the formatted copy, so both runs execute against byte-identical dependencies; private `TMPDIR` per run |
 | rack | `bundle exec rake test:regular` and `bundle exec rake test:separate` — both of rack's test tasks, invoked separately | one `bundle install`, run in the baseline copy, its `Gemfile.lock` copied to the formatted copy and one `BUNDLE_PATH` vendored inside the work directory shared by both; private `TMPDIR` per run; proxy env vars stripped for both runs |
 | go | `go test -json -count=1 ./...` | one `go mod download`, warmed from the baseline copy; `-count=1` disables Go's test result cache; a `GOCACHE` inside the work directory, shared by both runs, so the user's build cache is never written to; private `TMPDIR` per run; proxy env vars stripped for both runs |
+| java | `mvn -B -Dmaven.test.failure.ignore=true test` | each copy builds into its own `target/`; the baseline runs first and warms the Maven local repository, so the formatted run resolves the same artifacts from cache (formatting never touches `pom.xml`); private `TMPDIR` per run; proxy env vars **kept** for both runs, because Maven needs Maven Central and this suite drives no localhost servers |
 
 The shared `node_modules` is not a convenience. express sets
 `package-lock=false` in its `.npmrc` and ships no lockfile, so two independent
@@ -1171,6 +1335,40 @@ cargo's target directory it is *shared* between the two runs on purpose,
 rather than kept private, and still cannot carry one run's artifacts into the
 other.
 
+Three java-specific choices, finally:
+
+* **`-Dmaven.test.failure.ignore=true`.** A failing test is the thing being
+  measured, so it must not fail the build; a compile error or an unresolvable
+  dependency must. With that flag the two cases separate cleanly: surefire
+  records failures in its reports and Maven still exits 0, so a **non-zero
+  exit means Maven never produced a comparable result** and the target either
+  dies (baseline) or reports the strongest possible divergence — the formatted
+  copy no longer builds (formatted). None of the other targets get this for
+  free; the go target has to detect a build failure by grepping its event
+  stream for `[build failed]`.
+* **The per-test data comes from `target/surefire-reports/TEST-*.xml`, and it
+  is parsed rather than pattern-matched.** Surefire's console output prints
+  only a per-class summary line, which is exactly the aggregate this harness
+  refuses to compare. The XML is reduced by a small Java program run through
+  the JDK's single-file source launcher (`java Reduce.java`), which uses the
+  JDK's own XML parser — the same move the go target makes with `go run` and
+  the express target with node, and it adds no prerequisite the target did not
+  already have. It deliberately does not reach for `xmllint` or `python`,
+  neither of which this script requires anywhere else.
+* **Nothing is gated on stderr for any `mvn`, `java` or `javac` invocation.**
+  A JVM can write to stderr on a completely successful run — a container that
+  exports `JAVA_TOOL_OPTIONS` makes every JVM start announce it there, which
+  is exactly what the measurement container does — so a stderr-based check
+  would report failure 100% of the time. Exit code and report files are the
+  signals.
+
+Unlike the go and rack targets, whose dependencies can be warmed once and then
+worked from, **the java target needs Maven Central reachable at run time**:
+Maven resolves commons-lang's test dependencies *and* its build plugins from
+there into the Maven local repository, and there is no offline path that does
+not presume that repository is already populated. A run that dies resolving
+dependencies is a network problem, not a flake, and the script says so.
+
 Normalizations are needed to make the comparison meaningful, and each is
 deliberately narrow:
 
@@ -1198,6 +1396,25 @@ deliberately narrow:
 * **go**: none, for the same reason. `go test -json` reports a package import
   path and a test name, neither of which carries a run path or a line number.
   Nothing is rewritten and nothing is stripped.
+* **java**: the ids need none — surefire's per-test XML records a `classname`
+  and a `name`, and the `name` of a parameterized test carries its argument
+  types and its invocation index (`testNext(int)[3]`) but never a path and
+  never a line number. The *outcomes* need one, and it is narrow: inside
+  `FastDateParser_TimeZoneStrategyTest`, `pass` and `skip` are folded into a
+  single `pass-or-skip` value. `fail` and `error` are untouched, there and
+  everywhere else. That class is parameterized over every locale the JDK
+  offers and deliberately converts an environment-dependent time-zone parse
+  failure into an assumption abort — "Mark as an assumption failure instead of
+  a hard fail", in commons-lang's own comment — and its Javadoc says outright
+  that it "Breaks randomly on GitHub for Locale pt_PT". Measured here: four
+  pristine runs of the *unformatted* tree produced 19, 13, 19 and 13 skips,
+  the difference being six `testTimeZoneStrategy_DateFormatSymbols(Locale)`
+  invocations on Portuguese locales. Without the fold the target reports
+  DIVERGED at random on a difference formatting did not cause. The cost is
+  stated rather than hidden: a formatting change that moved a test in this one
+  class between passing and being assumption-aborted would not be seen. Every
+  other outcome in the 11,720 is compared exactly, and the printed
+  baseline/formatted tallies show the unfolded counts.
 
 **Methodology gotcha worth recording**: the first requests attempt reported a
 false divergence. requests' own `extract_zipped_paths()` caches its output
@@ -1450,19 +1667,128 @@ Two further limits on what this run proves:
   cgo in this pin and no nested module, so those paths are covered by the
   crate's own tests rather than by this corpus.
 
+### commons-lang 3.17.0 — IDENTICAL
+
+Run 2026-08-04, the first behavioral verification of the `tokenpress-java`
+backend. Linux, Maven 3.9.11, JDK 21.0.10.
+
+| | Value |
+|---|---|
+| `.java` files | 500 |
+| Rewritten | 500 |
+| Refused by verification | 0 |
+| Unchanged | 0 |
+| Verdict | **IDENTICAL** — exit 0 |
+
+| Outcome | Baseline | Formatted |
+|---|---|---|
+| pass | 11,701 | 11,707 |
+| fail | 0 | 0 |
+| error | 0 | 0 |
+| skip | 19 | 13 |
+
+11,720 rows on each side — every test case surefire wrote a report for, from
+312 test classes. Both Maven runs report `BUILD SUCCESS` and exit 0. This is
+the largest suite in this file by an order of magnitude: 11,720 outcomes
+against gin's 595 and rack's 2,354.
+
+**The six-row pass/skip difference in that table is upstream flake, not a
+formatter effect, and the harness is built to say so** — the next subsection
+has the measurement. Those six rows are the only place the two sides differ,
+they are all in one test class, and the comparison folds `pass` and `skip`
+together inside that class, so the verdict is IDENTICAL and the exit code is
+0. `fail` and `error` are compared exactly, there and everywhere else; every
+other one of the 11,720 outcomes matched value for value.
+
+It is also the only corpus where **every** file was rewritten: 500 of 500,
+with nothing refused and nothing left in canonical form already (gin had one
+such file, `doc.go`). Like express and gin and unlike requests and rack, the
+suite is green on both sides — it is a pure-utility library that touches no
+network — so here *identical outcomes* and *all tests pass* happen to
+coincide. The claim being made is still only the first one.
+
+**The skip count is not a constant, and this corpus proves it on one
+machine.** The pristine, *unformatted* tree was run six times in the same
+container on the same JDK and reported **19, 13, 19, 13, 19 and 13** skips. The
+difference is six invocations of
+`FastDateParser_TimeZoneStrategyTest#testTimeZoneStrategy_DateFormatSymbols(Locale)`,
+a test parameterized over every locale the JDK offers, whose body converts a
+time-zone parse failure into `assumeTrue(false, …)` — "mark as an assumption
+failure instead of a hard fail" in commons-lang's own words — for `_`-bearing
+locales on JDK 17 and later. Whether those six abort or pass depends on the
+JDK's locale and time-zone data and on what the rest of the suite has left in
+the JVM's defaults, and surefire's default `runOrder` is `filesystem`. So:
+
+* **No verification target may assert an absolute skip count.** This harness
+  compares a baseline run against a formatted run made in the same
+  environment, in the same script invocation, and asks only whether they
+  agree. An earlier ROADMAP note recorded "13 skipped" for this pin and a
+  later measurement recorded 19; both are correct observations of an unstable
+  number.
+* **A control run settles what causes it: position, not formatting.** Two
+  copies of the *unformatted* tree were built and tested back to back, exactly
+  as the harness does, with nothing formatted at all. The first reported **19**
+  skips and the second **13** — the same split, the same six invocations, with
+  the formatter removed from the experiment entirely. It is not a simple
+  first-run/second-run effect either: a later end-to-end target run had both
+  sides at 19. The only claim the evidence supports is that the number is
+  unstable and that formatting is not what moves it, and that is what the fold
+  rests on.
+* **It is not a run-order artifact, and it is not confined to the class.**
+  Surefire's default `runOrder` is `filesystem`, so that was the first
+  suspicion; it is wrong. In the run where the two sides disagreed, the 312
+  classes executed in an *identical* order on both copies. Run on its own the
+  class is stable — three consecutive `-Dtest=FastDateParser_TimeZoneStrategyTest`
+  runs each reported 4 skips — so what moves the six invocations is JVM state
+  the rest of the suite perturbs, not anything inside the class.
+* **The harness folds that one axis and says so.** Inside
+  `FastDateParser_TimeZoneStrategyTest`, `pass` and `skip` are compared as a
+  single `pass-or-skip` outcome; `fail` and `error` are compared exactly
+  there, and every outcome is compared exactly everywhere else. This was not a
+  precaution: an early end-to-end run of the target reported **DIVERGED** with
+  a diff consisting of exactly those six invocations and nothing else — a
+  false finding, since two unformatted copies produce the same split. With the
+  fold, three further end-to-end runs — two that produced the same 19-vs-13
+  split and one where both sides landed on 19 — all reported IDENTICAL and
+  exited 0. What the fold costs is stated rather than hidden: a formatting
+  change that moved a test in this one class between passing and being
+  assumption-aborted would not be seen. The printed tallies stay unfolded, so
+  the raw counts remain visible.
+
+Two limits on what the run proves, the same two the gin section records:
+
+* **Line numbers are not preserved by any backend, and this suite does not
+  test them.** Java stack traces carry `file:line`, so a test that
+  golden-compared a stack trace would diverge legitimately once formatting
+  deletes blank lines — the shape of rack's `__LINE__` finding. commons-lang
+  raises and inspects exceptions throughout, but no assertion in its 11,720
+  tests reads a line number out of one. The class is untested by this corpus,
+  not disproved by it.
+* **No test can observe a comment.** Comments do not run, so an IDENTICAL
+  verdict says nothing about comment preservation either way. For Java that
+  is moot at default settings — the rewrite is whitespace-only, verified
+  file-by-file above — but the caveat is the same one recorded for Rust and
+  JS/TS.
+
+One thing this target does *not* share with gin: there are no build-constraint
+files here. Every one of the 500 `.java` files is under `src/main/java` or
+`src/test/java` and is compiled by the run, so unlike gin's five tag-gated
+files, nothing was formatted without also being compiled.
+
 ### Scope and caveats
 
 * These runs verify **default settings only**. The aggressive settings above
   (`--py-strip-comments`, `--py-strip-annotations`, `--rs-strip-doc-comments`,
-  `--js-strip-comments`, `--ruby-strip-comments`, `--go-strip-comments`) are
+  `--js-strip-comments`, `--ruby-strip-comments`, `--go-strip-comments`,
+  `--java-strip-comments`) are
   knowingly lossy and are not covered by this harness — stripping doc comments would delete the doc
   tests being compared.
 * The Rust and JS/TS comment-loss caveats still stand: Rust `//` and `/* */`
   comments, and JS/TS trailing and expression-position comments, are dropped
   unconditionally, and no test suite can detect that, because comments do not
-  run. Behavioral equivalence is not context equivalence. Ruby and Go are the
-  exceptions — they drop no comments at default settings — but they share the
-  line-number caveat below.
+  run. Behavioral equivalence is not context equivalence. Ruby, Go and Java
+  are the exceptions — they drop no comments at default settings — but they
+  share the line-number caveat below.
 * **Line numbers are not preserved by any backend**, and the rack run above is
   the measured proof that this is observable: `__LINE__`, `caller`, backtraces
   and anything derived from them move when blank lines and indentation go.
@@ -1470,18 +1796,23 @@ Two further limits on what this run proves:
   emphatically not a counter-example: Go's `testing` prints `file:line` and
   gin's own `recovery.go` builds a stack trace from `runtime.Caller`, but no
   gin test asserts on a line number, so the class is untested there rather
-  than absent.
-* Only five corpora are covered (requests, ripgrep, express, rack, gin). The
-  larger corpora in the table above are verified structurally, not
-  behaviorally.
+  than absent, and commons-lang's is the same case — Java stack traces carry
+  `file:line`, but nothing in its 11,720 tests asserts on one.
+* Only six corpora are covered (requests, ripgrep, express, rack, gin,
+  commons-lang). The larger corpora in the table above are verified
+  structurally, not behaviorally.
 * The 5 requests failures and the 2 rack failures are environment artifacts,
   not upstream-green results; the claim is *identical outcomes*, not *all
   tests pass*.
 * The express target additionally requires `node`, `npm` and npm registry
   access; the rack target requires `ruby`, `bundler` and rubygems.org access;
-  the go target requires the Go toolchain and Go module proxy access. They are
-  the only targets with a network prerequisite beyond the git clone; without
-  it the run exits 2 (never ran) rather than reporting a verdict.
+  the go target requires the Go toolchain and Go module proxy access; the java
+  target requires `mvn`, a JDK and Maven Central access. They are the only
+  targets with a network prerequisite beyond the git clone; without it the run
+  exits 2 (never ran) rather than reporting a verdict. java is the strictest
+  of the four: unlike the go and rack dependencies, Maven's cannot be warmed
+  once and then worked from offline, because the build plugins themselves are
+  resolved from Central.
 
 ### Reproduce
 
@@ -1491,8 +1822,9 @@ Two further limits on what this run proves:
 ./benchmarks/verify-upstream.sh express    # mocha, JSON reporter per-test-id diff
 ./benchmarks/verify-upstream.sh rack       # minitest, reporter-plugin per-test-id diff
 ./benchmarks/verify-upstream.sh go         # go test -json, per-test-id diff
+./benchmarks/verify-upstream.sh java       # mvn surefire, XML per-test-id diff
 ./benchmarks/verify-upstream.sh all
 # exit 0 = identical, 1 = diverged, 2 = the comparison never ran
 # the rack target currently exits 1 - see the __LINE__ finding above
-# the go target exits 0
+# the go and java targets exit 0
 ```

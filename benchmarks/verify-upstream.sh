@@ -7,7 +7,7 @@
 # settings, and runs the project's real test suite against both. The run only
 # succeeds if every test reaches the same outcome on both copies.
 #
-# Usage: verify-upstream.sh <requests|ripgrep|express|rack|go|all>
+# Usage: verify-upstream.sh <requests|ripgrep|express|rack|go|java|all>
 #
 # Exit codes: 0 = outcomes identical, 1 = outcomes diverged, 2 = usage or
 # infrastructure error (the comparison never ran).
@@ -43,6 +43,15 @@ rack_sha="e1f22fdbe99afd2126b6fbf05bb12399359574b7"
 gin_tag="v1.11.0"
 gin_sha="6ad6205e9c94a4b8a320219e28c37c29d22a7a2c"
 
+# Same pin as fetch.sh (apache/commons-lang rel/commons-lang-3.17.0), asserted
+# the same way. Like rack's, this is an annotated tag, so the SHA is the commit
+# it peels to, which is what `git rev-parse HEAD` reports after the clone below.
+# The target is spelled `java` rather than `commons-lang`, matching `go`: the
+# corpus directory, the pin variables and the work-directory names all keep the
+# project name, so a second Java corpus can be added without renaming anything.
+commons_lang_tag="rel/commons-lang-3.17.0"
+commons_lang_sha="29ccc7665f3bc5d84155a3092ab2209a053324e6"
+
 work_dir=""
 cleanup() {
     status=$?
@@ -71,7 +80,9 @@ targets:
              (needs ruby, bundler and rubygems.org access)
   go         gin-gonic/gin v1.11.0 - the same comparison against its `go test`
              suite (needs the go toolchain and Go module proxy access)
-  all        every target (requests, ripgrep, express, rack, then go)
+  java       apache/commons-lang 3.17.0 - the same comparison against its
+             surefire suite (needs maven, a JDK and Maven Central access)
+  all        every target (requests, ripgrep, express, rack, go, then java)
 EOF
 }
 
@@ -162,6 +173,22 @@ ensure_gin_corpus() {
         die "corpus $dest is at $head, expected the pinned $gin_sha"
     fi
     echo "corpus: gin-gonic/gin $gin_tag ($gin_sha)"
+}
+
+# The same for the pinned commons-lang corpus.
+ensure_commons_lang_corpus() {
+    local dest="$corpus/commons-lang"
+    if [ ! -e "$dest" ]; then
+        mkdir -p "$corpus"
+        git clone --quiet --depth 1 --branch "$commons_lang_tag" \
+            https://github.com/apache/commons-lang "$dest"
+    fi
+    local head
+    head="$(git -C "$dest" rev-parse HEAD)"
+    if [ "$head" != "$commons_lang_sha" ]; then
+        die "corpus $dest is at $head, expected the pinned $commons_lang_sha"
+    fi
+    echo "corpus: apache/commons-lang $commons_lang_tag ($commons_lang_sha)"
 }
 
 # --- helpers ----------------------------------------------------------------
@@ -1138,6 +1165,309 @@ verify_go() {
     return 1
 }
 
+# --- java -------------------------------------------------------------------
+
+# Writes the surefire report reducer into $1 and echoes its path.
+#
+# Why a real XML parser: surefire's own console output prints only a per-class
+# summary ("Tests run: 42, Failures: 0, ..."), which is exactly the aggregate
+# this script refuses to compare - two runs can produce the same counts with
+# different tests failing. The per-test outcomes are in the XML surefire writes
+# to target/surefire-reports/TEST-*.xml, one file per test class, so those are
+# what is read. Test ids there routinely contain `(`, `)` and `[n]` from
+# parameterised tests, and attribute values may carry XML entity escapes, so
+# the reports are parsed rather than pattern-matched out of the markup.
+#
+# The reducer is a Java program, run through the JDK's single-file source
+# launcher (`java Reduce.java`), so nothing is compiled to disk first. The java
+# target already requires a JDK, so this adds no prerequisite it did not have -
+# the same reasoning the go target uses for its `go run` reducer and the
+# express target for parsing its report with node. In particular it does not
+# reach for xmllint or python, neither of which this script requires anywhere
+# else. It uses only the JDK's bundled XML parser, so it needs no network.
+#
+# Rows are "outcome<TAB>class<TAB>test id". A test case with a <failure>,
+# <error> or <skipped> child takes that outcome; anything else passed.
+write_surefire_reducer() {
+    local dir="$1"
+    mkdir -p "$dir" || die "cannot create the surefire reducer directory $dir"
+    cat >"$dir/Reduce.java" <<'JAVA'
+// Reduces surefire's per-class XML reports into "outcome<TAB>class<TAB>test"
+// rows, one per test case. Usage: java Reduce.java <surefire-reports-dir>
+import java.io.File;
+import java.io.PrintStream;
+import java.util.Arrays;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+public class Reduce {
+    public static void main(String[] args) throws Exception {
+        if (args.length != 1) {
+            System.err.println("usage: Reduce.java <surefire-reports-dir>");
+            System.exit(2);
+        }
+        File dir = new File(args[0]);
+        File[] reports = dir.listFiles((d, n) -> n.startsWith("TEST-") && n.endsWith(".xml"));
+        if (reports == null) {
+            System.err.println("not a directory: " + dir);
+            System.exit(2);
+        }
+        // Sorted here so the listing is grouped per class; the caller sorts the
+        // whole listing again before diffing.
+        Arrays.sort(reports);
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        // The reports are local machine-generated files; resolving an external
+        // DTD would turn reading them into a network operation.
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        StringBuilder out = new StringBuilder();
+        for (File report : reports) {
+            Document doc = builder.parse(report);
+            NodeList cases = doc.getElementsByTagName("testcase");
+            for (int i = 0; i < cases.getLength(); i++) {
+                Element testcase = (Element) cases.item(i);
+                out.append(outcome(testcase)).append('\t')
+                        .append(testcase.getAttribute("classname")).append('\t')
+                        .append(testcase.getAttribute("name")).append('\n');
+            }
+        }
+        PrintStream stdout = System.out;
+        stdout.print(out);
+        stdout.flush();
+        // Checked explicitly, like the go reducer's flush: a silently truncated
+        // listing would be a wrong answer rather than a missing one.
+        if (stdout.checkError()) {
+            System.err.println("cannot write the reduced listing");
+            System.exit(2);
+        }
+    }
+
+    private static String outcome(Element testcase) {
+        for (Node n = testcase.getFirstChild(); n != null; n = n.getNextSibling()) {
+            if (n.getNodeType() != Node.ELEMENT_NODE) {
+                continue;
+            }
+            String name = n.getNodeName();
+            if (name.equals("failure")) {
+                return "fail";
+            }
+            if (name.equals("error")) {
+                return "error";
+            }
+            if (name.equals("skipped")) {
+                return "skip";
+            }
+        }
+        return "pass";
+    }
+}
+JAVA
+    echo "$dir/Reduce.java"
+}
+
+# Folds the one outcome axis in commons-lang's suite that is not reproducible
+# run to run, reading $1 and writing the folded rows to stdout: within
+# FastDateParser_TimeZoneStrategyTest, `pass` and `skip` become the single
+# outcome `pass-or-skip`. `fail` and `error` are left alone, in that class and
+# everywhere else, so a formatting-caused failure anywhere still diverges.
+#
+# This is the same kind of narrow normalization as the ripgrep target's
+# doc-test line-number stripping, and it is here for a measured reason rather
+# than a suspected one. That test class is parameterised over every locale the
+# JDK offers and deliberately converts an environment-dependent time-zone parse
+# failure into an assumption abort - "Mark as an assumption failure instead of
+# a hard fail", in commons-lang's own comment - so those invocations report
+# `skip` instead of `pass` depending on JVM state the suite itself perturbs.
+# Measured on one machine, one JDK, one pin: six pristine runs of the
+# unformatted tree produced 19, 13, 19, 13, 19 and 13 skips, the difference
+# being six `testTimeZoneStrategy_DateFormatSymbols(Locale)` invocations on
+# Portuguese locales, all of them parsing "Hora padrao de Atyrau". Upstream
+# knows: the class's own Javadoc says "Breaks randomly on GitHub for Locale
+# pt_PT". Two of those six runs were the control - two copies of the
+# *unformatted* tree, built and tested back to back exactly as this function
+# does, with nothing formatted at all. The first reported 19 and the second
+# 13, so the split occurs with the formatter removed from the experiment
+# entirely. It is not tied to position either: a later end-to-end run had both
+# sides at 19. The only reliable statement is that the number is unstable.
+#
+# Without the fold the target reports DIVERGED on that difference, which would
+# be a false finding - the split reproduces with the formatter removed from
+# the experiment entirely.
+# What the fold costs is real and worth stating: a formatting change that moved
+# a test in this one class between passing and being assumption-aborted would
+# not be seen. That axis is the one upstream declared unstable; every other
+# outcome in the corpus's 11,720 is compared exactly.
+fold_unstable_assumptions() {
+    awk -F'\t' -v OFS='\t' '
+        $2 == "org.apache.commons.lang3.time.FastDateParser_TimeZoneStrategyTest" &&
+            ($1 == "pass" || $1 == "skip") { $1 = "pass-or-skip" }
+        { print }
+    ' "$1"
+}
+
+# Runs the upstream Maven suite in $1, its console output to $2. $3 is
+# "baseline" or "formatted" and only decides how a build failure is reported.
+#
+# `-Dmaven.test.failure.ignore=true` is what makes the two cases separable: a
+# failing test is the thing being measured, so it must not fail the build,
+# while a compile error or an unresolvable dependency must. With it, surefire
+# records the failures in its reports and lets the build succeed, so a non-zero
+# exit means Maven itself could not get as far as a comparable result.
+#
+# Nothing here is gated on stderr, deliberately. Every JVM start can write to
+# stderr on a completely successful run - a container that exports
+# JAVA_TOOL_OPTIONS makes the JVM announce it there on each launch - so a
+# stderr-based check would report failure on every run. Exit code and the
+# report files are the signals.
+#
+# Isolation, mirroring the other runners: a private TMPDIR per run, and each
+# copy builds into its own target/ directory, so nothing is shared between the
+# two beyond the Maven local repository, which is a coordinate-addressed
+# download cache and cannot carry one run's build output into the other. Unlike
+# the requests, rack and go runners this one keeps the calling shell's proxy
+# environment: Maven needs it to reach Maven Central, and commons-lang's suite
+# is a pure-library suite that drives no localhost servers and asserts nothing
+# about proxy handling. Both runs get the same environment either way.
+run_mvn_test() {
+    local dir="$1" log="$2" role="$3"
+    local tmp="$log.tmpdir"
+    mkdir -p "$tmp" || die "cannot create the run directory for $log"
+    local rc=0
+    (
+        cd "$dir"
+        env TMPDIR="$tmp" mvn -B -Dmaven.test.failure.ignore=true test
+    ) >"$log" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        tail -n 30 "$log" >&2
+        if [ "$role" = "baseline" ]; then
+            die "the unformatted copy does not build, so nothing can be compared (if the failure is a dependency that could not be resolved, this target needs Maven Central - see the note above verify_java)"
+        fi
+        # A formatted copy that no longer compiles is the strongest divergence
+        # there is, but it yields no per-test outcomes to diff, so it is called
+        # out here rather than left to the caller.
+        echo "verdict: DIVERGED - the formatted copy no longer builds"
+        exit 1
+    fi
+    if [ -z "$(find "$dir/target/surefire-reports" -name 'TEST-*.xml' -print -quit 2>/dev/null)" ]; then
+        tail -n 30 "$log" >&2
+        die "mvn test wrote no surefire reports in $dir (it never produced a comparable result)"
+    fi
+}
+
+# Note on the network: unlike the go and rack targets, whose dependencies this
+# script can warm once and then work from, this target needs Maven Central
+# reachable when it runs. Maven resolves not only commons-lang's test
+# dependencies but its build plugins from there, into the Maven local
+# repository (~/.m2 by default), and there is no offline path that does not
+# assume that repository is already populated. A run that dies resolving
+# dependencies is a network problem, not a flake.
+#
+# The baseline runs first and warms that repository, so the formatted run
+# resolves from an already-populated cache: formatting never touches pom.xml,
+# so both copies resolve the same coordinates, and the second run takes them
+# from the artifacts the first one downloaded.
+verify_java() {
+    ensure_commons_lang_corpus
+
+    local tokenpress
+    tokenpress="$(build_tokenpress)"
+
+    local baseline="$work_dir/commons-lang-baseline"
+    local formatted="$work_dir/commons-lang-formatted"
+    cp -a "$corpus/commons-lang" "$baseline" || die "cannot copy the commons-lang corpus"
+    cp -a "$corpus/commons-lang" "$formatted" || die "cannot copy the commons-lang corpus"
+
+    # Default settings only - no --java-strip-comments. Like Ruby and Go and
+    # unlike Rust and JS/TS, the Java backend drops nothing at this level:
+    # every comment survives, Javadoc included, and the rewrite is whitespace
+    # only. The whole tree is handed to the formatter rather than an explicit
+    # file list, because this pin holds no file of any other language
+    # TokenPress claims - no `.py`, `.rs`, `.js`/`.ts`, Ruby path or `.go`
+    # anywhere - so nothing can be misrouted to another backend.
+    #
+    # Verification stays at the default `--verify ast`. `--verify external`
+    # would be one probe plus three ~0.4 s `javac` spawns per file, which over
+    # a 500-file tree makes the measurement JVM-startup-bound and says nothing
+    # more about behaviour than the suite below already does.
+    local format_log="$work_dir/commons-lang-format.log"
+    local rc=0
+    "$tokenpress" format "$formatted" >"$format_log" 2>&1 || rc=$?
+    local refused
+    refused="$(grep -c '^error: ' "$format_log" || true)"
+    if [ "$rc" -ne 0 ] && [ "$refused" -eq 0 ]; then
+        tail -n 30 "$format_log" >&2
+        die "tokenpress format exited $rc"
+    fi
+    local changed
+    changed="$(git -C "$formatted" status --porcelain | wc -l)"
+    # -type f for the same reason as the go target, and target/ is excluded so
+    # the count means the same thing whether or not a build has run in the tree
+    # - a fresh clone has no target/, but a corpus someone has already built in
+    # would otherwise contribute generated sources to the file count.
+    local total
+    total="$(find "$formatted" -type f -name '*.java' \
+        -not -path '*/.git/*' -not -path '*/target/*' | wc -l)"
+
+    run_mvn_test "$baseline" "$work_dir/commons-lang-baseline.log" baseline
+    run_mvn_test "$formatted" "$work_dir/commons-lang-formatted.log" formatted
+
+    local reducer
+    reducer="$(write_surefire_reducer "$work_dir/commons-lang-reducer")"
+    # Reduced first, sorted second, for the same reason as the go target: a
+    # pipeline would hide a failing reducer behind sort's exit status.
+    local side dir
+    for side in baseline formatted; do
+        dir="$work_dir/commons-lang-$side"
+        java "$reducer" "$dir/target/surefire-reports" \
+            >"$work_dir/commons-lang-$side.rows" \
+            2>"$work_dir/commons-lang-$side-reduce.log" ||
+            die "cannot reduce the $side surefire reports"
+        sort "$work_dir/commons-lang-$side.rows" \
+            >"$work_dir/commons-lang-$side.outcomes" ||
+            die "cannot sort the $side outcomes"
+        # The tally above reports the exact outcomes; the comparison below runs
+        # on the folded listing. Kept as two files so the printed counts stay
+        # honest about what surefire actually recorded.
+        fold_unstable_assumptions "$work_dir/commons-lang-$side.outcomes" \
+            >"$work_dir/commons-lang-$side.folded" ||
+            die "cannot fold the $side outcomes"
+        sort "$work_dir/commons-lang-$side.folded" \
+            >"$work_dir/commons-lang-$side.comparable" ||
+            die "cannot sort the folded $side outcomes"
+    done
+    if [ ! -s "$work_dir/commons-lang-baseline.outcomes" ]; then
+        die "no test results were parsed from the baseline run"
+    fi
+
+    echo
+    echo "commons-lang $commons_lang_tag"
+    echo "  .java files        $total"
+    echo "  rewritten          $changed"
+    echo "  refused by verify  $refused"
+    echo "  unchanged          $((total - changed - refused))"
+    echo "baseline outcomes:"
+    tally "$work_dir/commons-lang-baseline.outcomes"
+    echo "formatted outcomes:"
+    tally "$work_dir/commons-lang-formatted.outcomes"
+    echo "comparison: pass and skip folded together inside"
+    echo "  FastDateParser_TimeZoneStrategyTest, which upstream documents as"
+    echo "  breaking randomly by locale; fail and error compare exactly"
+
+    if diff -u "$work_dir/commons-lang-baseline.comparable" \
+        "$work_dir/commons-lang-formatted.comparable" \
+        >"$work_dir/commons-lang-outcomes.diff"; then
+        echo "verdict: IDENTICAL - every test reached the same outcome on both copies, up to the fold above"
+        return 0
+    fi
+    echo "verdict: DIVERGED - the formatted copy behaves differently:"
+    sed 's/^/  /' "$work_dir/commons-lang-outcomes.diff"
+    return 1
+}
+
 # --- main -------------------------------------------------------------------
 
 main() {
@@ -1150,7 +1480,7 @@ main() {
         usage
         exit 0
         ;;
-    requests | ripgrep | express | rack | go | all) ;;
+    requests | ripgrep | express | rack | go | java | all) ;;
     *)
         usage
         exit 2
@@ -1181,6 +1511,14 @@ main() {
         command -v go >/dev/null || die "the go toolchain is required for the go target"
         ;;
     esac
+    # `mvn` is what this target actually spawns; a JDK is the prerequisite
+    # behind it, both for Maven itself and for the report reducer, so the
+    # message names it even though the check is on the command.
+    case "$1" in
+    java | all)
+        command -v mvn >/dev/null || die "maven (and a JDK) is required for the java target"
+        ;;
+    esac
     work_dir="$(mktemp -d "${TMPDIR:-/tmp}/tokenpress-verify-XXXXXX")"
 
     # A target returns 1 when the outcomes diverged; that is a result, not an
@@ -1194,12 +1532,14 @@ main() {
     express) verify_express || diverged=1 ;;
     rack) verify_rack || diverged=1 ;;
     go) verify_go || diverged=1 ;;
+    java) verify_java || diverged=1 ;;
     all)
         verify_requests || diverged=1
         verify_ripgrep || diverged=1
         verify_express || diverged=1
         verify_rack || diverged=1
         verify_go || diverged=1
+        verify_java || diverged=1
         ;;
     esac
     return "$diverged"
