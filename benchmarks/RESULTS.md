@@ -218,6 +218,10 @@ measurement. They contribute nothing to the totals either way.
 | rack | GLM-5.2 | — | — | — | *pending* |
 | rack | Kimi K3 | — | — | — | *pending* |
 
+The three open-model rows are **still pending for this 104-file set** and may
+not be filled in from the 103-file run below, which is a different set of
+files. See "Open-model tokenizers over 103 of rack's 105 paths".
+
 `Files` is 104 of the 105, because of **1 verification refusal**:
 `lib/rack/utils.rb`. It refuses at both settings and both tokenizers, and it
 is a known over-refusal class, not a new defect — see the subsection below.
@@ -235,6 +239,63 @@ find benchmarks/corpus/rack -not -path '*/.git/*' \
     -o -name 'Gemfile' -o -name 'Rakefile' \) -print0 |
     xargs -0 target/release/tokenpress stats --tokenizer o200k_base
 ```
+
+#### Open-model tokenizers over 103 of rack's 105 paths (2026-08-04)
+
+Measured 2026-08-04 on the maintainer's Windows machine with an LF checkout
+(`core.autocrlf false`), the same binary and the same path selection as above.
+**This is a 103-file run, not the 104-file run above, and the two tables must
+not be merged.**
+
+**Why one file is missing, and why it is not a TokenPress result.**
+`test/spec_multipart.rb` cannot exist on this machine: Windows Defender
+identifies its content as malware and quarantines the file, so the checkout is
+104 files rather than 105 and the formatter is handed something that is not
+there. It is a real-time-protection verdict on a multipart test fixture, not a
+parse error, not a verification refusal and not a property of the corpus —
+`fetch.sh` on Linux gets all 105. Suppressing it needs a Defender exclusion,
+which needs administrator rights this measurement did not have. With the usual
+1 verification refusal (`lib/rack/utils.rb`, unchanged) that leaves 103 files
+formatted.
+
+Both embedded tokenizers were **re-run over the same 103 files** so that every
+row below describes one identical set:
+
+| Corpus | Tokenizer | Files | Before | After | Saved | With `--ruby-strip-comments` |
+|---|---|---|---|---|---|---|
+| rack (103) | o200k_base | 103 | 173,200 | 157,216 | **-9.2%** | **-21.6%** |
+| rack (103) | cl100k_base | 103 | 172,391 | 156,968 | **-8.9%** | **-21.4%** |
+| rack (103) | Qwen3.6 | 103 | 184,690 | 169,356 | **-8.3%** | **-20.6%** |
+| rack (103) | GLM-5.2 | 103 | 172,789 | 157,366 | **-8.9%** | **-21.4%** |
+| rack (103) | Kimi K3 | 103 | 172,552 | 157,170 | **-8.9%** | **-21.3%** |
+
+**How far this is from the 104-file numbers, stated rather than implied.** At
+default settings the embedded rows land on the same figures to one decimal
+(-9.2% / -8.9%), so the missing file barely moves that column. At aggressive
+settings they do not: -21.6% / -21.4% here against **-20.8% / -20.5%** over
+104 files, a gap of +0.8pp and +0.9pp. The direction is recoverable by
+subtraction rather than guesswork: the missing file accounts for
+187,175 - 173,200 = **13,975** tokens before and 148,273 - 135,768 = **12,505**
+after, so on its own it saves **-10.5%** at aggressive settings against
+-21.6% for the other 103. It is comment-*sparse*, not comment-dense, and
+dropping a below-average file is what lifts the total. (The same subtraction
+at default settings gives it -8.4%, close to the tree's -9.2%, which is why
+that column barely moves.) That gap is the measure of how much these rows may
+be read as a
+substitute for the pending ones: at default settings, nearly; at aggressive
+settings, not at all.
+
+What the run does establish is the **shape**, which is what the per-tokenizer
+rule is about: all five agree within 0.9pp at default and 1.0pp at aggressive,
+and Qwen3.6 is again the outlier in both columns — 6.6% more tokens before
+compression than `o200k_base` (184,690 vs 173,200) and the smallest saving of
+the five, the same direction it takes on gin and the opposite of the one it
+takes on requests. **No candidate list is affected**: -20.6% is the highest
+open-model aggressive figure here and it is half the ≥40% bar.
+
+Until the 105-file measurement is possible, **no open-model number may be
+quoted for Ruby without the 103-file qualifier attached**, and the aggressive
+figures may not be quoted as rack's at all.
 
 #### The one Ruby refusal, identified
 

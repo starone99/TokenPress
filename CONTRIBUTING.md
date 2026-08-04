@@ -87,7 +87,14 @@ prerequisite but *not* the C-compiler one — only removing all three does that.
   `brew install llvm`.
 - **Windows**: install LLVM (`choco install llvm`, or the llvm.org installer)
   and point bindgen at it with `LIBCLANG_PATH=C:\Program Files\LLVM\bin`; the
-  C compiler comes from the MSVC build tools.
+  C compiler comes from the MSVC build tools. Both of those want
+  administrator rights. Without them, the llvm.org release is an NSIS
+  installer that takes a target directory and installs per-user quite
+  happily — `LLVM-22.1.8-win64.exe /S /D=C:\Users\<you>\LLVM`, then
+  `LIBCLANG_PATH=C:\Users\<you>\LLVM\bin` (measured: exit 0, no UAC prompt,
+  `bin\libclang.dll` present, `cargo build -p tokenpress-cli` green). Note
+  `winget install LLVM.LLVM --scope user` does **not** work — there is no
+  user-scope installer in the manifest.
 
 If bindgen cannot find the library, the build fails with
 `Unable to find libclang`. Both hosted CI images ship LLVM already, but the
