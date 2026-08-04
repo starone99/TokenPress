@@ -96,6 +96,38 @@ runs `.github/actions/libclang`, which checks and installs only if missing —
 except the `no-native-backends` job, which exists to prove the build below
 needs none of them.
 
+#### Windows: `/std:c11` against a pre-10.0.20348 SDK
+
+On Windows the C-compiler half has a second failure mode that looks like a
+tree-sitter bug and is not one. `tree-sitter` 0.26 compiles its C with
+`-std:c11`, and that flag implicitly turns on MSVC's **conforming
+preprocessor** (`/Zc:preprocessor`). Windows SDK headers older than
+10.0.20348 do not parse under it, so `cargo build` dies inside the SDK rather
+than inside the crate:
+
+```
+...\10.0.17763.0\um\oaidl.h(487): error C2059: syntax error: '/'
+...\10.0.17763.0\um\propidlbase.h(378): error C2371: 'pvarVal': redefinition
+error occurred in cc-rs: command did not execute successfully
+```
+
+The clue is the path: every error is in `um\*.h`, none in `tree-sitter-*`.
+This blocks `tokenpress-treesitter` and therefore the `go` and `java`
+backends; the pure-Rust backends and `tokenpress-ruby` are unaffected.
+
+The real fix is to install a newer Windows SDK. Until then, switch the
+conforming preprocessor back off for the C dependencies only — the vendored C
+does not need it:
+
+```powershell
+$env:CFLAGS_x86_64_pc_windows_msvc = "-Zc:preprocessor-"
+cargo build --workspace
+```
+
+Set it in the shell (or per-machine `.cargo/config.toml`) rather than in the
+repository: it is a property of one SDK installation, not of the project, and
+committing it would impose the traditional preprocessor on everyone else.
+
 This is **not** confined to the native crates: `tokenpress-cli` depends on
 `tokenpress-ruby`, `tokenpress-go` and `tokenpress-java` in its default build,
 so even a narrow `cargo build -p tokenpress-cli` — which is exactly what the
