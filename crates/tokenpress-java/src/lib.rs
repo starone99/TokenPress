@@ -1,9 +1,10 @@
 //! TokenPress for Java — the Java-specific half of the tree-sitter backend.
 //!
-//! At this stage the crate is the grammar boundary and the path set only:
-//! [`config`] names the grammar the shared engine drives, and [`paths`] says
-//! which files this backend claims. The comment policy and the
-//! [`tokenpress_core::Formatter`] implementation land on top of them.
+//! At this stage the crate is the grammar boundary, the path set and the
+//! comment policy: [`config`] names the grammar the shared engine drives,
+//! [`paths`] says which files this backend claims, and [`policy`] is the three
+//! decisions the engine's comment stripper takes. The
+//! [`tokenpress_core::Formatter`] implementation lands on top of them.
 //!
 //! # The crate split
 //!
@@ -21,3 +22,4 @@
 
 pub mod config;
 pub mod paths;
+pub mod policy;

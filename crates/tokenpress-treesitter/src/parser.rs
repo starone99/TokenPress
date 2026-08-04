@@ -76,10 +76,16 @@ impl LanguageConfig {
     /// `comment_kinds` are the kinds the equivalence artifact ignores and the
     /// comment policy acts on; `protected_kinds` are the kinds whose bytes
     /// are copied verbatim (string and character literals, in every language
-    /// so far). `newline_sensitive` says whether a newline in the source can
-    /// change meaning — true for languages with automatic semicolon
-    /// insertion (Go), false for the brace-and-semicolon family (Java, C#,
-    /// PHP).
+    /// so far). `newline_sensitive` says whether the emitter has to preserve
+    /// the source's line structure. Automatic semicolon insertion (Go) makes
+    /// it true, but it is not the only thing that does: **Java sets it true
+    /// as well**, even though it is a brace-and-semicolon language with no
+    /// ASI, because the `false` branch collapses the newline *after* a
+    /// `line_comment` to a space and the comment then swallows the line below
+    /// it. Measured at Java's default settings (comments kept), `false`
+    /// refuses 247 of 500 apache/commons-lang 3.17.0 files. So the flag is
+    /// about line structure, not about ASI, and a language answers it by
+    /// measurement rather than by family.
     pub fn new(
         language: Language,
         comment_kinds: Vec<&'static str>,
