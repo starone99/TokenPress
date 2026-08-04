@@ -210,8 +210,11 @@ legacy `// +build` needs to keep working, and a file that imports `"C"` is
 left byte for byte identical — cgo preambles are C source that is compiled,
 so a cgo file reports no savings at all. There is therefore no Go caveat
 warning on stderr, for the same reason there is no Ruby one: nothing is
-dropped behind your back. Go is also CLI-only for now: the browser demo does
-not offer it.
+dropped behind your back. Go **is** in the browser demo, unlike Ruby — the
+tree-sitter grammar compiles for `wasm32-unknown-unknown` once the libc shim
+`tree-sitter-language` already ships is on the C include path. The demo runs
+Go at `--verify ast` (in-process re-parse plus AST equivalence) and not at
+`--verify external`, because a WebAssembly module cannot spawn `gofmt`.
 
 ## Usage
 
@@ -634,7 +637,7 @@ Cargo workspace with a single distributed binary:
 | `tokenpress-treesitter` | The grammar-agnostic tree-sitter engine: parse gate, equivalence artifact, protected spans, whitespace rewriter |
 | `tokenpress-go` | Go: the grammar configuration, path set and comment policy the engine is driven with |
 | `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
-| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python, Rust and JavaScript/TypeScript — not Ruby, per-tokenizer token stats) |
+| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python, Rust, JavaScript/TypeScript and Go — not Ruby, per-tokenizer token stats) |
 
 ## Development
 

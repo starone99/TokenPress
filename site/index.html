@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TokenPress — interactive demo</title>
-<meta name="description" content="Paste Python, Rust, JavaScript or TypeScript source and see how many LLM tokens TokenPress saves.">
+<meta name="description" content="Paste Python, Rust, JavaScript, TypeScript or Go source and see how many LLM tokens TokenPress saves.">
 <!-- Inline data URI: the page must not fetch anything at runtime. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231f6feb'/%3E%3Cpath d='M4 5h8M8 5v7' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
@@ -13,9 +13,9 @@
 <header class="site-header">
   <h1>TokenPress</h1>
   <p class="tagline">
-    A token-aware formatter for Python, Rust and JavaScript/TypeScript that
-    minimizes LLM token usage while preserving behavior. Paste code below, pick
-    the flags, and see what the output costs.
+    A token-aware formatter for Python, Rust, JavaScript/TypeScript and Go
+    that minimizes LLM token usage while preserving behavior. Paste code below,
+    pick the flags, and see what the output costs.
   </p>
   <p class="invariant">
     Output that fails verification (re-parse + equivalence) is never shown —
@@ -52,6 +52,10 @@
       <label class="lang-option">
         <input type="radio" name="language" value="tsx">
         <span>TSX</span>
+      </label>
+      <label class="lang-option">
+        <input type="radio" name="language" value="go">
+        <span>Go</span>
       </label>
     </fieldset>
 
@@ -149,9 +153,30 @@
       </p>
     </fieldset>
 
+    <fieldset class="options" id="go-options" hidden>
+      <legend>Go options</legend>
+      <label><input type="checkbox" id="go-strip-comments"> Strip comments <span class="hint">(<code>--go-strip-comments</code> — keeps <code>//go:</code> directives and build constraints)</span></label>
+      <p class="note">
+        With that flag off, Go formatting is context-lossless: every comment
+        survives byte for byte — trailing and inline ones included — and only
+        whitespace is minimized. With it on, the comments the Go toolchain
+        reads as instructions are still kept: <code>//go:</code> directives,
+        <code>/*line*/</code> and build constraints (<code>//go:build</code>
+        and the legacy <code>// +build</code>). At either setting a file that
+        imports <code>"C"</code> is left byte for byte identical, so a cgo file
+        reports no savings at all.
+      </p>
+      <p class="note">
+        In the browser, verification is internal only (re-parse plus
+        AST equivalence): WebAssembly cannot spawn processes, so the
+        command-line tool's <code>--verify external</code>, which runs
+        <code>gofmt -e</code> over the output, is not available here.
+      </p>
+    </fieldset>
+
     <label class="source-label" for="source">Source code</label>
     <textarea id="source" spellcheck="false" rows="16"
-      placeholder="Paste Python, Rust, JavaScript or TypeScript source here…"></textarea>
+      placeholder="Paste Python, Rust, JavaScript, TypeScript or Go source here…"></textarea>
 
     <div class="actions">
       <button type="button" id="format" disabled>Loading…</button>

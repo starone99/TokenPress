@@ -1,10 +1,10 @@
 //! WebAssembly bindings for TokenPress.
 //!
-//! The Python, Rust and JavaScript/TypeScript formatters are exposed. Each
+//! The Python, Rust, JavaScript/TypeScript and Go formatters are exposed. Each
 //! `#[wasm_bindgen]` export ([`format_python_json`], [`format_rust_json`],
-//! [`format_js_json`]) is a JSON-in/JSON-out delegation; every decision lives
-//! in the plain functions below, so the whole crate is exercised — and
-//! covered — by ordinary host tests.
+//! [`format_js_json`], [`format_go_json`]) is a JSON-in/JSON-out delegation;
+//! every decision lives in the plain functions below, so the whole crate is
+//! exercised — and covered — by ordinary host tests.
 //!
 //! The core invariant is preserved across the boundary: when a formatter
 //! refuses output (parse failure, or output that fails verification) the
@@ -21,6 +21,19 @@
 //! expression-position comments are dropped, JSX text is never compressed).
 //! The library reports no warnings, so neither does this boundary; callers
 //! state the caveats themselves.
+//!
+//! Go's caveat set is a different shape: at the default settings it is
+//! **context-lossless** — every comment survives byte for byte, trailing and
+//! inline ones included — and [`WasmGoOptions::strip_comments`] is the lossy
+//! opt-in. Even then the comments the Go toolchain reads as instructions are
+//! kept: `//go:` directives, `line` directives (in both their `//` and block
+//! comment forms) and build constraints (`//go:build` and the legacy
+//! `// +build`). Three rules hold at *both* settings, because
+//! they are whitespace rules rather than deletion rules: an indented
+//! directive-shaped comment is never moved to column 0 (where the toolchain
+//! would start obeying it), a build-constraint prologue is reproduced verbatim
+//! (blank lines included), and a file that imports `"C"` is left byte for byte
+//! identical and so reports no savings at all.
 
 use std::path::Path;
 
@@ -28,6 +41,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tokenpress_core::{Error, FormatOptions, FormatResult, Formatter, TokenizerKind, VerifyLevel};
+use tokenpress_go::{GoFormatter, GoOptions};
 use tokenpress_js::{JsFormatter, JsOptions};
 use tokenpress_python::{PythonFormatter, PythonOptions};
 use tokenpress_rust::{RustFormatter, RustOptions};
@@ -45,10 +59,11 @@ const REPORTED_TOKENIZERS: [(&str, TokenizerKind); 2] = [
 ///
 /// It must never become [`VerifyLevel::External`]: that level runs the
 /// language's own toolchain in a child process (`tsc --noEmit`, falling back
-/// to `node --check`, for JavaScript/TypeScript), and a wasm module cannot
-/// spawn processes — every call would fail. [`VerifyLevel::AstEquiv`] is the
-/// strongest level that is purely in-process: the output is re-parsed and
-/// compared with the input for equivalence.
+/// to `node --check`, for JavaScript/TypeScript; `gofmt -e` for Go), and a
+/// wasm module cannot spawn processes — every call would fail.
+/// [`VerifyLevel::AstEquiv`] is the strongest level that is purely
+/// in-process: the output is re-parsed and compared with the input for
+/// equivalence.
 const VERIFY: VerifyLevel = VerifyLevel::AstEquiv;
 
 /// Python formatting flags accepted at the boundary.
@@ -185,6 +200,31 @@ impl Default for WasmJsOptions {
 
 impl From<&WasmJsOptions> for JsOptions {
     fn from(options: &WasmJsOptions) -> Self {
+        Self {
+            strip_comments: options.strip_comments,
+        }
+    }
+}
+
+/// Go formatting flags accepted at the boundary.
+///
+/// Deserialized like [`WasmPythonOptions`]: every field optional, unknown
+/// fields rejected.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WasmGoOptions {
+    pub strip_comments: bool,
+}
+
+impl Default for WasmGoOptions {
+    fn default() -> Self {
+        let GoOptions { strip_comments } = GoOptions::default();
+        Self { strip_comments }
+    }
+}
+
+impl From<&WasmGoOptions> for GoOptions {
+    fn from(options: &WasmGoOptions) -> Self {
         Self {
             strip_comments: options.strip_comments,
         }
@@ -371,6 +411,15 @@ pub fn format_js(source: &str, options: &WasmJsOptions) -> Result<WasmFormatOutp
     )
 }
 
+/// Formats Go source with the given flags.
+pub fn format_go(source: &str, options: &WasmGoOptions) -> Result<WasmFormatOutput, WasmError> {
+    run(
+        &GoFormatter::new(options.into()),
+        Path::new("input.go"),
+        source,
+    )
+}
+
 /// Renders either outcome as the JSON the JavaScript side sees.
 fn to_json_result(outcome: Result<WasmFormatOutput, WasmError>) -> Result<String, String> {
     match outcome {
@@ -429,6 +478,34 @@ pub fn format_js_json(source: &str, options_json: &str) -> Result<String, String
     to_json_result(parse_options(options_json).and_then(|options| format_js(source, &options)))
 }
 
+/// Formats Go source.
+///
+/// `options_json` is a JSON object with the optional boolean flag
+/// `strip_comments`; pass `"{}"` for the defaults. Resolves and rejects
+/// exactly like [`format_python_json`].
+///
+/// Verification is **internal only** — re-parse plus AST equivalence. A wasm
+/// module cannot spawn processes, so the external level (`gofmt -e`, which the
+/// CLI offers as `--verify external`) is not available here and is never used;
+/// see [`VERIFY`].
+///
+/// Comments: at the defaults the output is comment-preserving — every comment
+/// survives byte for byte. `strip_comments` is the lossy opt-in, and even then
+/// the comments the Go toolchain reads as instructions are kept: `//go:`
+/// directives, `line` directives (in both their `//` and block comment forms)
+/// and build constraints (`//go:build` and the legacy `// +build`). A file
+/// that imports `"C"` is left byte for byte identical at either setting, so it
+/// reports no savings at all.
+///
+/// The block comment form is spelled out in words rather than shown, on
+/// purpose: `wasm-bindgen` copies this text into a JSDoc block in the
+/// generated glue, and a literal comment terminator inside it would close that
+/// block early and emit unparsable JavaScript. See the guard test.
+#[wasm_bindgen(js_name = formatGo)]
+pub fn format_go_json(source: &str, options_json: &str) -> Result<String, String> {
+    to_json_result(parse_options(options_json).and_then(|options| format_go(source, &options)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,6 +521,10 @@ mod tests {
 
     fn format_js_ok(source: &str, options: WasmJsOptions) -> WasmFormatOutput {
         format_js(source, &options).expect("formatting succeeds")
+    }
+
+    fn format_go_ok(source: &str, options: WasmGoOptions) -> WasmFormatOutput {
+        format_go(source, &options).expect("formatting succeeds")
     }
 
     fn js_dialect(dialect: WasmJsDialect) -> WasmJsOptions {
@@ -607,6 +688,11 @@ mod tests {
             format_rust_json("fn f() {\n    let x = 1;\n}\n", "{}").expect("formatting succeeds"),
             format_js_json("function f() {\n    const x = 1;\n    return x;\n}\n", "{}")
                 .expect("formatting succeeds"),
+            format_go_json(
+                "package main\n\nfunc f() {\n    x := 1\n    _ = x\n}\n",
+                "{}",
+            )
+            .expect("formatting succeeds"),
         ] {
             let value = parsed(&json);
             for name in ["o200k_base", "cl100k_base"] {
@@ -653,6 +739,9 @@ mod tests {
         assert!(debugged.contains("strip_comments"), "{debugged}");
         assert!(debugged.contains("Js"), "{debugged}");
         assert_eq!(js_options.dialect, WasmJsDialect::default());
+        let go_options = WasmGoOptions::default();
+        assert!(format!("{:?}", go_options.clone()).contains("strip_comments"));
+        assert!(!go_options.strip_comments);
         let output = WasmFormatOutput {
             code: "x=1".into(),
             changed: true,
@@ -773,6 +862,10 @@ mod tests {
             format("x = f(a, b)\n", WasmPythonOptions::default()),
             format_rs("fn f() { g(a, b); }\n", WasmRustOptions::default()),
             format_js_ok("function f() { g(a, b); }\n", WasmJsOptions::default()),
+            format_go_ok(
+                "package main\n\nfunc f() {\n    g(a, b)\n}\n",
+                WasmGoOptions::default(),
+            ),
         ] {
             let names: Vec<_> = out.tokens.iter().map(|stats| stats.tokenizer).collect();
             assert_eq!(names, ["o200k_base", "cl100k_base"]);
@@ -784,10 +877,13 @@ mod tests {
         let python = "import os\nimport sys\n\nx = f(a, b)\n";
         let rust = "fn add(a: i32, b: i32) -> i32 {\n    let sum = a + b;\n    sum\n}\n";
         let js = "function add(a, b) {\n    const sum = a + b;\n    return sum;\n}\n";
+        let go =
+            "package main\n\nfunc add(a int, b int) int {\n    sum := a + b\n    return sum\n}\n";
         for (source, out) in [
             (python, format(python, WasmPythonOptions::default())),
             (rust, format_rs(rust, WasmRustOptions::default())),
             (js, format_js_ok(js, WasmJsOptions::default())),
+            (go, format_go_ok(go, WasmGoOptions::default())),
         ] {
             for (name, kind) in [
                 ("o200k_base", TokenizerKind::O200kBase),
@@ -811,6 +907,7 @@ mod tests {
             format("", WasmPythonOptions::default()),
             format_rs("", WasmRustOptions::default()),
             format_js_ok("", WasmJsOptions::default()),
+            format_go_ok("", WasmGoOptions::default()),
         ] {
             assert_eq!(out.code, "");
             assert!(!out.changed);
@@ -1056,6 +1153,166 @@ mod tests {
             .expect_err("an unknown dialect is refused");
         for name in ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"] {
             assert!(err.contains(&format!("`{name}`")), "{err}");
+        }
+    }
+
+    /// The 1-based numbers of the doc-comment lines in `source` that contain a
+    /// block-comment terminator.
+    fn doc_lines_closing_a_comment_block(source: &str) -> Vec<usize> {
+        let mut lines = Vec::new();
+        for (index, line) in source.lines().enumerate() {
+            let trimmed = line.trim_start();
+            let is_doc = trimmed.starts_with("///") || trimmed.starts_with("//!");
+            if is_doc && trimmed.contains("*/") {
+                lines.push(index + 1);
+            }
+        }
+        lines
+    }
+
+    #[test]
+    fn the_jsdoc_guard_finds_a_doc_comment_that_closes_the_block() {
+        // Doc lines are reported at either marker, whatever their indentation;
+        // an ordinary comment or a string is not a doc comment and is left
+        // alone.
+        let source = "//! a */ b\n/// c\n    /// d */\n// e */\nlet f = \"*/\";\n";
+        assert_eq!(doc_lines_closing_a_comment_block(source), vec![1, 3]);
+    }
+
+    #[test]
+    fn no_doc_comment_in_this_file_closes_the_generated_jsdoc_block() {
+        // `wasm-bindgen` copies an exported item's doc comment verbatim into a
+        // JSDoc block in the generated JS glue. A block terminator inside one
+        // therefore closes that block early and emits a JS file that fails to
+        // parse in the browser — a break `cargo build`, `cargo test` and
+        // clippy all wave through, because the Rust side of it is fine. Go's
+        // comment policy is the natural place to write one (its `line`
+        // directive has a block-comment form), so this is guarded rather than
+        // remembered.
+        assert_eq!(
+            doc_lines_closing_a_comment_block(include_str!("lib.rs")),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn go_default_options_minimize_whitespace_and_keep_every_comment() {
+        let out = format_go_ok(
+            "package main\n\n// note\nfunc main()  {\n\n    x := 1\n    _ = x // tail\n}\n",
+            WasmGoOptions::default(),
+        );
+        // Unlike Rust and JS/TS, nothing is dropped at the defaults: the
+        // trailing comment survives as well as the leading one.
+        assert_eq!(
+            out.code,
+            "package main\n// note\nfunc main() {\nx := 1\n_ = x // tail\n}\n"
+        );
+        assert!(out.changed);
+    }
+
+    #[test]
+    fn go_already_minimal_source_is_reported_as_unchanged() {
+        let out = format_go_ok("package main\nfunc f(){}\n", WasmGoOptions::default());
+        assert_eq!(out.code, "package main\nfunc f(){}\n");
+        assert!(!out.changed);
+    }
+
+    #[test]
+    fn go_strip_comments_toggles_comment_removal() {
+        let source = "package main\n\n// note\nfunc f() {}\n";
+        assert_eq!(
+            format_go_ok(source, WasmGoOptions::default()).code,
+            "package main\n// note\nfunc f() {}\n"
+        );
+        assert_eq!(
+            format_go_ok(
+                source,
+                WasmGoOptions {
+                    strip_comments: true
+                }
+            )
+            .code,
+            "package main\nfunc f() {}\n"
+        );
+    }
+
+    #[test]
+    fn go_strip_comments_keeps_toolchain_directives() {
+        // The lossy opt-in is still not lossy about the comments the Go
+        // toolchain reads as instructions.
+        let source = "//go:build linux\n\npackage main\n\n//go:generate echo hi\nfunc f() {}\n";
+        assert_eq!(
+            format_go_ok(
+                source,
+                WasmGoOptions {
+                    strip_comments: true
+                }
+            )
+            .code,
+            "//go:build linux\n\npackage main\n//go:generate echo hi\nfunc f() {}\n"
+        );
+    }
+
+    #[test]
+    fn invalid_go_returns_a_structured_error_and_no_output() {
+        let err = format_go("package main\nfunc {{{", &WasmGoOptions::default())
+            .expect_err("invalid Go cannot be formatted");
+        assert_eq!(err.kind, "parse");
+        assert!(!err.message.is_empty());
+        // As for the other languages: a refusal carries no code at all.
+        assert_eq!(
+            err.to_json(),
+            format!(
+                "{{\"kind\":\"parse\",\"message\":{}}}",
+                serde_json::Value::from(err.message.clone())
+            )
+        );
+    }
+
+    #[test]
+    fn json_boundary_formats_go() {
+        let json =
+            format_go_json("package main\n\nfunc f()  {}\n", "{}").expect("formatting succeeds");
+        let value = parsed(&json);
+        assert_eq!(value["changed"], serde_json::json!(true));
+        assert_eq!(
+            value["code"],
+            serde_json::json!("package main\nfunc f() {}\n")
+        );
+    }
+
+    #[test]
+    fn json_boundary_reads_go_option_flags() {
+        let json = format_go_json(
+            "package main\n\n// note\nfunc f() {}\n",
+            "{\"strip_comments\":true}",
+        )
+        .expect("formatting succeeds");
+        assert_eq!(
+            parsed(&json)["code"],
+            serde_json::json!("package main\nfunc f() {}\n")
+        );
+    }
+
+    #[test]
+    fn json_boundary_reports_go_failures_as_structured_json() {
+        let err =
+            format_go_json("package main\nfunc {{{", "{}").expect_err("invalid Go is refused");
+        assert!(
+            err.starts_with("{\"kind\":\"parse\",\"message\":\""),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn json_boundary_rejects_malformed_go_option_objects() {
+        for options in ["", "{\"nope\":true}", "{\"strip_comments\":\"yes\"}"] {
+            let err = format_go_json("package main\nfunc f(){}\n", options)
+                .expect_err("bad options are refused");
+            assert!(
+                err.starts_with("{\"kind\":\"options\",\"message\":\""),
+                "{err}"
+            );
         }
     }
 }

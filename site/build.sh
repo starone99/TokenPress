@@ -6,6 +6,9 @@
 # JS glue can never disagree with the `wasm-bindgen` crate the wasm blob was
 # compiled against. Re-running is cheap: an already-downloaded CLI of the
 # right version is reused.
+#
+# Prerequisites: bash, curl, tar, a rustup toolchain, and `jq` (used to locate
+# the tree-sitter libc shim, see the CFLAGS export below).
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,6 +79,46 @@ fi
 "$cli" --version
 
 rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
+
+# Go's grammar is C, and wasm32-unknown-unknown ships no libc headers, so
+# `tree-sitter-go`'s `src/parser.c` cannot find <stdlib.h> on its own.
+#
+# The shim already exists: `tree-sitter-language` ships one under wasm/include
+# (headers) and wasm/src (stdio.c, stdlib.c, string.c) and advertises both
+# paths as `links` metadata (DEP_TREE_SITTER_LANGUAGE_WASM_HEADERS /
+# ..._WASM_SRC). The `tree-sitter` runtime's own build script reads that
+# metadata, which is why the runtime builds for wasm *and* compiles the shim's
+# .c files into the link. Upstream `tree-sitter-go`'s build script does not
+# read it — it just compiles src/parser.c with `include("src")` — and that gap
+# is the whole failure. Putting the shim's headers on the C include path is
+# enough: cc-rs honours CFLAGS_<target>, parser.c then compiles, and the
+# symbols resolve against the shim objects the runtime already contributes.
+#
+# Do not delete this: without it the build dies with
+# `src/tree_sitter/parser.h:10:10: fatal error: 'stdlib.h' file not found`.
+# The path is discovered from `cargo metadata` rather than hardcoded, because
+# the registry checkout directory carries a hash that varies by machine.
+if ! command -v jq >/dev/null 2>&1; then
+    echo "error: jq is required to locate the wasm libc shim the Go grammar needs" >&2
+    exit 1
+fi
+ts_language_manifest="$(cargo metadata --format-version 1 |
+    jq -r 'first(.packages[] | select(.name == "tree-sitter-language") | .manifest_path) // empty')"
+if [ -z "$ts_language_manifest" ]; then
+    echo "error: no tree-sitter-language package in cargo metadata" >&2
+    echo "       it is what ships the wasm libc shim the Go grammar needs" >&2
+    exit 1
+fi
+ts_wasm_include="$(dirname "$ts_language_manifest")/wasm/include"
+if [ ! -d "$ts_wasm_include" ]; then
+    echo "error: no wasm libc shim headers at $ts_wasm_include" >&2
+    echo "       tree-sitter-language changed its layout; the Go grammar" >&2
+    echo "       cannot be compiled for wasm32-unknown-unknown without them" >&2
+    exit 1
+fi
+echo "wasm libc shim headers: $ts_wasm_include"
+export CFLAGS_wasm32_unknown_unknown="-I$ts_wasm_include"
+
 cargo build -p tokenpress-wasm --release --target wasm32-unknown-unknown
 
 wasm="$repo_root/target/wasm32-unknown-unknown/release/tokenpress_wasm.wasm"

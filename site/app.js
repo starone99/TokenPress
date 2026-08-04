@@ -5,11 +5,12 @@ import init, {
   formatPython,
   formatRust,
   formatJs,
+  formatGo,
 } from "./pkg/tokenpress_wasm.js";
 
 // Indirection so the rendering paths can be exercised without the wasm bundle
 // (see window.tokenpressDemo at the bottom of this file).
-const backend = { formatPython, formatRust, formatJs };
+const backend = { formatPython, formatRust, formatJs, formatGo };
 
 // The four JavaScript/TypeScript entries are one backend with one dialect
 // each: formatJs has no file to read an extension from, so the dialect is
@@ -104,6 +105,26 @@ export const Badge = ({ name, count = 0 }: Props): JSX.Element => (
   </span>
 );
 `,
+  go: `package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Counts how often each word appears.
+func wordCounts(text string) map[string]int {
+	counts := map[string]int{}
+	for _, word := range strings.Fields(text) {
+		counts[word]++ // Trailing comments survive too, at the defaults.
+	}
+	return counts
+}
+
+func main() {
+	fmt.Println(wordCounts("a b a")["a"])
+}
+`,
 };
 
 // Report order. The boundary emits the tokenizer stats as a JSON object,
@@ -123,6 +144,7 @@ const dom = {
   pythonOptions: el("python-options"),
   rustOptions: el("rust-options"),
   jsOptions: el("js-options"),
+  goOptions: el("go-options"),
   result: el("result"),
   placeholder: el("placeholder"),
   changed: el("changed"),
@@ -140,6 +162,9 @@ function currentLanguage() {
 function currentOptions(language) {
   if (language === "rust") {
     return { strip_doc_comments: el("rs-strip-doc-comments").checked };
+  }
+  if (language === "go") {
+    return { strip_comments: el("go-strip-comments").checked };
   }
   if (language in JS_DIALECTS) {
     return {
@@ -159,6 +184,9 @@ function backendFor(language) {
   if (language === "rust") {
     return backend.formatRust;
   }
+  if (language === "go") {
+    return backend.formatGo;
+  }
   return language in JS_DIALECTS ? backend.formatJs : backend.formatPython;
 }
 
@@ -167,6 +195,7 @@ function syncLanguage() {
   dom.pythonOptions.hidden = language !== "python";
   dom.rustOptions.hidden = language !== "rust";
   dom.jsOptions.hidden = !(language in JS_DIALECTS);
+  dom.goOptions.hidden = language !== "go";
 }
 
 function percent(ratio) {
