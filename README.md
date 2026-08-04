@@ -82,13 +82,11 @@ not a character minifier.
 | JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts` `.cts` `.tsx` | Supported (with the comment/JSX caveats below) |
 | Ruby | `.rb` `.rake` `.gemspec` `.ru`, plus the exact file names `Gemfile` and `Rakefile` | Supported (context-lossless at default settings; see below) |
 | Go | `.go` | Supported (context-lossless at default settings; see below) |
-| Java | `.java` | **Experimental** until external verification lands (see below) |
+| Java | `.java` | Supported (context-lossless at default settings; see below) |
 
-**`--verify external` is real for JavaScript/TypeScript, Ruby and Go**, which
-is what "Supported" is gated on here: the output is handed to the language's
-own toolchain, on top of the built-in AST-equivalence check. Java is the
-language that does not have it yet, which is exactly what "experimental" means
-in the table above.
+**`--verify external` is real for JavaScript/TypeScript, Ruby, Go and Java**,
+which is what "Supported" is gated on here: the output is handed to the
+language's own toolchain, on top of the built-in AST-equivalence check.
 
 For JavaScript/TypeScript it runs
 `tsc --noEmit --noCheck --skipLibCheck --allowJs --jsx preserve` over the
@@ -117,21 +115,41 @@ on PATH (it ships with every Go distribution) for Go paths, and **fails naming
 it** when it is missing. The probe is `gofmt -h`: `gofmt` has no `--version`,
 and a bare `gofmt` reads standard input.
 
+For Java it runs `javac -XDshould-stop.ifNoError=PARSE` — the compiler's own
+front end, stopped after the parse phase. Nothing is resolved, attributed,
+generated or run, and no class file is written, so no classpath, module path
+or build is needed: a file whose imports name types nothing provides still
+exits 0, which is what makes checking a single file out of a real project
+meaningful at all. The verdict is the exit status alone, and deliberately so —
+the JVM prints `Picked up JAVA_TOOL_OPTIONS: ...` to stderr on *every*
+invocation wherever that variable is set, so a stderr-based gate would reject
+everything on those machines. `--verify external` requires `javac` (any JDK)
+on PATH for Java paths and **fails naming it** when it is missing. Because
+`-XD` is javac's internal namespace and an unrecognised key is *silently
+ignored* rather than rejected, TokenPress runs the gate over a built-in
+valid-but-unresolvable fixture before trusting it, and fails loudly naming the
+option if a JDK ever stops honouring it — otherwise the check would quietly
+become a whole-program compile and start blaming TokenPress for your
+classpath.
+
 The candidate is checked in a private temp file — carrying the target's
 extension for JS/TS, always `.rb` for Ruby, which is what makes the
-extensionless `Gemfile` and `Rakefile` checkable at all, always `.go` for Go;
-nothing is written to your file until every check has passed. Python, Rust and
-Java do not implement the level yet and still treat it as `--verify ast`; the
-CLI says so on stderr when a `.py`, `.rs` or `.java` path is in the run.
+extensionless `Gemfile` and `Rakefile` checkable at all, always `.go` for Go,
+always `.java` for Java (safe because Java's public-class/filename rule is a
+semantic check the parse gate stops before reaching); nothing is written to
+your file until every check has passed. Python and Rust do not implement the
+level yet and still treat it as `--verify ast`; the CLI says so on stderr when
+a `.py` or `.rs` path is in the run.
 
 If your *input* does not pass the external checker (a file the toolchain
 already rejects — ESM syntax in a `.cjs`, a syntax newer than your `tsc`, a
 regexp literal prism parses and MRI refuses to compile, a `.go` file with no
-package clause), the output is not
-checked against it and the file is accepted on the built-in equivalence check
-alone: TokenPress does not fail a run over a file that was already broken
+package clause, a Java `long x = 99999999999;` with no `L` suffix), the output
+is not checked against it and the file is accepted on the built-in equivalence
+check alone: TokenPress does not fail a run over a file that was already broken
 before it ran. Expect the level to be substantially slower than
-`--verify ast` — it spawns a probe and two checker processes per file.
+`--verify ast` — it spawns a probe and two checker processes per file, and
+three for Java, where the third is the gate's own self-test.
 
 `.jsx` and `.tsx` are accepted, with one caveat that limits what they can save:
 **JSX text is never compressed.** Whitespace inside element children is
@@ -219,21 +237,18 @@ tree-sitter grammar compiles for `wasm32-unknown-unknown` once the libc shim
 Go at `--verify ast` (in-process re-parse plus AST equivalence) and not at
 `--verify external`, because a WebAssembly module cannot spawn `gofmt`.
 
-**Java is experimental.** The backend rides the same tree-sitter engine as Go:
+**Java is supported.** The backend rides the same tree-sitter engine as Go:
 it parses with `tree-sitter-java`, re-emits whitespace-minimally over the
 source bytes, verifies with re-parse plus AST-equivalence, and refuses to
 write anything that fails — the same core invariant as every other backend.
-What it does *not* have yet is external verification: `--verify external`
-currently behaves exactly like `--verify ast` for `.java` paths (`javac`'s
-parse gate is not invoked), and the CLI says so on stderr. That gate is what
-the other backends' "Supported" label is gated on, so Java carries
-**experimental** until it lands. Everything else is in place: `.java` is the
-whole path set (`module-info.java` and `package-info.java` are ordinary Java
+`--verify external` hands the output to `javac`'s own parse gate on top of
+that, which is what the "Supported" label is gated on. `.java` is the whole
+path set (`module-info.java` and `package-info.java` are ordinary Java
 sources needing no special case, while `pom.xml` and `build.gradle` are not
 Java source at all), and measured over apache/commons-lang 3.17.0 (500 files,
 7.4 MB) the savings are **-6.2%** at default settings and **-45.5%** with
 `--java-strip-comments`, both on `o200k_base`, with zero verification
-refusals.
+refusals and every one of the 1,000 written outputs accepted by `javac`.
 
 **Java, like Ruby and Go, is context-lossless at default settings**, and it
 has less to defend than Go does: `javac` reads nothing out of a comment, so
@@ -369,11 +384,11 @@ Prerequisites for the consumer:
   `Unable to find libclang`. On Linux `apt install libclang-dev` (plus `gcc` or
   `clang`); on macOS `xcode-select --install`; on Windows install LLVM
   (`choco install llvm`) and set `LIBCLANG_PATH=C:\Program Files\LLVM\bin`.
-  **Neither `ruby` nor the Go or Java toolchains are needed to build** —
-  nothing in the build shells out to any of them. Ruby and Go are needed at
-  *run* time only if you pass `--verify external`, which runs `ruby -c` over
-  Ruby output and `gofmt -e` over Go output; the hooks do not by default, and
-  Java has no external checker yet at all. **Opt out with
+  **Neither `ruby` nor the Go toolchain nor a JDK is needed to build** —
+  nothing in the build shells out to any of them. They are needed at *run*
+  time only if you pass `--verify external`, which runs `ruby -c` over Ruby
+  output, `gofmt -e` over Go output and `javac`'s parse gate over Java output;
+  the hooks do not by default. **Opt out with
   `TOKENPRESS_NO_RUBY=1`, `TOKENPRESS_NO_GO=1` and/or
   `TOKENPRESS_NO_JAVA=1`**: the hook then builds the CLI without that
   backend's default-on cargo feature, dropping it from the dependency graph.
@@ -416,10 +431,10 @@ cannot install toolchain prerequisites into the job that uses it, so this
 action does not try to — provide your own step if your runner lacks them (this
 repository's own CI uses a local `.github/actions/libclang` composite action for
 exactly that, and consumers need their own equivalent). None of Ruby, the Go
-toolchain or a JDK is needed to build; Ruby and Go are needed at run time only
-if `extra-args` selects `--verify external`, which runs `ruby -c` over Ruby
-output and `gofmt -e` over Go output (GitHub-hosted runners preinstall both),
-and Java has no external checker yet at all. **Or drop the requirement with
+toolchain or a JDK is needed to build; they are needed at run time only if
+`extra-args` selects `--verify external`, which runs `ruby -c` over Ruby
+output, `gofmt -e` over Go output and `javac`'s parse gate over Java output
+(GitHub-hosted runners preinstall all three). **Or drop the requirement with
 `ruby: 'false'`, `go: 'false'` and/or `java: 'false'`**: the action then builds
 the CLI without that backend's default-on cargo feature, so it is not in the
 dependency graph. `ruby: 'false'` alone drops the libclang requirement; all
@@ -551,9 +566,9 @@ strip_comments = false        # --java-strip-comments
 
 That is the complete schema — there are no other keys. `verify = "external"`
 runs the JavaScript/TypeScript toolchain over JS/TS output, `ruby -c` over
-Ruby output and `gofmt -e` over Go output (see **Language support**); for
-`.py`, `.rs` and `.java` it still behaves exactly like `"ast"` and says so on
-stderr.
+Ruby output, `gofmt -e` over Go output and `javac`'s parse gate over Java
+output (see **Language support**); for `.py` and `.rs` it still behaves
+exactly like `"ast"` and says so on stderr.
 
 A `[ruby]`, `[go]` or `[java]` table is a config error naming the missing
 feature in a build that switched that backend off (see **Cargo features**

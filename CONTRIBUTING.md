@@ -202,6 +202,25 @@ Note that `gofmt` is probed with `gofmt -h`. It has no `--version` flag, and a
 **bare** `gofmt` reads standard input — a probe without an argument would
 block rather than fail, so never write one.
 
+**`javac` must be on PATH to run the suite too**, on the same terms:
+`tokenpress-java` implements `--verify external` by running
+`javac -XDshould-stop.ifNoError=PARSE`, and its tests exercise that against
+real processes. Any JDK provides it — CI installs one explicitly with
+`actions/setup-java` (Temurin 21, the JDK the gate was measured against)
+rather than relying on whatever a runner image happens to ship. What cannot be
+arranged on demand (a machine with no `javac`, a process that fails to spawn,
+a JDK that stopped honouring the flag) goes through the same injectable
+`Tools` seam.
+
+Note that `javac` is probed with `javac -version`. `javac -h` exits 2 (it
+wants a native-header output directory), and a **bare** `javac` exits 2 with
+`no source files` — either would make a perfectly good JDK look absent. Note
+too that `-XD` is javac's internal option namespace and an unrecognised key is
+*silently ignored*: `-XDbogus.key=PARSE` runs a full compile and exits 1
+without a word about the flag. That is why the checker self-tests the gate
+over a built-in valid-but-unresolvable fixture before trusting it, and why
+that self-test is not optional.
+
 **Getting `ruby` and `gofmt` onto a Windows machine without administrator
 rights**, since CI preinstalls both and a local checkout does not: Go ships a
 plain `.zip` that needs no installer at all (`go1.26.5.windows-amd64.zip`,
@@ -212,12 +231,9 @@ Inno Setup installer that takes a per-user target —
 Both were measured this way (exit 0, no UAC prompt); with those two on PATH
 plus `LIBCLANG_PATH`, `scripts\coverage.ps1` runs to completion and exits 0.
 Without them six `external_verify_*` tests in `tokenpress-cli` fail — a
-missing toolchain, not a regression.
-
-**Java needs nothing on PATH yet.** `tokenpress-java` has no external checker:
-`--verify external` folds into the `AstEquiv` arm for `.java` paths, which is
-why the language is marked **experimental** in the README. A `javac` gate is
-the task that will change both.
+missing toolchain, not a regression. A JDK is now a **third** local
+prerequisite on the same footing; no per-user Windows install has been
+measured for it yet, and the six-test figure predates the Java checker.
 
 ## Integration surfaces
 

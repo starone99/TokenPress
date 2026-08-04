@@ -15,11 +15,13 @@ pub enum VerifyLevel {
     ///
     /// Implemented by the JavaScript/TypeScript backend, which runs
     /// `tsc --noEmit` (falling back to `node --check`), by the Ruby backend,
-    /// which runs `ruby -c`, and by the Go backend, which runs `gofmt -e`.
-    /// All three run on top of [`VerifyLevel::AstEquiv`] and fail when the
-    /// tool they need is not on PATH. Python (`py_compile`) and Rust
-    /// (`rustc --emit=metadata`) do not implement it yet and treat this level
-    /// exactly like [`VerifyLevel::AstEquiv`].
+    /// which runs `ruby -c`, by the Go backend, which runs `gofmt -e`, and by
+    /// the Java backend, which runs `javac` stopped after its parse phase
+    /// (`javac -XDshould-stop.ifNoError=PARSE`). All four run on top of
+    /// [`VerifyLevel::AstEquiv`] and fail when the tool they need is not on
+    /// PATH. Python (`py_compile`) and Rust (`rustc --emit=metadata`) do not
+    /// implement it yet and treat this level exactly like
+    /// [`VerifyLevel::AstEquiv`].
     External,
 }
 

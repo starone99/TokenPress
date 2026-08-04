@@ -472,65 +472,89 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
 // but that is an opt-in flag documenting itself, not a loss behind the
 // caller's back.
 
-// `--verify external` is real for JavaScript/TypeScript, for Ruby and for Go,
-// but still equals `--verify ast` for Python and Rust, so a run containing
-// files of those two languages must not read the level as a stronger
-// guarantee than it is. The tail — which backends do not have it — is now
-// fixed, because the two that lack it are both unconditional backends. The
-// head — which backends do have it — names only backends this binary was
-// actually built with: promising Ruby's or Go's checker in a build that
-// refuses `.rb` or `.go` outright would be a lie about this binary, which is
-// why the head has one variant per `ruby`/`go` combination. Head and tail are
-// written out as one block by `warn_external_verify`.
-#[cfg(all(feature = "ruby", feature = "go"))]
+// `--verify external` is real for JavaScript/TypeScript, for Ruby, for Go and
+// for Java, but still equals `--verify ast` for Python and Rust, so a run
+// containing files of those two languages must not read the level as a
+// stronger guarantee than it is.
+//
+// The tail — which backends do *not* have it — is therefore a single fixed
+// string: the only two left are Python and Rust, both unconditional backends,
+// so nothing about it varies with the build. The head — which backends *do*
+// have it — names only backends this binary was actually built with:
+// promising Ruby's, Go's or Java's checker in a build that refuses `.rb`,
+// `.go` or `.java` outright would be a lie about this binary. JS/TS is
+// unconditional and always leads; the other three are cargo features, which is
+// why the head is a 2×2×2 cross-product of `ruby`/`go`/`java` and why the
+// grammar of the closing clause ("it"/"both"/"each") differs per variant with
+// the number of checkers named. Head and tail are written out as one block by
+// `warn_external_verify`.
+#[cfg(all(feature = "ruby", feature = "go", feature = "java"))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for JavaScript/TypeScript,
+  where `--verify external` runs `tsc --noEmit` (falling back to
+  `node --check`), for Ruby, where it runs `ruby -c`, for Go, where it runs
+  `gofmt -e`, and for Java, where it runs `javac`; each fails if the tool it
+  needs is not on PATH.";
+
+#[cfg(all(feature = "ruby", feature = "go", not(feature = "java")))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
 warning: external-tooling verification is implemented for JavaScript/TypeScript,
   where `--verify external` runs `tsc --noEmit` (falling back to
   `node --check`), for Ruby, where it runs `ruby -c`, and for Go, where it runs
   `gofmt -e`; each fails if the tool it needs is not on PATH.";
 
-#[cfg(all(feature = "ruby", not(feature = "go")))]
+#[cfg(all(feature = "ruby", not(feature = "go"), feature = "java"))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for JavaScript/TypeScript,
+  where `--verify external` runs `tsc --noEmit` (falling back to
+  `node --check`), for Ruby, where it runs `ruby -c`, and for Java, where it
+  runs `javac`; each fails if the tool it needs is not on PATH.";
+
+#[cfg(all(feature = "ruby", not(feature = "go"), not(feature = "java")))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
 warning: external-tooling verification is implemented for JavaScript/TypeScript,
   where `--verify external` runs `tsc --noEmit` (falling back to
   `node --check`), and for Ruby, where it runs `ruby -c`; both fail if the tool
   they need is not on PATH.";
 
-#[cfg(all(not(feature = "ruby"), feature = "go"))]
+#[cfg(all(not(feature = "ruby"), feature = "go", feature = "java"))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for JavaScript/TypeScript,
+  where `--verify external` runs `tsc --noEmit` (falling back to
+  `node --check`), for Go, where it runs `gofmt -e`, and for Java, where it
+  runs `javac`; each fails if the tool it needs is not on PATH.";
+
+#[cfg(all(not(feature = "ruby"), feature = "go", not(feature = "java")))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
 warning: external-tooling verification is implemented for JavaScript/TypeScript,
   where `--verify external` runs `tsc --noEmit` (falling back to
   `node --check`), and for Go, where it runs `gofmt -e`; both fail if the tool
   they need is not on PATH.";
 
-#[cfg(all(not(feature = "ruby"), not(feature = "go")))]
+#[cfg(all(not(feature = "ruby"), not(feature = "go"), feature = "java"))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for JavaScript/TypeScript,
+  where `--verify external` runs `tsc --noEmit` (falling back to
+  `node --check`), and for Java, where it runs `javac`; both fail if the tool
+  they need is not on PATH.";
+
+#[cfg(all(not(feature = "ruby"), not(feature = "go"), not(feature = "java")))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
 warning: external-tooling verification is implemented for JavaScript/TypeScript,
   where `--verify external` runs `tsc --noEmit` (falling back to
   `node --check`); it fails if the tool it needs is not on PATH.";
 
-// The tail — which backends the level does *not* reach — varies with the
-// `java` feature alone: Python and Rust are unconditional backends that still
-// lack it, and Java lacks it too until J5 wires up `javac`. `ruby` and `go`
-// cannot appear here at all, because both of those checkers are real.
-#[cfg(feature = "java")]
-const EXTERNAL_VERIFY_WARNING_TAIL: &str =
-    " It is not implemented for Python, Rust and Java: none of
-  `py_compile`, `rustc --emit=metadata` and `javac` is invoked, so for `.py`,
-  `.rs` and `.java` this level behaves exactly like `--verify ast`, i.e. the
-  output is re-parsed and compared for AST / token-stream equivalence.";
-
-#[cfg(not(feature = "java"))]
+// The tail — which backends the level does *not* reach. Python and Rust are
+// unconditional backends, so this no longer varies with any feature: `ruby`,
+// `go` and `java` cannot appear here at all, because all three of those
+// checkers are real.
 const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python and Rust: neither
   `py_compile` nor `rustc --emit=metadata` is invoked, so for `.py` and `.rs`
   this level behaves exactly like `--verify ast`, i.e. the output is re-parsed
   and compared for AST / token-stream equivalence.";
 
 /// Extensions the warning above is about: the backends the external level does
-/// not reach yet.
-#[cfg(feature = "java")]
-const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 3] = ["py", "rs", "java"];
-#[cfg(not(feature = "java"))]
+/// not reach yet. Unconditional, for the reason the tail is.
 const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 2] = ["py", "rs"];
 
 /// True when `path` belongs to a backend the external level does not reach.
@@ -1660,22 +1684,77 @@ mod tests {
 
     #[cfg(feature = "java")]
     #[test]
-    fn external_verify_warning_names_java_as_not_implemented() {
-        // `javac`'s parse gate is not wired up yet (J5), so Java joins Python
-        // and Rust: the level must not be read as a stronger guarantee than
-        // it is.
+    fn external_verify_warning_names_java_as_implemented() {
+        // Java's `External` level really runs javac's parse gate, so the
+        // warning has to name it on the *implemented* side and must no longer
+        // list `.java` among the extensions the level does not reach.
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, out, err) =
+            run_cli_err(&["format", "--verify", "external", py.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("javac"), "{err}");
+        assert!(!err.contains("`.java`"), "{err}");
+        assert!(err.contains("py_compile"), "{err}");
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn external_verify_warning_is_absent_for_java_paths() {
+        // A Java-only run must not be told the level is a no-op for it.
         let dir = Scratch::new();
         let java = dir.file("A.java", "public  class  A  {}\n");
         let (code, out, err) =
             run_cli_err(&["format", "--verify", "external", java.to_str().unwrap()]);
         assert_eq!(code, 0, "{out}");
-        assert_eq!(err.matches("warning:").count(), 1);
-        assert!(err.contains("javac"), "{err}");
-        assert!(err.contains("`.java`"), "{err}");
-        assert!(err.contains("--verify ast"), "{err}");
+        assert_eq!(err, "");
         assert_eq!(
             std::fs::read_to_string(&java).unwrap(),
             "public class A {}\n"
+        );
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn external_verify_runs_the_real_checker_over_java() {
+        // End to end at the level that spawns `javac`: the output is accepted,
+        // written, and stable on a second pass. The file is named after
+        // neither of the fixed scratch names the gate writes under, which is
+        // part of what makes it an end-to-end check.
+        let dir = Scratch::new();
+        let java = dir.file(
+            "Real.java",
+            "public class Real {\n\n    int f(int a) {\n        return a;\n    }\n}\n",
+        );
+        let path = java.to_str().unwrap();
+        let (code, _, _) = run_cli_err(&["format", "--verify", "external", path]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&java).unwrap(),
+            "public class Real {\nint f(int a) {\nreturn a;\n}\n}\n"
+        );
+        let (code, out, _) = run_cli_err(&["check", "--verify", "external", path]);
+        assert_eq!(code, 0, "{out}");
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn external_verify_does_not_blame_java_input_the_checker_already_rejects() {
+        // `99999999999` with no `L` suffix is a clean tree-sitter parse and
+        // `error: integer number too large` to javac. The policy is that the
+        // external level is then satisfied by the built-in equivalence check
+        // alone, so the run succeeds instead of failing on the user's own
+        // input.
+        let dir = Scratch::new();
+        let java = dir.file("Big.java", "class Big {\n    long  x  =  99999999999;\n}\n");
+        let (code, out, err) =
+            run_cli_err(&["format", "--verify", "external", java.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(err, "");
+        assert_eq!(
+            std::fs::read_to_string(&java).unwrap(),
+            "class Big {\nlong x = 99999999999;\n}\n"
         );
     }
 
@@ -2570,9 +2649,9 @@ mod tests {
     #[cfg(not(feature = "java"))]
     #[test]
     fn the_external_verify_warning_does_not_mention_java_without_the_feature() {
-        // A build that cannot format Java at all must not name `javac` among
-        // the checkers the level does not reach: there is no `.java` path for
-        // it to reach.
+        // A build that cannot format Java at all must not advertise Java's
+        // external checker, exactly as it must not advertise Ruby's or Go's:
+        // there is no `.java` path for it to reach.
         let dir = Scratch::new();
         let py = dir.file("a.py", "x = 1\n");
         let (code, _, err) = run_cli_err(&["format", "--verify", "external", py.to_str().unwrap()]);

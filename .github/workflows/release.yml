@@ -24,6 +24,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # ruby-prism-sys needs libclang (bindgen) + a C compiler
       - uses: ./.github/actions/libclang
+      # `tokenpress-java`'s external-verification tests spawn the real `javac`;
+      # same reasoning as the CI workflow's test job.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
       - name: Build
         run: cargo build --workspace
       - name: Test

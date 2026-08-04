@@ -118,13 +118,15 @@
 //!
 //! `Reparse` re-parses the output; `AstEquiv` compares the comparable
 //! artifacts of input and output (which re-parses the output too, so no
-//! separate re-parse is needed). `External` is folded into the `AstEquiv` arm
-//! until the external `javac` checker lands (J5), the same staging the
-//! Python, Rust and Go backends went through — so it is a synonym for
-//! `AstEquiv` today rather than a weaker level. Output that fails is
-//! discarded with [`Error::Verification`] and never returned.
+//! separate re-parse is needed). `External` runs the `AstEquiv` check and then
+//! hands the output to `javac` itself, stopped after its parse phase
+//! (`javac -XDshould-stop.ifNoError=PARSE`), which must be on PATH; see
+//! [`external`] for what that covers, what it requires, and why the gate
+//! self-tests before it is trusted. Output that fails is discarded with
+//! [`Error::Verification`] and never returned.
 
 pub mod config;
+pub mod external;
 pub mod paths;
 pub mod policy;
 
@@ -235,12 +237,16 @@ impl Formatter for JavaFormatter {
                 verify::reparse(&config, code.as_bytes())?;
             }
             // `equivalent` re-parses the output itself, so no separate
-            // `reparse` call is needed at either level. `External` shares
-            // this arm until J5 adds the `javac` parse gate — folded in
-            // rather than left to fall through, so no arm is unreachable and
-            // asking for the strongest level never gets a weaker check.
-            VerifyLevel::AstEquiv | VerifyLevel::External => {
+            // `reparse` call is needed at either level.
+            VerifyLevel::AstEquiv => {
                 verify::equivalent(&config, bytes, code.as_bytes())?;
+            }
+            // External tooling runs *in addition to* the built-in check, and
+            // only after it: a candidate the equivalence check already
+            // rejected is not worth a process spawn.
+            VerifyLevel::External => {
+                verify::equivalent(&config, bytes, code.as_bytes())?;
+                external::check(source, &code)?;
             }
         }
         let tokenizer = options.tokenizer.load()?;
@@ -496,20 +502,49 @@ mod tests {
         assert_eq!(r.code, "class A {}\n");
     }
 
-    #[test]
-    fn external_level_is_the_ast_equiv_check_until_j5() {
-        // Folded into the `AstEquiv` arm rather than left unhandled, the same
-        // staging the Python, Rust and Go backends went through: asking for
-        // the strongest level today gets the built-in equivalence check, and
-        // never anything weaker. J5 adds the `javac` parse gate on top.
-        let opts = FormatOptions {
+    fn external() -> FormatOptions {
+        FormatOptions {
             verify: VerifyLevel::External,
             ..FormatOptions::default()
-        };
+        }
+    }
+
+    #[test]
+    fn external_level_runs_javac_on_top_of_the_built_in_check() {
+        // Spawns the real compiler, stopped after its parse phase, once the
+        // equivalence check has passed. `javac` agreeing here is the expected
+        // result and not a weak assertion: it accepted **every** output this
+        // backend produced over apache/commons-lang 3.17.0, in both comment
+        // configurations (see [`external`]). The level is an addition to the
+        // built-in check, never a substitute for it.
         let r = JavaFormatter::default()
-            .format(Path::new("A.java"), "class  A  {}\n", &opts)
+            .format(
+                Path::new("A.java"),
+                "public class A {\n\n    int f(int a) {\n        return a;\n    }\n}\n",
+                &external(),
+            )
             .unwrap();
-        assert_eq!(r.code, "class A {}\n");
+        assert_eq!(
+            r.code,
+            "public class A {\nint f(int a) {\nreturn a;\n}\n}\n"
+        );
+    }
+
+    #[test]
+    fn external_level_does_not_blame_input_javac_already_rejects() {
+        // `99999999999` with no `L` suffix: a clean tree-sitter parse and
+        // `error: integer number too large` to javac. The external level is
+        // then satisfied by the built-in equivalence check alone, so the file
+        // is still formatted instead of the run failing on the user's own
+        // input.
+        let r = JavaFormatter::default()
+            .format(
+                Path::new("A.java"),
+                "class A {\n    long x = 99999999999;\n}\n",
+                &external(),
+            )
+            .unwrap();
+        assert_eq!(r.code, "class A {\nlong x = 99999999999;\n}\n");
     }
 
     #[test]

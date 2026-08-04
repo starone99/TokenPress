@@ -34,6 +34,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # ruby-prism-sys needs libclang (bindgen) + a C compiler
       - uses: ./.github/actions/libclang
+      # `tokenpress-java`'s external-verification tests spawn the real `javac`
+      # (`ruby` and `gofmt` come with the runner images; a JDK is installed
+      # explicitly rather than inherited, so the version the parse gate was
+      # measured against is the version CI runs).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
       - name: Build
         run: cargo build --workspace
       - name: Test
@@ -302,6 +310,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # ruby-prism-sys needs libclang (bindgen) + a C compiler
       - uses: ./.github/actions/libclang
+      # The gate runs the whole suite under instrumentation, so it needs every
+      # external checker the suite spawns -- `javac` included.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
         with:

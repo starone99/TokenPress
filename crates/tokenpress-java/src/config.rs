@@ -175,10 +175,10 @@ mod tests {
     // --- Divergence pins -------------------------------------------------
     //
     // The engine's gate is a *syntax* gate, and Java's own toolchain does not
-    // draw the line in the same place. These are the shapes the external
-    // check (J5) has to run on the **original** first: if it ran only on the
-    // output, a file this backend accepts and reproduces faithfully would be
-    // reported as broken by `javac`.
+    // draw the line in the same place. These are the shapes for which the
+    // external check (`crate::external`) has to run over the **original**
+    // first: if it ran only on the output, a file this backend accepts and
+    // reproduces faithfully would be reported as broken by `javac`.
     //
     // Which of them `javac` actually refuses was re-measured here against the
     // container's javac 21.0.10, because the ROADMAP groups all four under
