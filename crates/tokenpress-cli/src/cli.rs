@@ -15,6 +15,8 @@ use tokenpress_core::{
 };
 #[cfg(feature = "go")]
 use tokenpress_go::{GoFormatter, GoOptions};
+#[cfg(feature = "java")]
+use tokenpress_java::{JavaFormatter, JavaOptions};
 use tokenpress_js::{JsFormatter, JsOptions};
 use tokenpress_python::{PythonFormatter, PythonOptions};
 #[cfg(feature = "ruby")]
@@ -29,24 +31,31 @@ struct Cli {
 }
 
 /// The languages this build actually has a backend for, in dispatch order.
-/// The `ruby` and `go` cargo features are default-on but independent, and a
-/// build without one has no such backend at all, so nothing may advertise one.
-/// A `Vec` and not an array: the length is a property of the feature set.
+/// The `ruby`, `go` and `java` cargo features are default-on but independent,
+/// and a build without one has no such backend at all, so nothing may
+/// advertise one. A `Vec` and not an array: the length is a property of the
+/// feature set.
 fn languages() -> Vec<&'static str> {
     // The first three backends are unconditional, so the list never has fewer
     // than three entries.
-    #[cfg_attr(not(any(feature = "ruby", feature = "go")), allow(unused_mut))]
+    #[cfg_attr(
+        not(any(feature = "ruby", feature = "go", feature = "java")),
+        allow(unused_mut)
+    )]
     let mut languages = vec!["Python", "Rust", "JavaScript/TypeScript"];
     #[cfg(feature = "ruby")]
     languages.push("Ruby");
     #[cfg(feature = "go")]
     languages.push("Go");
+    #[cfg(feature = "java")]
+    languages.push("Java");
     languages
 }
 
 /// The `--help` one-liner. Assembled from [`languages`] rather than written
-/// out per feature combination: two independent features would otherwise need
-/// four spellings of one sentence, and the conjunction moves with the list.
+/// out per feature combination: three independent features would otherwise
+/// need eight spellings of one sentence, and the conjunction moves with the
+/// list.
 fn about() -> String {
     let languages = languages();
     // Not an edge case: `languages` always has at least three entries.
@@ -84,6 +93,7 @@ struct CommonOpts {
         doc = " named `Gemfile` and `Rakefile` (exact, case-sensitive names)."
     )]
     #[cfg_attr(feature = "go", doc = " Also `.go`.")]
+    #[cfg_attr(feature = "java", doc = " Also `.java`.")]
     #[arg(required = true)]
     paths: Vec<PathBuf>,
     /// Config file to read. Without it the nearest `tokenpress.toml` found
@@ -137,6 +147,16 @@ struct CommonOpts {
     #[cfg(feature = "go")]
     #[arg(long)]
     go_strip_comments: bool,
+    /// JVO1: strip Java comments (kept by default — and, unlike Rust and
+    /// JS/TS, nothing is dropped without this flag). Javadoc (`/** */`) is an
+    /// ordinary comment to the grammar and goes with the rest, so a stripped
+    /// file loses its API documentation.
+    // Deliberately no mention of the Ruby or Go flags it mirrors: the three
+    // features are independent, and a build with `java` but not the others
+    // must not advertise a backend it does not have.
+    #[cfg(feature = "java")]
+    #[arg(long)]
+    java_strip_comments: bool,
 }
 
 #[derive(Subcommand)]
@@ -238,6 +258,10 @@ fn apply_config(common: &mut CommonOpts, cfg: FileConfig) {
     if let Some(go) = cfg.go {
         common.go_strip_comments |= go.strip_comments.unwrap_or(false);
     }
+    #[cfg(feature = "java")]
+    if let Some(java) = cfg.java {
+        common.java_strip_comments |= java.strip_comments.unwrap_or(false);
+    }
 }
 
 /// Runs the CLI and returns the process exit code.
@@ -301,9 +325,12 @@ struct FileOutcome {
 
 fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
     // The list has a conditional tail, so it is built and then extended; the
-    // `mut` is only needed when at least one of the two optional backends is
+    // `mut` is only needed when at least one of the three optional backends is
     // compiled in.
-    #[cfg_attr(not(any(feature = "ruby", feature = "go")), allow(unused_mut))]
+    #[cfg_attr(
+        not(any(feature = "ruby", feature = "go", feature = "java")),
+        allow(unused_mut)
+    )]
     let mut formatters: Vec<Box<dyn Formatter>> = vec![
         Box::new(PythonFormatter::new(PythonOptions {
             strip_comments: common.py_strip_comments,
@@ -325,6 +352,10 @@ fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
     #[cfg(feature = "go")]
     formatters.push(Box::new(GoFormatter::new(GoOptions {
         strip_comments: common.go_strip_comments,
+    })));
+    #[cfg(feature = "java")]
+    formatters.push(Box::new(JavaFormatter::new(JavaOptions {
+        strip_comments: common.java_strip_comments,
     })));
     formatters
 }
@@ -423,8 +454,8 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
     }
 }
 
-// There is deliberately no `GO_CAVEAT_WARNING`, for the reason there is no
-// Ruby one: a caveat warning exists where a backend drops something the user
+// There is deliberately no `GO_CAVEAT_WARNING` and no `JAVA_CAVEAT_WARNING`,
+// for the reason there is no Ruby one: a caveat warning exists where a backend drops something the user
 // did not ask it to drop and verification cannot see the loss — Rust's `//`
 // comments, JS/TS's trailing and expression-position comments. The Go emitter
 // rewrites the whitespace between protected spans and copies everything else
@@ -433,7 +464,13 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
 // flag documents itself. What the Go backend does unconditionally — pinning an
 // indented directive-shaped comment away from column 0, reproducing a
 // build-constraint prologue verbatim, leaving a cgo file byte-identical — only
-// ever preserves meaning, and none of it is a loss to warn about.
+// ever preserves meaning, and none of it is a loss to warn about. The same
+// holds for Java, with less to defend: it has no column-sensitive comment
+// syntax at all, so its one unconditional rule is the unicode-escape bail-out,
+// which leaves a file byte for byte identical rather than dropping anything.
+// `--java-strip-comments` does delete Javadoc along with every other comment,
+// but that is an opt-in flag documenting itself, not a loss behind the
+// caller's back.
 
 // `--verify external` is real for JavaScript/TypeScript, for Ruby and for Go,
 // but still equals `--verify ast` for Python and Rust, so a run containing
@@ -472,6 +509,18 @@ warning: external-tooling verification is implemented for JavaScript/TypeScript,
   where `--verify external` runs `tsc --noEmit` (falling back to
   `node --check`); it fails if the tool it needs is not on PATH.";
 
+// The tail — which backends the level does *not* reach — varies with the
+// `java` feature alone: Python and Rust are unconditional backends that still
+// lack it, and Java lacks it too until J5 wires up `javac`. `ruby` and `go`
+// cannot appear here at all, because both of those checkers are real.
+#[cfg(feature = "java")]
+const EXTERNAL_VERIFY_WARNING_TAIL: &str =
+    " It is not implemented for Python, Rust and Java: none of
+  `py_compile`, `rustc --emit=metadata` and `javac` is invoked, so for `.py`,
+  `.rs` and `.java` this level behaves exactly like `--verify ast`, i.e. the
+  output is re-parsed and compared for AST / token-stream equivalence.";
+
+#[cfg(not(feature = "java"))]
 const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python and Rust: neither
   `py_compile` nor `rustc --emit=metadata` is invoked, so for `.py` and `.rs`
   this level behaves exactly like `--verify ast`, i.e. the output is re-parsed
@@ -479,6 +528,9 @@ const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python an
 
 /// Extensions the warning above is about: the backends the external level does
 /// not reach yet.
+#[cfg(feature = "java")]
+const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 3] = ["py", "rs", "java"];
+#[cfg(not(feature = "java"))]
 const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 2] = ["py", "rs"];
 
 /// True when `path` belongs to a backend the external level does not reach.
@@ -770,6 +822,19 @@ mod tests {
         // ... and the same for the `go` feature, which is independent of it.
         #[cfg(not(feature = "go"))]
         for absent in [".go", "Go"] {
+            assert!(!text.contains(absent), "{absent} in help:\n{text}");
+        }
+        #[cfg(feature = "java")]
+        {
+            assert!(text.contains(".java"), "'.java' missing from help:\n{text}");
+            assert!(text.contains("--java-strip-comments"), "{text}");
+        }
+        // ... and the same again for the `java` feature. The absent list is
+        // the extension and the flag rather than the bare word "Java": the
+        // paths blurb always names the unconditional JavaScript/TypeScript
+        // backend, and "Java" is a prefix of "JavaScript".
+        #[cfg(not(feature = "java"))]
+        for absent in [".java", "--java-strip-comments"] {
             assert!(!text.contains(absent), "{absent} in help:\n{text}");
         }
     }
@@ -1494,6 +1559,126 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&go).unwrap(), "// note\n");
     }
 
+    #[cfg(feature = "java")]
+    #[test]
+    fn format_rewrites_java_files() {
+        let dir = Scratch::new();
+        let java = dir.file(
+            "A.java",
+            "public class A {\n\n    void f() {\n        int x = 1;\n    }\n}\n",
+        );
+        let (code, text) = run_cli(&["format", java.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&java).unwrap(),
+            "public class A {\nvoid f() {\nint x = 1;\n}\n}\n"
+        );
+        assert!(text.contains("tokens"));
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn java_files_are_discovered_by_the_walk() {
+        // `.java` is the whole path set. A Java project's build descriptors
+        // sit next to the sources and are not Java source: `pom.xml` and
+        // `build.gradle` must be walked past, not rewritten.
+        let dir = Scratch::new();
+        dir.file("A.java", "public  class  A  {}\n");
+        let pom = dir.file("pom.xml", "<project>  </project>\n");
+        let gradle = dir.file("build.gradle", "plugins  {  id  'java'  }\n");
+        let (code, text) = run_cli(&["format", dir.0.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(text.contains("A.java"), "{text}");
+        assert!(!text.contains("pom.xml"), "{text}");
+        assert!(!text.contains("build.gradle"), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(dir.0.join("A.java")).unwrap(),
+            "public class A {}\n"
+        );
+        // Untouched byte for byte, not merely unreported.
+        assert_eq!(
+            std::fs::read_to_string(&pom).unwrap(),
+            "<project>  </project>\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&gradle).unwrap(),
+            "plugins  {  id  'java'  }\n"
+        );
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn java_strip_comments_flag_is_forwarded() {
+        let dir = Scratch::new();
+        let java = dir.file(
+            "A.java",
+            "public class A {\n\n    // note\n    void f() {}\n}\n",
+        );
+        let (code, _) = run_cli(&["format", "--java-strip-comments", java.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&java).unwrap(),
+            "public class A {\nvoid f() {}\n}\n"
+        );
+        // Without the flag every comment survives, byte for byte — Javadoc
+        // included, which is what the flag's opt-in status is about.
+        let kept = dir.file(
+            "B.java",
+            "/** Doc. */\npublic class B {\n\n    // note\n    void f() {}\n}\n",
+        );
+        let (code, _) = run_cli(&["format", kept.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&kept).unwrap(),
+            "/** Doc. */\npublic class B {\n// note\nvoid f() {}\n}\n"
+        );
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn java_runs_emit_no_caveat_warning() {
+        // Like Ruby and Go, and unlike Rust and JS/TS, there is deliberately
+        // no Java caveat warning: every comment survives byte for byte at the
+        // default settings, and what the backend does unconditionally only
+        // ever preserves meaning, so there is nothing to warn about.
+        let dir = Scratch::new();
+        let java = dir.file(
+            "A.java",
+            "/** Doc. */\npublic class A {\n\n    // note\n    void f() {}\n}\n",
+        );
+        let path = java.to_str().unwrap();
+        for args in [
+            vec!["format", path],
+            vec!["check", path],
+            vec!["diff", path],
+            vec!["stats", path],
+        ] {
+            let (_, _, err) = run_cli_err(&args);
+            assert_eq!(err, "", "{args:?}");
+        }
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn external_verify_warning_names_java_as_not_implemented() {
+        // `javac`'s parse gate is not wired up yet (J5), so Java joins Python
+        // and Rust: the level must not be read as a stronger guarantee than
+        // it is.
+        let dir = Scratch::new();
+        let java = dir.file("A.java", "public  class  A  {}\n");
+        let (code, out, err) =
+            run_cli_err(&["format", "--verify", "external", java.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("javac"), "{err}");
+        assert!(err.contains("`.java`"), "{err}");
+        assert!(err.contains("--verify ast"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&java).unwrap(),
+            "public class A {}\n"
+        );
+    }
+
     #[test]
     fn external_verify_warning_is_emitted_once_per_run() {
         let dir = Scratch::new();
@@ -1997,6 +2182,114 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&go).unwrap(), "package main\n");
     }
 
+    #[cfg(feature = "java")]
+    #[test]
+    fn config_file_supplies_java_settings() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[java]\nstrip_comments = true\n");
+        let java = dir.file(
+            "A.java",
+            "public class A {\n\n    // note\n    void f() {}\n}\n",
+        );
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            java.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&java).unwrap(),
+            "public class A {\nvoid f() {}\n}\n"
+        );
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn the_java_strip_flag_ors_with_the_config_file() {
+        let dir = Scratch::new();
+        // Presence-only flags: `false` in the config cannot cancel the flag,
+        // and the flag cannot cancel a `true` in the config.
+        let off = dir.file("off.toml", "[java]\nstrip_comments = false\n");
+        let a = dir.file(
+            "A.java",
+            "public class A {\n\n    // note\n    void f() {}\n}\n",
+        );
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            off.to_str().unwrap(),
+            "--java-strip-comments",
+            a.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "public class A {\nvoid f() {}\n}\n"
+        );
+
+        let on = dir.file("on.toml", "[java]\nstrip_comments = true\n");
+        let b = dir.file(
+            "B.java",
+            "public class B {\n\n    // note\n    void f() {}\n}\n",
+        );
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            on.to_str().unwrap(),
+            "--java-strip-comments",
+            b.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&b).unwrap(),
+            "public class B {\nvoid f() {}\n}\n"
+        );
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn a_java_config_table_without_keys_keeps_the_built_in_defaults() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[java]\n");
+        let java = dir.file(
+            "A.java",
+            "public class A {\n\n    // note\n    void f() {}\n}\n",
+        );
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            java.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&java).unwrap(),
+            "public class A {\n// note\nvoid f() {}\n}\n"
+        );
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn unknown_java_config_key_is_an_error() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[java]\nstrip_javadoc = true\n");
+        let java = dir.file("A.java", "public class A {}\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            java.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("invalid config file"), "{err}");
+        assert!(err.contains("strip_javadoc"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&java).unwrap(),
+            "public class A {}\n"
+        );
+    }
+
     #[test]
     fn config_can_disable_import_merging() {
         let dir = Scratch::new();
@@ -2218,6 +2511,75 @@ mod tests {
         assert_eq!(err.matches("warning:").count(), 1);
         assert!(err.contains("py_compile"), "{err}");
         assert!(!err.contains("gofmt"), "{err}");
+    }
+
+    // The same four surfaces for a build without the `java` cargo feature.
+
+    #[cfg(not(feature = "java"))]
+    #[test]
+    fn java_paths_are_unsupported_without_the_java_feature() {
+        let dir = Scratch::new();
+        let java = dir.file("A.java", "public  class  A  {}\n");
+        let (code, text) = run_cli(&["format", java.to_str().unwrap()]);
+        assert_eq!(code, 2);
+        assert!(text.contains("unsupported language"), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(&java).unwrap(),
+            "public  class  A  {}\n"
+        );
+
+        let py = dir.file("keep.py", "x = 1\n");
+        let (code, text) = run_cli(&["stats", dir.0.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(text.contains("keep.py"), "{text}");
+        assert!(!text.contains("A.java"), "{text}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "java"))]
+    #[test]
+    fn the_java_strip_flag_does_not_exist_without_the_java_feature() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, text) = run_cli(&["format", "--java-strip-comments", py.to_str().unwrap()]);
+        assert_eq!(code, 2);
+        assert!(text.contains("--java-strip-comments"), "{text}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "java"))]
+    #[test]
+    fn a_java_config_table_names_the_missing_feature_without_the_java_feature() {
+        // A configured Java option must not be silently ignored: the run stops
+        // with a message about the build, before any file is touched.
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[java]\nstrip_comments = true\n");
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("invalid config file"), "{err}");
+        assert!(err.contains("built without the `java` feature"), "{err}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "java"))]
+    #[test]
+    fn the_external_verify_warning_does_not_mention_java_without_the_feature() {
+        // A build that cannot format Java at all must not name `javac` among
+        // the checkers the level does not reach: there is no `.java` path for
+        // it to reach.
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&["format", "--verify", "external", py.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("py_compile"), "{err}");
+        assert!(!err.contains("javac"), "{err}");
     }
 
     #[test]

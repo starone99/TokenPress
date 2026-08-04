@@ -77,9 +77,9 @@ The C compiler half of that is **no longer prism's alone**:
 `tokenpress-treesitter` (and every tree-sitter grammar crate a per-language
 backend pins) compiles C sources with `cc` too — tree-sitter's `src/lib.c` and
 a grammar's generated `parser.c`. That half needs *only* a C compiler: no C++,
-and no bindgen, so no libclang. `tokenpress-go` is in the CLI's default build,
-so removing the Ruby backend removes the libclang prerequisite but *not* the
-C-compiler one — only removing both does that.
+and no bindgen, so no libclang. `tokenpress-go` and `tokenpress-java` are both
+in the CLI's default build, so removing the Ruby backend removes the libclang
+prerequisite but *not* the C-compiler one — only removing all three does that.
 
 - **Linux**: `apt install libclang-dev` (or `clang`); the C compiler is `gcc`
   or `clang`.
@@ -94,39 +94,47 @@ If bindgen cannot find the library, the build fails with
 workflows do not rely on that silently: every job that builds the workspace
 runs `.github/actions/libclang`, which checks and installs only if missing —
 except the `no-native-backends` job, which exists to prove the build below
-needs neither.
+needs none of them.
 
 This is **not** confined to the native crates: `tokenpress-cli` depends on
-both `tokenpress-ruby` and `tokenpress-go` in its default build, so even a
-narrow `cargo build -p tokenpress-cli` — which is exactly what the pre-commit
-hook (`scripts/pre-commit-hook.sh`) and the GitHub Action (`action.yml`) run
-on a *consumer's* machine — needs both prerequisites. The way out is the CLI's
-two default-on cargo features, `ruby` and `go`, which are independent:
+`tokenpress-ruby`, `tokenpress-go` and `tokenpress-java` in its default build,
+so even a narrow `cargo build -p tokenpress-cli` — which is exactly what the
+pre-commit hook (`scripts/pre-commit-hook.sh`) and the GitHub Action
+(`action.yml`) run on a *consumer's* machine — needs both a C compiler and
+libclang. The
+way out is the CLI's three default-on cargo features, `ruby`, `go` and `java`,
+which are independent:
 
 ```bash
-cargo build -p tokenpress-cli --no-default-features                  # no libclang, no cc
-cargo test -p tokenpress-cli --no-default-features                   # suite must pass here too
-cargo build -p tokenpress-cli --no-default-features --features go    # no libclang, still cc
-cargo build -p tokenpress-cli --no-default-features --features ruby  # no tree-sitter
+cargo build -p tokenpress-cli --no-default-features                       # no libclang, no cc
+cargo test -p tokenpress-cli --no-default-features                        # suite must pass here too
+cargo build -p tokenpress-cli --no-default-features --features go,java    # no libclang, still cc
+cargo build -p tokenpress-cli --no-default-features --features ruby       # no tree-sitter
 ```
 
-Because there are two of them, `--no-default-features` is the *both-off* build
-rather than the Ruby opt-out it used to be: keeping one backend means naming
-it. Dropping a backend drops its crate from the dependency graph entirely; its
-paths become unsupported paths, its `--ruby-strip-comments`/
-`--go-strip-comments` flag does not exist, and its `[ruby]`/`[go]` table in
-`tokenpress.toml` is a config error naming the missing feature. The
-consumer-facing escape hatches are `TOKENPRESS_NO_RUBY=1` and
-`TOKENPRESS_NO_GO=1` for the pre-commit hook and `ruby: 'false'` /
-`go: 'false'` for the action, both documented in the README's
-**Integrations** and **Cargo features** sections — neither integration can
-install a toolchain for the consumer: a composite action cannot add one to the
-job that uses it. Note the coverage gate measures the default build only.
+Because there are three of them, `--no-default-features` is the *all-off*
+build rather than the Ruby opt-out it used to be: keeping a backend means
+naming it. Dropping one drops its crate from the dependency graph entirely;
+its paths become unsupported paths, its `--ruby-strip-comments`/
+`--go-strip-comments`/`--java-strip-comments` flag does not exist, and its
+`[ruby]`/`[go]`/`[java]` table in `tokenpress.toml` is a config error naming
+the missing feature. `go` and `java` share `tokenpress-treesitter` but neither
+implies the other, so the C compiler goes only when both are off. The
+consumer-facing escape hatches are `TOKENPRESS_NO_RUBY=1`,
+`TOKENPRESS_NO_GO=1` and `TOKENPRESS_NO_JAVA=1` for the pre-commit hook and
+`ruby: 'false'` / `go: 'false'` / `java: 'false'` for the action, both
+documented in the README's **Integrations** and **Cargo features** sections —
+neither integration can install a toolchain for the consumer: a composite
+action cannot add one to the job that uses it. Note the coverage gate measures
+the default build only.
 
 The `no-native-backends` job builds and tests only the fully-off configuration;
-the two single-feature builds are asserted on `cargo tree` alone (each has to
-be the expected half of the graph), which is what the features are actually
-about.
+the single-feature builds are asserted on `cargo tree` alone (each has to be
+exactly its own slice of the graph — its own grammar in, the others out),
+which is what the features are actually about. The CLI's own suite is what
+covers the combinations: it has to pass in all eight `ruby × go × java`
+configurations, since each `#[cfg(feature = ...)]` in `cli.rs` and `config.rs`
+is a separate code path.
 
 **`node` must be on PATH to run the suite.** `tokenpress-js` implements
 `--verify external` by running the real toolchain (`tsc --noEmit`, falling back
@@ -154,6 +162,11 @@ that fails to spawn) goes through the same injectable `Tools` seam.
 Note that `gofmt` is probed with `gofmt -h`. It has no `--version` flag, and a
 **bare** `gofmt` reads standard input — a probe without an argument would
 block rather than fail, so never write one.
+
+**Java needs nothing on PATH yet.** `tokenpress-java` has no external checker:
+`--verify external` folds into the `AstEquiv` arm for `.java` paths, which is
+why the language is marked **experimental** in the README. A `javac` gate is
+the task that will change both.
 
 ## Integration surfaces
 
@@ -203,7 +216,14 @@ The shape is fixed by the existing backends, `tokenpress-python` and
    `docs/` is gitignored (local-only), but the rule IDs referenced from code
    are part of the committed surface — keep them consistent.
 6. **Register the formatter** in `crates/tokenpress-cli/src/cli.rs`
-   (`formatters()`) and add the corresponding CLI flags.
+   (`formatters()`) and add the corresponding CLI flags and
+   `tokenpress.toml` table. If the backend carries a build prerequisite the
+   pure-Rust ones do not — a C compiler, libclang — it gets its own default-on
+   cargo feature in `crates/tokenpress-cli/Cargo.toml` too, the way `ruby`,
+   `go` and `java` each have one, plus the matching `TOKENPRESS_NO_<LANG>=1`
+   hook variable and `<lang>: 'false'` action input. Every such feature
+   doubles the number of configurations the CLI suite has to pass in, and each
+   one must be green for both `cargo test` and `clippy -D warnings`.
 7. **Document any behavior the backend cannot preserve** in `README.md`. The
    Rust backend's dropped `//` comments and re-spaced macro bodies are the
    precedent: known limits are stated, not hidden.

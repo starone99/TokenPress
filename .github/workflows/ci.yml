@@ -39,23 +39,23 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-  # The opt-out configuration: `tokenpress-cli` without either of its two
+  # The opt-out configuration: `tokenpress-cli` without any of its three
   # default-on native backends. Deliberately no `.github/actions/libclang` step
   # -- the whole point of the features is that this build needs no C toolchain
-  # at all, and the first step below proves both prerequisites are gone:
-  # `tokenpress-ruby` (with `ruby-prism-sys` + bindgen) and `tokenpress-go`
-  # (with `tokenpress-treesitter`, the grammar and the `cc` that compiles them)
-  # are not in the graph. Only this fully-off configuration is built and tested
-  # -- the single-feature builds are asserted on the dependency graph alone,
-  # which is what the features are about; building every combination would buy
-  # nothing for the CI minutes.
+  # at all, and the first step below proves every prerequisite is gone:
+  # `tokenpress-ruby` (with `ruby-prism-sys` + bindgen), `tokenpress-go` and
+  # `tokenpress-java` (with `tokenpress-treesitter`, their grammars and the
+  # `cc` that compiles them) are not in the graph. Only this fully-off
+  # configuration is built and tested -- the single-feature builds are asserted
+  # on the dependency graph alone, which is what the features are about;
+  # building every combination would buy nothing for the CI minutes.
   no-native-backends:
     name: Build without the native backends
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      - name: Neither native backend is in the dependency graph
+      - name: No native backend is in the dependency graph
         run: |
           set -euo pipefail
           tree=$(cargo tree -p tokenpress-cli --no-default-features)
@@ -65,8 +65,8 @@ jobs:
           fi
           # `cc v` with its separator, because `cargo tree` indents: a bare
           # `^cc ` would only ever match the root of the tree.
-          if printf '%s\n' "$tree" | grep -E 'tokenpress-go|tokenpress-treesitter|tree-sitter|(^|[[:space:]])cc v'; then
-            echo '::error::the go backend is still reachable without the feature'
+          if printf '%s\n' "$tree" | grep -E 'tokenpress-go|tokenpress-java|tokenpress-treesitter|tree-sitter|(^|[[:space:]])cc v'; then
+            echo '::error::a tree-sitter backend is still reachable without the feature'
             exit 1
           fi
           # ... while the rest of the build is untouched. `--no-default-features`
@@ -76,21 +76,33 @@ jobs:
             printf '%s\n' "$tree" | grep -q "$kept" \
               || { echo "::error::--no-default-features dropped $kept"; exit 1; }
           done
-      - name: Each single-feature build is the expected half
+      # Each single-feature build must be exactly its own slice of the graph.
+      # `go` and `java` share `tokenpress-treesitter`, so it is not enough that
+      # each re-adds tree-sitter: each must re-add *its own* grammar and leave
+      # the other's out, which is what makes them independent features rather
+      # than one "tree-sitter" switch.
+      - name: Each single-feature build is exactly its own slice
         run: |
           set -euo pipefail
           go_only=$(cargo tree -p tokenpress-cli --no-default-features --features go)
-          printf '%s\n' "$go_only" | grep -q tree-sitter \
-            || { echo '::error::--features go did not re-add tree-sitter'; exit 1; }
-          if printf '%s\n' "$go_only" | grep -E 'ruby-prism'; then
-            echo '::error::--features go pulled the ruby backend back in'
+          printf '%s\n' "$go_only" | grep -q tree-sitter-go \
+            || { echo '::error::--features go did not re-add tree-sitter-go'; exit 1; }
+          if printf '%s\n' "$go_only" | grep -E 'ruby-prism|tokenpress-java|tree-sitter-java'; then
+            echo '::error::--features go pulled another backend back in'
+            exit 1
+          fi
+          java_only=$(cargo tree -p tokenpress-cli --no-default-features --features java)
+          printf '%s\n' "$java_only" | grep -q tree-sitter-java \
+            || { echo '::error::--features java did not re-add tree-sitter-java'; exit 1; }
+          if printf '%s\n' "$java_only" | grep -E 'ruby-prism|tokenpress-go|tree-sitter-go'; then
+            echo '::error::--features java pulled another backend back in'
             exit 1
           fi
           ruby_only=$(cargo tree -p tokenpress-cli --no-default-features --features ruby)
           printf '%s\n' "$ruby_only" | grep -q ruby-prism \
             || { echo '::error::--features ruby did not re-add ruby-prism'; exit 1; }
-          if printf '%s\n' "$ruby_only" | grep -E 'tokenpress-go|tokenpress-treesitter|tree-sitter'; then
-            echo '::error::--features ruby pulled the go backend back in'
+          if printf '%s\n' "$ruby_only" | grep -E 'tokenpress-go|tokenpress-java|tokenpress-treesitter|tree-sitter'; then
+            echo '::error::--features ruby pulled a tree-sitter backend back in'
             exit 1
           fi
       - name: Build
@@ -102,17 +114,19 @@ jobs:
       # Both consumer integration surfaces build the CLI on the consumer's
       # machine, so both need their own way through: env vars for the
       # pre-commit hook, inputs for the action. One per backend, so a consumer
-      # with a C compiler but no libclang can keep Go.
-      - name: The pre-commit hook honors TOKENPRESS_NO_RUBY and TOKENPRESS_NO_GO
+      # with a C compiler but no libclang can keep Go and Java.
+      - name: The pre-commit hook honors every TOKENPRESS_NO_* variable
         env:
           TOKENPRESS_NO_RUBY: '1'
           TOKENPRESS_NO_GO: '1'
+          TOKENPRESS_NO_JAVA: '1'
         run: sh scripts/pre-commit-hook.sh check no-backends-fixture.py
-      - name: "The action honors ruby: false and go: false"
+      - name: "The action honors ruby/go/java: false"
         uses: ./
         with:
           ruby: 'false'
           go: 'false'
+          java: 'false'
           paths: no-backends-fixture.py
 
   # Exercises `action.yml` end to end through `uses: ./`, which is the only way
@@ -126,8 +140,9 @@ jobs:
       - uses: actions/checkout@v4
       # The action builds `tokenpress-cli`, which now pulls in
       # `tokenpress-ruby` -> `ruby-prism-sys` (vendored C + bindgen) and
-      # `tokenpress-go` -> the tree-sitter runtime and grammar (C via `cc`), so
-      # the *consumer's* runner needs libclang and a C compiler. This step is what
+      # `tokenpress-go`/`tokenpress-java` -> the tree-sitter runtime and their
+      # grammars (C via `cc`), so the *consumer's* runner needs libclang and a
+      # C compiler. This step is what
       # a real consumer would have to provide for itself: a composite action
       # cannot install toolchain prerequisites into the job that uses it, so
       # the repository's own action is used here to mirror that requirement
@@ -164,6 +179,15 @@ jobs:
           # below is what exercises.
           printf 'package main\n// keep me\nfunc f(a int) int {\nreturn a\n}\n' > action-fixtures/pass/ok.go
           printf 'package  main\n\nfunc  f( a int )  int  {\n\treturn  a\n}\n' > action-fixtures/fail/bad.go
+          # Java. Same shape as Go: the emitter never joins or introduces a
+          # line, so normalized Java ends in a newline, and every comment --
+          # Javadoc included -- survives at the default settings. `.java` needs
+          # its own pattern in the action's glob filter, which naming it
+          # explicitly below is what exercises. `pom.xml` is here to prove the
+          # directory walk skips a Java project's build descriptor.
+          printf '/** Keep me. */\npublic class Ok {\nint f(int a) {\nreturn a;\n}\n}\n' > action-fixtures/pass/Ok.java
+          printf '<project>  </project>\n' > action-fixtures/pass/pom.xml
+          printf 'public  class  Bad  {\n\n    int  f( int a )  {\n        return  a;\n    }\n}\n' > action-fixtures/fail/Bad.java
 
       # Every step below that is expected to succeed asserts by failing the job.
       - name: Normalized tree passes
@@ -188,12 +212,24 @@ jobs:
         with:
           paths: action-fixtures/pass/ok.go
 
+      - name: Explicitly named Java files pass
+        uses: ./
+        with:
+          paths: action-fixtures/pass/Ok.java
+
       - name: Unformatted Go fails
         id: go-fail
         continue-on-error: true
         uses: ./
         with:
           paths: action-fixtures/fail/bad.go
+
+      - name: Unformatted Java fails
+        id: java-fail
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: action-fixtures/fail/Bad.java
 
       - name: Unformatted Ruby fails
         id: ruby-fail
@@ -247,6 +283,10 @@ jobs:
             || fail 'check must fail on an unformatted Go file'
           [ '${{ steps.go-fail.outputs.changed }}' = true ] \
             || fail 'check must report changed=true on an unformatted Go file'
+          [ '${{ steps.java-fail.outcome }}' = failure ] \
+            || fail 'check must fail on an unformatted Java file'
+          [ '${{ steps.java-fail.outputs.changed }}' = true ] \
+            || fail 'check must report changed=true on an unformatted Java file'
           [ '${{ steps.extra-args.outcome }}' = failure ] \
             || fail 'extra-args did not reach the CLI'
           [ '${{ steps.format.outcome }}' = failure ] \

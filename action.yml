@@ -15,8 +15,9 @@
 # *there* and not in the consumer's workspace.
 name: TokenPress
 description: >-
-  Fail CI when Python, Rust, JavaScript/TypeScript, Ruby or Go sources are not
-  in TokenPress-normalized, token-minimized form (or rewrite them in place).
+  Fail CI when Python, Rust, JavaScript/TypeScript, Ruby, Go or Java sources
+  are not in TokenPress-normalized, token-minimized form (or rewrite them in
+  place).
 author: TokenPress contributors
 
 branding:
@@ -41,16 +42,16 @@ inputs:
       itself: the walk is `.gitignore`-aware and only picks up `.py`, `.rs`,
       the JavaScript/TypeScript set (`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
       `.mts`, `.cts`, `.tsx`), the Ruby set (`.rb`, `.rake`, `.gemspec`, `.ru`,
-      plus files named `Gemfile` or `Rakefile`) and `.go`, so pointing this at
-      a mixed tree is safe. Subject to the shell's word splitting and globbing,
-      so `src/*.py` works.
+      plus files named `Gemfile` or `Rakefile`), `.go` and `.java`, so pointing
+      this at a mixed tree is safe. Subject to the shell's word splitting and
+      globbing, so `src/*.py` works.
     required: false
     default: .
   extra-args:
     description: >-
       Extra `tokenpress` flags, passed through verbatim (whitespace-separated),
       e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments
-      --ruby-strip-comments --go-strip-comments`.
+      --ruby-strip-comments --go-strip-comments --java-strip-comments`.
     required: false
     default: ''
   ruby:
@@ -72,9 +73,22 @@ inputs:
       `tree-sitter-go` grammar, both of which compile C with `cc`) from the
       dependency graph entirely. `.go` paths become unsupported paths in that
       build -- skipped by the directory walk, and an error (exit 2) when named
-      explicitly. Independent of the `ruby` input: only with *both* set to
-      `false` does the build need no C toolchain at all. Any other value fails
-      the step with exit 2.
+      explicitly. Independent of the `ruby` and `java` inputs; the C compiler
+      goes only once `java` is `false` too, since both grammars need it. Any
+      other value fails the step with exit 2.
+    required: false
+    default: 'true'
+  java:
+    description: >-
+      `true` (default) builds the CLI with its default-on `java` cargo
+      feature. Set it to `false` on a runner without a C compiler: the build
+      then drops `tokenpress-java` (and the `tree-sitter-java` grammar, whose
+      generated `parser.c` is compiled with `cc`) from the dependency graph
+      entirely. `.java` paths become unsupported paths in that build --
+      skipped by the directory walk, and an error (exit 2) when named
+      explicitly. Independent of the `ruby` and `go` inputs: only with *all
+      three* set to `false` does the build need no C toolchain at all.
+      Any other value fails the step with exit 2.
     required: false
     default: 'true'
 
@@ -97,15 +111,18 @@ runs:
         ACTION_REF: ${{ github.action_ref }}
         RUBY: ${{ inputs.ruby }}
         GO: ${{ inputs.go }}
+        JAVA: ${{ inputs.java }}
       run: |
         set -euo pipefail
 
-        # The `ruby` and `go` inputs decide which cargo features the build
-        # gets, so they are resolved here -- before the cache is restored,
-        # because a binary built with a different feature set must not be
-        # reused under the same key. The two features are independent, so
-        # neither input alone means `--no-default-features`: that is the
-        # both-off build, and anything left on has to be named explicitly.
+        # The `ruby`, `go` and `java` inputs decide which cargo features the
+        # build gets, so they are resolved here -- before the cache is
+        # restored, because a binary built with a different feature set must
+        # not be reused under the same key. The three features are
+        # independent, so no single input means `--no-default-features`: that
+        # is the all-off build, and anything left on has to be named
+        # explicitly. The list is built in the manifest's own order, so the
+        # all-on case is one literal.
         features=''
         case "$RUBY" in
           true) features='ruby'; ruby_tag='ruby' ;;
@@ -123,8 +140,16 @@ runs:
             exit 2
             ;;
         esac
+        case "$JAVA" in
+          true) features="${features:+$features,}java"; java_tag='java' ;;
+          false) java_tag='nojava' ;;
+          *)
+            echo "::error::tokenpress: unknown java input '$JAVA' (expected 'true' or 'false')"
+            exit 2
+            ;;
+        esac
         case "$features" in
-          'ruby,go') build_flags='' ;;
+          'ruby,go,java') build_flags='' ;;
           '') build_flags='--no-default-features' ;;
           *) build_flags="--no-default-features --features $features" ;;
         esac
@@ -151,8 +176,8 @@ runs:
           echo "action-path=$action_path"
           echo "bin=$action_path/target/release/tokenpress$ext"
           echo "build-flags=$build_flags"
-          echo "cache-key=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-$ref-$lock_hash"
-          echo "cache-prefix=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-"
+          echo "cache-key=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-$java_tag-$ref-$lock_hash"
+          echo "cache-prefix=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-$java_tag-"
         } >>"$GITHUB_OUTPUT"
 
     - name: Restore the CLI build cache
@@ -184,9 +209,9 @@ runs:
         # manifest is a virtual workspace manifest, which `cargo install`
         # refuses.
         # `$BUILD_FLAGS` is deliberately unquoted: it is empty unless the
-        # `ruby`/`go` inputs switched a backend off, an empty quoted argument
-        # would be passed to cargo as one, and when it is not empty its two or
-        # three words have to reach cargo as separate arguments.
+        # `ruby`/`go`/`java` inputs switched a backend off, an empty quoted
+        # argument would be passed to cargo as one, and when it is not empty
+        # its two or three words have to reach cargo as separate arguments.
         cd "$ACTION_PATH"
         cargo build --release --locked --quiet $BUILD_FLAGS \
           -p tokenpress-cli --target-dir "$ACTION_PATH/target"
@@ -232,11 +257,12 @@ runs:
             # claims two extensionless names, and a glob cannot express "this
             # basename": `*Gemfile` would match `myGemfile` too, so the file
             # name is taken off the path first and compared exactly (the CLI
-            # matches `Gemfile`/`Rakefile` case-sensitively). `*.go` is just an
-            # extension -- `go.mod` and `go.sum` are not Go source and do not
-            # match it.
+            # matches `Gemfile`/`Rakefile` case-sensitively). `*.go` and
+            # `*.java` are just extensions -- `go.mod`, `go.sum`, `pom.xml`
+            # and `build.gradle` are not source of either language and do not
+            # match them.
             case "$path" in
-              *.py | *.rs | *.js | *.mjs | *.cjs | *.jsx | *.ts | *.mts | *.cts | *.tsx | *.rb | *.rake | *.gemspec | *.ru | *.go)
+              *.py | *.rs | *.js | *.mjs | *.cjs | *.jsx | *.ts | *.mts | *.cts | *.tsx | *.rb | *.rake | *.gemspec | *.ru | *.go | *.java)
                 set -- "$@" "$path"
                 ;;
               *)

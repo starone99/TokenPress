@@ -32,6 +32,12 @@ pub struct FileConfig {
     /// gets the same treatment — see `NoGoSupport`.
     #[cfg(not(feature = "go"))]
     pub go: Option<NoGoSupport>,
+    #[cfg(feature = "java")]
+    pub java: Option<JavaConfig>,
+    /// The `java` cargo feature is switchable exactly as `ruby` and `go` are,
+    /// so its table gets the same treatment — see `NoJavaSupport`.
+    #[cfg(not(feature = "java"))]
+    pub java: Option<NoJavaSupport>,
 }
 
 /// `[python]` table.
@@ -113,6 +119,36 @@ impl<'de> Deserialize<'de> for NoGoSupport {
         Err(serde::de::Error::custom(
             "this tokenpress was built without the `go` feature, so the \
              [go] table has nothing to configure",
+        ))
+    }
+}
+
+/// `[java]` table. Named after `JavaFormatter::language()`, and it covers the
+/// one extension that backend claims: `.java`. Distinct from `[javascript]`,
+/// which is the JS/TS backend's table — the two names are close but the
+/// backends share nothing, and `deny_unknown_fields` keeps a confusion of the
+/// two from being silently accepted.
+#[cfg(feature = "java")]
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct JavaConfig {
+    pub strip_comments: Option<bool>,
+}
+
+/// Stand-in for the `[java]` table in a build without the `java` cargo
+/// feature, for the same reason `NoRubySupport` and `NoGoSupport` are ones:
+/// naming the missing feature beats blaming the user's spelling or silently
+/// ignoring the option.
+#[cfg(not(feature = "java"))]
+#[derive(Debug, PartialEq)]
+pub struct NoJavaSupport;
+
+#[cfg(not(feature = "java"))]
+impl<'de> Deserialize<'de> for NoJavaSupport {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "this tokenpress was built without the `java` feature, so the \
+             [java] table has nothing to configure",
         ))
     }
 }
@@ -210,6 +246,7 @@ mod tests {
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
+        assert_eq!(cfg.java, None);
     }
 
     /// The `[ruby]` table as a build with the `ruby` feature spells it, and as
@@ -226,7 +263,13 @@ mod tests {
     #[cfg(not(feature = "go"))]
     const GO_TABLE: &str = "";
 
-    /// The same two tables with no keys in them.
+    /// ... and for the `[java]` table and the `java` feature.
+    #[cfg(feature = "java")]
+    const JAVA_TABLE: &str = "[java]\nstrip_comments = true\n";
+    #[cfg(not(feature = "java"))]
+    const JAVA_TABLE: &str = "";
+
+    /// The same three tables with no keys in them.
     #[cfg(feature = "ruby")]
     const EMPTY_RUBY_TABLE: &str = "[ruby]\n";
     #[cfg(not(feature = "ruby"))]
@@ -235,6 +278,10 @@ mod tests {
     const EMPTY_GO_TABLE: &str = "[go]\n";
     #[cfg(not(feature = "go"))]
     const EMPTY_GO_TABLE: &str = "";
+    #[cfg(feature = "java")]
+    const EMPTY_JAVA_TABLE: &str = "[java]\n";
+    #[cfg(not(feature = "java"))]
+    const EMPTY_JAVA_TABLE: &str = "";
 
     #[test]
     fn full_config_parses_every_field() {
@@ -250,7 +297,7 @@ mod tests {
              strip_doc_comments = true\n\
              [javascript]\n\
              strip_comments = true\n\
-             {RUBY_TABLE}{GO_TABLE}"
+             {RUBY_TABLE}{GO_TABLE}{JAVA_TABLE}"
         ));
         assert_eq!(cfg.tokenizer.as_deref(), Some("cl100k_base"));
         assert_eq!(cfg.verify, Some(ConfigVerify::Reparse));
@@ -289,6 +336,13 @@ mod tests {
                 strip_comments: Some(true)
             })
         );
+        #[cfg(feature = "java")]
+        assert_eq!(
+            cfg.java,
+            Some(JavaConfig {
+                strip_comments: Some(true)
+            })
+        );
     }
 
     #[test]
@@ -300,6 +354,7 @@ mod tests {
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
+        assert_eq!(cfg.java, None);
         let python = cfg.python.unwrap();
         assert_eq!(python.strip_comments, Some(true));
         assert_eq!(python.strip_docstrings, None);
@@ -314,6 +369,7 @@ mod tests {
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
+        assert_eq!(cfg.java, None);
         let python = cfg.python.unwrap();
         assert_eq!(python.strip_annotations, Some(true));
         assert_eq!(python.merge_imports, Some(true));
@@ -326,6 +382,7 @@ mod tests {
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
+        assert_eq!(cfg.java, None);
         assert_eq!(
             cfg.rust,
             Some(RustConfig {
@@ -341,6 +398,7 @@ mod tests {
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
+        assert_eq!(cfg.java, None);
         assert_eq!(
             cfg.javascript,
             Some(JavaScriptConfig {
@@ -357,6 +415,7 @@ mod tests {
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.go, None);
+        assert_eq!(cfg.java, None);
         assert_eq!(
             cfg.ruby,
             Some(RubyConfig {
@@ -373,6 +432,7 @@ mod tests {
         assert_eq!(cfg.rust, None);
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
+        assert_eq!(cfg.java, None);
         assert_eq!(
             cfg.go,
             Some(GoConfig {
@@ -381,10 +441,27 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "java")]
+    #[test]
+    fn java_table_alone_parses() {
+        let cfg = parse("[java]\nstrip_comments = true\n");
+        assert_eq!(cfg.python, None);
+        assert_eq!(cfg.rust, None);
+        assert_eq!(cfg.javascript, None);
+        assert_eq!(cfg.ruby, None);
+        assert_eq!(cfg.go, None);
+        assert_eq!(
+            cfg.java,
+            Some(JavaConfig {
+                strip_comments: Some(true)
+            })
+        );
+    }
+
     #[test]
     fn empty_tables_are_valid_and_leave_their_keys_unset() {
         let cfg = parse(&format!(
-            "[python]\n[rust]\n[javascript]\n{EMPTY_RUBY_TABLE}{EMPTY_GO_TABLE}"
+            "[python]\n[rust]\n[javascript]\n{EMPTY_RUBY_TABLE}{EMPTY_GO_TABLE}{EMPTY_JAVA_TABLE}"
         ));
         assert_eq!(
             cfg.python,
@@ -418,6 +495,13 @@ mod tests {
         assert_eq!(
             cfg.go,
             Some(GoConfig {
+                strip_comments: None
+            })
+        );
+        #[cfg(feature = "java")]
+        assert_eq!(
+            cfg.java,
+            Some(JavaConfig {
                 strip_comments: None
             })
         );
@@ -480,6 +564,27 @@ mod tests {
     fn unknown_go_key_is_an_error() {
         let msg = parse_err("[go]\nstrip_directives = true\n");
         assert!(msg.contains("strip_directives"), "{msg}");
+    }
+
+    #[cfg(feature = "java")]
+    #[test]
+    fn unknown_java_key_is_an_error() {
+        let msg = parse_err("[java]\nstrip_javadoc = true\n");
+        assert!(msg.contains("strip_javadoc"), "{msg}");
+    }
+
+    #[cfg(not(feature = "java"))]
+    #[test]
+    fn a_java_table_names_the_missing_feature_rather_than_being_ignored() {
+        // Same reasoning as the `[ruby]` and `[go]` cases.
+        for text in [
+            "[java]\n",
+            "[java]\nstrip_comments = true\n",
+            "[java]\nstrip_javadoc = true\n",
+        ] {
+            let msg = parse_err(text);
+            assert!(msg.contains("built without the `java` feature"), "{msg}");
+        }
     }
 
     #[cfg(not(feature = "go"))]
