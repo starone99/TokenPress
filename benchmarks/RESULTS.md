@@ -3,8 +3,9 @@
 Measured: 2026-07-31 (open-model tokenizers added 2026-08-01; the
 JavaScript/TypeScript corpus added 2026-08-02; the Ruby corpus added
 2026-08-02; per-tokenizer aggressive run and the express open-model rows
-added 2026-08-02; the Go corpus added 2026-08-04; the gin open-model rows,
-default and aggressive, added 2026-08-04)
+added 2026-08-02; the Go corpus added 2026-08-04; the gin and rack open-model
+rows, default and aggressive, added 2026-08-04 — with that, every corpus in
+this file has all five tokenizers)
 Binary: `cargo build --release -p tokenpress-cli` at the commit containing this file
 Command: `tokenpress stats <corpus> --tokenizer <name> [options]`
 Platform: Windows 11, rustc 1.95.0
@@ -189,10 +190,10 @@ the same reason express is: the tables above were measured on Windows with a
 CRLF checkout, and the line-ending caveat further down applies to any
 comparison across the two.
 
-**Only the two embedded tokenizers were measured** — the measurement
-environment cannot reach huggingface.co, so the Qwen3.6 / GLM-5.2 / Kimi K3
-columns are pending here exactly as they are for express and for the
-full-aggressive run below.
+**All five tokenizers are measured.** The two embedded ones were measured with
+the corpus on 2026-08-02, when the environment could not reach huggingface.co;
+the three open-model columns were filled in on 2026-08-04 on the maintainer's
+machine, which can.
 
 The whole tree is measured: 49 files under `lib/`, 53 under `test/` and the 3
 build files at the root (rack's other directories — `contrib/`, `config/`,
@@ -214,17 +215,28 @@ measurement. They contribute nothing to the totals either way.
 |---|---|---|---|---|---|
 | rack | o200k_base | 104 | 187,175 | 170,012 | **-9.2%** |
 | rack | cl100k_base | 104 | 186,474 | 169,907 | **-8.9%** |
-| rack | Qwen3.6 | — | — | — | *pending* |
-| rack | GLM-5.2 | — | — | — | *pending* |
-| rack | Kimi K3 | — | — | — | *pending* |
+| rack | Qwen3.6 | 104 | 199,847 | 183,370 | **-8.2%** |
+| rack | GLM-5.2 | 104 | 186,913 | 170,346 | **-8.9%** |
+| rack | Kimi K3 | 104 | 186,528 | 169,974 | **-8.9%** |
 
-The three open-model rows are **still pending for this 104-file set** and may
-not be filled in from the 103-file run below, which is a different set of
-files. See "Open-model tokenizers over 103 of rack's 105 paths".
+The three open-model rows were measured on 2026-08-04 on the maintainer's
+machine, a day after the embedded pair, so **both embedded rows were re-run
+first as a control and reproduced exactly** — 187,175 → 170,012 and
+186,474 → 169,907, matching to the token. The corpus was checked out with
+`core.autocrlf false` to get the same LF tree, so all five rows describe one
+identical set of files.
+
+The five agree within **1.0pp** (-8.2% to -9.2%), and Qwen3.6 is the outlier
+in both directions at once: it counts rack **6.8% larger** before compression
+than `o200k_base` (199,847 vs 187,175) and reports the smallest saving. That
+is the same direction it takes on gin and the *opposite* of the one it takes
+on requests, where it reports the largest — which is exactly why the project
+rule forbids reading one tokenizer's percentage off another's in either
+direction.
 
 `Files` is 104 of the 105, because of **1 verification refusal**:
-`lib/rack/utils.rb`. It refuses at both settings and both tokenizers, and it
-is a known over-refusal class, not a new defect — see the subsection below.
+`lib/rack/utils.rb`. It refuses at both settings and all five tokenizers, and
+it is a known over-refusal class, not a new defect — see the subsection below.
 Absolute saving at o200k: 17,163 tokens per full-repo prompt.
 
 Unlike express's `-17.3%`, this `-9.2%` **is** context-lossless: nothing but
@@ -240,62 +252,33 @@ find benchmarks/corpus/rack -not -path '*/.git/*' \
     xargs -0 target/release/tokenpress stats --tokenizer o200k_base
 ```
 
-#### Open-model tokenizers over 103 of rack's 105 paths (2026-08-04)
+#### One Windows obstacle worth recording, because it silently changes the file count
 
-Measured 2026-08-04 on the maintainer's Windows machine with an LF checkout
-(`core.autocrlf false`), the same binary and the same path selection as above.
-**This is a 103-file run, not the 104-file run above, and the two tables must
-not be merged.**
+`test/spec_multipart.rb` is **quarantined by Windows Defender on sight**,
+which is how this corpus first got measured at 103 files instead of 104. The
+detection is `Backdoor:PHP/Remoteshell.B`, and it is a signature match on real
+content rather than a vague heuristic: rack embeds a PHP web-shell payload as
+multipart *upload test data*. It is inert — a string in a Ruby test file that
+is never executed as PHP — and it is the pinned upstream content of tag
+`v3.2.6`, but it is a genuine match, not a false positive on innocuous text.
 
-**Why one file is missing, and why it is not a TokenPress result.**
-`test/spec_multipart.rb` cannot exist on this machine: Windows Defender
-identifies its content as malware and quarantines the file, so the checkout is
-104 files rather than 105 and the formatter is handed something that is not
-there. It is a real-time-protection verdict on a multipart test fixture, not a
-parse error, not a verification refusal and not a property of the corpus —
-`fetch.sh` on Linux gets all 105. Suppressing it needs a Defender exclusion,
-which needs administrator rights this measurement did not have. With the usual
-1 verification refusal (`lib/rack/utils.rb`, unchanged) that leaves 103 files
-formatted.
+The failure mode is what makes it worth writing down: the file does not error,
+it **ceases to exist**, so a run silently measures a smaller corpus and still
+prints a plausible percentage. The 103-file totals differ from the 104-file
+ones by more than rounding at aggressive settings (-21.6% against -20.8%),
+because the removed file saves only -10.5% there against the tree's -21.6%.
 
-Both embedded tokenizers were **re-run over the same 103 files** so that every
-row below describes one identical set:
+Check the file count before trusting any rack number on Windows. To suppress
+the quarantine, an administrator adds an exclusion for the corpus directory
+only:
 
-| Corpus | Tokenizer | Files | Before | After | Saved | With `--ruby-strip-comments` |
-|---|---|---|---|---|---|---|
-| rack (103) | o200k_base | 103 | 173,200 | 157,216 | **-9.2%** | **-21.6%** |
-| rack (103) | cl100k_base | 103 | 172,391 | 156,968 | **-8.9%** | **-21.4%** |
-| rack (103) | Qwen3.6 | 103 | 184,690 | 169,356 | **-8.3%** | **-20.6%** |
-| rack (103) | GLM-5.2 | 103 | 172,789 | 157,366 | **-8.9%** | **-21.4%** |
-| rack (103) | Kimi K3 | 103 | 172,552 | 157,170 | **-8.9%** | **-21.3%** |
+```powershell
+Add-MpPreference -ExclusionPath "<repo>\benchmarks\corpus\rack"
+git -C "<repo>\benchmarks\corpus\rack" checkout -f FETCH_HEAD
+```
 
-**How far this is from the 104-file numbers, stated rather than implied.** At
-default settings the embedded rows land on the same figures to one decimal
-(-9.2% / -8.9%), so the missing file barely moves that column. At aggressive
-settings they do not: -21.6% / -21.4% here against **-20.8% / -20.5%** over
-104 files, a gap of +0.8pp and +0.9pp. The direction is recoverable by
-subtraction rather than guesswork: the missing file accounts for
-187,175 - 173,200 = **13,975** tokens before and 148,273 - 135,768 = **12,505**
-after, so on its own it saves **-10.5%** at aggressive settings against
--21.6% for the other 103. It is comment-*sparse*, not comment-dense, and
-dropping a below-average file is what lifts the total. (The same subtraction
-at default settings gives it -8.4%, close to the tree's -9.2%, which is why
-that column barely moves.) That gap is the measure of how much these rows may
-be read as a
-substitute for the pending ones: at default settings, nearly; at aggressive
-settings, not at all.
-
-What the run does establish is the **shape**, which is what the per-tokenizer
-rule is about: all five agree within 0.9pp at default and 1.0pp at aggressive,
-and Qwen3.6 is again the outlier in both columns — 6.6% more tokens before
-compression than `o200k_base` (184,690 vs 173,200) and the smallest saving of
-the five, the same direction it takes on gin and the opposite of the one it
-takes on requests. **No candidate list is affected**: -20.6% is the highest
-open-model aggressive figure here and it is half the ≥40% bar.
-
-Until the 105-file measurement is possible, **no open-model number may be
-quoted for Ruby without the 103-file qualifier attached**, and the aggressive
-figures may not be quoted as rack's at all.
+and removes it again afterwards. Excluding `benchmarks/corpus` as a whole
+would leave every future corpus download unscanned; do not widen it.
 
 #### The one Ruby refusal, identified
 
@@ -334,7 +317,8 @@ to any comparison across the two.
 the rest of the corpus on 2026-08-04; the three open-model columns were filled
 in on 2026-08-04 on the maintainer's machine, which can reach huggingface.co —
 the measurement container cannot, which is why they were `*pending*` for one day.
-rack's three are still pending; see its table above.
+rack's three were filled in the same day; no corpus in this file is missing a
+tokenizer any more.
 
 Because the open-model rows were measured separately, the embedded rows were
 **re-run first as a control and reproduced exactly** — 95 files, 173,337 →
@@ -468,8 +452,8 @@ and the gin row on 2026-08-04 when the Go corpus was added.
 measurement environment cannot reach huggingface.co. The Qwen3.6 / GLM-5.2 /
 Kimi K3 columns were measured separately on 2026-08-02 from the maintainer's
 Windows machine and are reported under "Open-model tokenizers" below; that
-run predates the rack corpus, so rack has no open-model figures. gin, which
-also postdates it, was measured separately on 2026-08-04 and does.
+run predates both the rack and gin corpora, which were measured separately on
+2026-08-04 and appear in their own sections above.
 
 Exact flags:
 
@@ -528,6 +512,9 @@ formatter change.**
 | express | cl100k_base | 142 | 135,206 | 100,122 | **-25.9%** |
 | rack | o200k_base | 104 | 187,175 | 148,273 | **-20.8%** |
 | rack | cl100k_base | 104 | 186,474 | 148,157 | **-20.5%** |
+| rack | Qwen3.6 | 104 | 199,847 | 160,297 | **-19.8%** |
+| rack | GLM-5.2 | 104 | 186,913 | 148,548 | **-20.5%** |
+| rack | Kimi K3 | 104 | 186,528 | 148,307 | **-20.5%** |
 | gin | o200k_base | 95 | 173,337 | 139,758 | **-19.4%** |
 | gin | cl100k_base | 95 | 172,761 | 138,297 | **-19.9%** |
 | gin | Qwen3.6 | 95 | 191,866 | 155,999 | **-18.7%** |
@@ -672,6 +659,9 @@ Same corpus, same LF checkout, the added flag being the only difference:
 |---|---|---|---|---|
 | rack | o200k_base | -9.2% | **-20.8%** | +11.6pp |
 | rack | cl100k_base | -8.9% | **-20.5%** | +11.7pp |
+| rack | Qwen3.6 | -8.2% | **-19.8%** | +11.5pp |
+| rack | GLM-5.2 | -8.9% | **-20.5%** | +11.7pp |
+| rack | Kimi K3 | -8.9% | **-20.5%** | +11.6pp |
 
 +11.6pp is a bigger jump than express's +8.1pp from `--js-strip-comments`, and
 for a structural reason rather than a corpus one: the JS/TS flag starts from a
@@ -794,18 +784,18 @@ export). The langchain run still reports only the known non-UTF-8 fixture.
 corpus was added later the same day; the gin (Go) corpus was added
 2026-08-04.
 
-**gin was measured on all three open-model tokenizers on 2026-08-04** and is
-no longer a gap: aggressive -18.7% (Qwen3.6), -20.0% (GLM-5.2), -20.0%
-(Kimi K3), against -19.4% / -19.9% embedded. All five are far below the ≥40%
-bar, so **no candidate list below changes** — now on evidence rather than on
-the assumption that a missing figure could not have cleared it.
+**Both were measured on all three open-model tokenizers on 2026-08-04**, so
+the gap is closed and every corpus in this file now has all five. Aggressive
+figures — gin -18.7% / -20.0% / -20.0% against -19.4% / -19.9% embedded, and
+rack -19.8% / -20.5% / -20.5% against -20.8% / -20.5%. All ten are far below
+the ≥40% bar, so **no candidate list below changes** — now on evidence rather
+than on the assumption that a missing figure could not have cleared it.
 
-**rack still has no open-model figures.** Its embedded-tokenizer aggressive
-result (-20.8% / -20.5%) is far below the bar, so its absence cannot change
-any list either, but no Qwen3.6 / GLM-5.2 / Kimi K3 number may be quoted for
-Ruby until it is re-measured on the maintainer's machine. The `o200k_base`
-figure is explicitly *not* a proxy for them: the table above shows Qwen3.6
-diverging from `o200k_base` by up to +7.9pp on a single corpus.
+That assumption is worth retiring explicitly, because it was doing real work
+for two days: the `o200k_base` figure was never a proxy for the other three
+(the table above shows Qwen3.6 diverging from it by up to +7.9pp on a single
+corpus), so "far below the bar on `o200k_base`" was not by itself a reason to
+believe the open-model figures were too. They are, and now it is measured.
 
 #### Showcase candidates (≥40% aggressive reduction)
 

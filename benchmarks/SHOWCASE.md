@@ -9,8 +9,8 @@ Five public tokenizers: `o200k_base` (OpenAI GPT-4o / GPT-4.1 / o-series,
 including Codex models) and `cl100k_base` (GPT-4 / GPT-3.5-turbo), both
 embedded in the binary, plus three open-model tokenizers measured
 2026-08-02 from revision-pinned files — Qwen3.6, GLM-5.2 and Kimi K3
-(gin added to those three on 2026-08-04; rack has a 103-of-105-file
-partial run of the same date, which does not replace its pending rows).
+(gin and rack added to those three on 2026-08-04, completing the set —
+every corpus here is measured on every tokenizer).
 Candidate lists are per-tokenizer (see below); Gemma is not measured.
 
 ---
@@ -210,16 +210,16 @@ absence of a figure. Qwen3.6, the tokenizer that promoted three corpora into
 its list, gives Go the *lowest* of the five, so the one plausible route to a
 Go candidate is closed for this pin.
 
-**rack has open-model figures for 103 of its 105 paths, not for the 104-file
-set the rows above use.** Windows Defender quarantines
-`test/spec_multipart.rb` on the only machine that can reach huggingface.co, so
-the two sets are not the same corpus and `RESULTS.md` keeps them in separate
-tables. On those 103 files the aggressive figures are -20.6% (Qwen3.6), -21.4%
-(GLM-5.2) and -21.3% (Kimi K3) — the highest is half the ≥40% bar, so **no
-list here changes** — but the 104-file `*pending*` rows stay pending, no
-open-model number may be quoted for Ruby without the 103-file qualifier, and
-the aggressive ones may not be quoted as rack's at all: they run +0.9pp above
-the 104-file embedded measurement.
+**rack now has all five too**, measured the same day: aggressive **-19.8%**
+(Qwen3.6), **-20.5%** (GLM-5.2) and **-20.5%** (Kimi K3), against -20.8% /
+-20.5% embedded. Also far below the bar.
+
+With those two runs **every corpus on this page has been measured on every
+tokenizer in the set**, and no list above moved. Both conclusions now rest on
+measurement rather than on the argument that a corpus far below the bar on
+`o200k_base` could not have cleared it elsewhere — an argument this very table
+undermines, since Qwen3.6 promoted three corpora that `o200k_base` had ranked
+below the bar.
 
 ---
 
