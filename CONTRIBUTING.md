@@ -202,6 +202,18 @@ Note that `gofmt` is probed with `gofmt -h`. It has no `--version` flag, and a
 **bare** `gofmt` reads standard input — a probe without an argument would
 block rather than fail, so never write one.
 
+**Getting `ruby` and `gofmt` onto a Windows machine without administrator
+rights**, since CI preinstalls both and a local checkout does not: Go ships a
+plain `.zip` that needs no installer at all (`go1.26.5.windows-amd64.zip`,
+extract anywhere, `gofmt` is in `go\bin`), and RubyInstaller's `.exe` is an
+Inno Setup installer that takes a per-user target —
+`rubyinstaller-3.3.12-1-x64.exe /verysilent /currentuser
+/dir=C:\Users\<you>\toolchains\ruby33 /tasks=noassocfiles,nomodpath,noridkinstall`.
+Both were measured this way (exit 0, no UAC prompt); with those two on PATH
+plus `LIBCLANG_PATH`, `scripts\coverage.ps1` runs to completion and exits 0.
+Without them six `external_verify_*` tests in `tokenpress-cli` fail — a
+missing toolchain, not a regression.
+
 **Java needs nothing on PATH yet.** `tokenpress-java` has no external checker:
 `--verify external` folds into the `AstEquiv` arm for `.java` paths, which is
 why the language is marked **experimental** in the README. A `javac` gate is
