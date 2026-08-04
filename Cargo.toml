@@ -8,6 +8,7 @@ members = [
     "crates/tokenpress-rust",
     "crates/tokenpress-treesitter",
     "crates/tokenpress-go",
+    "crates/tokenpress-java",
     "crates/tokenpress-cli",
     "crates/tokenpress-wasm",
 ]
