@@ -409,7 +409,10 @@ mod tests {
         // string `"*"` to javac — and the file formats normally.
         let source = b"class A {\nString s = \"\\u002A\"; // note\n}\n";
         assert!(!bails_out(source));
-        assert_eq!(stripped(source), &b"class A {\nString s = \"\\u002A\";\n}\n"[..]);
+        assert_eq!(
+            stripped(source),
+            &b"class A {\nString s = \"\\u002A\";\n}\n"[..]
+        );
     }
 
     #[test]
