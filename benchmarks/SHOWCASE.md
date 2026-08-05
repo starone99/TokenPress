@@ -9,29 +9,30 @@ Five public tokenizers: `o200k_base` (OpenAI GPT-4o / GPT-4.1 / o-series,
 including Codex models) and `cl100k_base` (GPT-4 / GPT-3.5-turbo), both
 embedded in the binary, plus three open-model tokenizers measured
 2026-08-02 from revision-pinned files — Qwen3.6, GLM-5.2 and Kimi K3
-(gin and rack added to those three on 2026-08-04). **Eleven of the thirteen
-corpora are measured on all five tokenizers; commons-lang, added 2026-08-04,
-and csvhelper, added 2026-08-05, are measured on the two embedded tokenizers
-only** — the container they were measured in cannot reach huggingface.co, so
-their Qwen3.6, GLM-5.2 and Kimi K3 figures are `*pending*` a run on the
-maintainer's machine and are not estimated from `o200k_base`.
+(gin and rack added to those three on 2026-08-04, commons-lang on 2026-08-05).
+**Twelve of the thirteen corpora are measured on all five tokenizers;
+csvhelper, added 2026-08-05, is measured on the two embedded tokenizers
+only** — the container it was measured in cannot reach huggingface.co, so its
+Qwen3.6, GLM-5.2 and Kimi K3 figures are `*pending*` a run on the maintainer's
+machine and are not estimated from `o200k_base`.
 Candidate lists are per-tokenizer (see below); Gemma is not measured.
 
 ---
 
 ## Headline: tokio, -50.5%
 
-The only corpus that clears a 40% reduction on **all five** tokenizers —
--50.5% on `o200k_base`, and **-55.2% on Qwen3.6** (1,542,030 → 690,601). On
-Qwen3.6 specifically, three more corpora clear the bar; see "Per-tokenizer
-≥40% candidates" below.
+The deepest reduction on **all five** tokenizers — -50.5% on `o200k_base`,
+and **-55.2% on Qwen3.6** (1,542,030 → 690,601). On Qwen3.6 specifically,
+three more corpora clear the bar; see "Per-tokenizer ≥40% candidates" below.
 
-apache/commons-lang clears 40% by a wider margin on both tokenizers it has
-been measured on (**-45.5%** / **-46.6%**, and a larger *absolute* saving than
-tokio's), but it has no Qwen3.6, GLM-5.2 or Kimi K3 figure, so the comparison
-tokio wins here cannot yet be made against it. tokio stays the headline
-because "on every tokenizer" is a claim only tokio can currently support —
-not because commons-lang saves less.
+apache/commons-lang clears 40% on all five as well, measured 2026-08-05
+(**-45.5%** / **-46.6%** / **-45.3%** / **-46.6%** / **-45.5%**), so tokio is
+no longer alone in that. tokio keeps the headline on percentage, where it
+leads at every one of the five. By *absolute* tokens saved the order flips:
+commons-lang saves more on four of the five (790,215 against tokio's 703,851
+at `o200k_base`), and tokio wins only at Qwen3.6 (851,429 against 831,223).
+See RESULTS.md for why — Qwen counts tokio's Rust proportionally larger than
+commons-lang's Java before compression.
 
 | | |
 |---|---|
@@ -133,14 +134,15 @@ documentation — the thing commons-lang is most made of. There is no
 Javadoc-only lever and no directive-comment carve-out the way Go has one:
 `--java-strip-comments` takes every comment or none.
 
-**On the tokenizers it has been measured on, commons-lang clears the 40% bar —
-and that claim covers OpenAI-family models only.** Its Qwen3.6, GLM-5.2 and
-Kimi K3 figures do not exist yet, and this project's rule is that a ≥40%
-result on `o200k_base` is evidence for `o200k_base` and nothing else; the
-per-tokenizer table below shows Qwen3.6 promoting three corpora that
-`o200k_base` ranked below the bar, so the inference does not run in either
-direction. It is listed under the two embedded tokenizers and deliberately
-absent from the other three.
+**commons-lang clears the 40% bar on all five tokenizers**, its Qwen3.6,
+GLM-5.2 and Kimi K3 figures having been measured on 2026-08-05: **-45.3%**,
+**-46.6%** and **-45.5%** against the embedded -45.5% / -46.6%. It is listed
+under every tokenizer in the per-tokenizer table below. That was not a
+foregone conclusion from the embedded pair — this project's rule is that a
+≥40% result on `o200k_base` is evidence for `o200k_base` and nothing else,
+and the same table shows Qwen3.6 promoting three corpora that `o200k_base`
+ranked below the bar. Qwen3.6 is also where commons-lang came closest to
+missing, at -45.3%, its weakest of the five.
 
 ### Why csvhelper is fourth, and what its default number is
 
@@ -274,14 +276,14 @@ notes.
 |---|---|---|
 | `o200k_base` | GPT-4o / GPT-4.1 / o-series | tokio **-50.5%**, commons-lang **-45.5%** |
 | `cl100k_base` | GPT-4 / GPT-3.5-turbo | tokio **-50.9%**, commons-lang **-46.6%** |
-| Qwen3.6 | Qwen3.6 family | tokio **-55.2%**, ripgrep **-42.7%**, langchain **-41.1%**, fastapi **-40.1%** |
-| GLM-5.2 | GLM-5.2 | tokio **-50.9%** |
-| Kimi K3 | Kimi K3 | tokio **-50.6%** |
+| Qwen3.6 | Qwen3.6 family | tokio **-55.2%**, commons-lang **-45.3%**, ripgrep **-42.7%**, langchain **-41.1%**, fastapi **-40.1%** |
+| GLM-5.2 | GLM-5.2 | tokio **-50.9%**, commons-lang **-46.6%** |
+| Kimi K3 | Kimi K3 | tokio **-50.6%**, commons-lang **-45.5%** |
 
-The Qwen3.6 list is four deep because Qwen prices whitespace runs
+The Qwen3.6 list is five deep because Qwen prices whitespace runs
 comparatively expensively — the same property that makes it save +7.9pp
 more than `o200k_base` on express. Selecting candidates on `o200k_base`
-would have missed three of Qwen's four. No list exists for Gemma-tokenizer
+would have missed three of Qwen's five. No list exists for Gemma-tokenizer
 models: the official Gemma repos are gated, so its tokenizer is not in the
 benchmark set (maintainer decision, 2026-08-02).
 
@@ -308,18 +310,22 @@ below the bar on `o200k_base` could not have cleared it elsewhere — an
 argument this very table undermines, since Qwen3.6 promoted three corpora that
 `o200k_base` had ranked below the bar.
 
-**commons-lang (Java), added later the same day, is the one corpus that breaks
-that completeness**, and it breaks it in the direction that matters most: it
-is a **≥40% candidate**, at -45.5% / -46.6%, so it is the first entry to join
-the `o200k_base` and `cl100k_base` lists since tokio. It appears in those two
-rows and **nowhere else**. Per the rule the table above exists to enforce, a
-≥40% result on `o200k_base` is a claim about OpenAI-family models and is not
-evidence for Qwen3.6, GLM-5.2 or Kimi K3 — in either direction. Whether Java
-becomes a candidate for those three is unmeasured until the tokenizer files
-can be downloaded, and the three lists stay as they are until then. It is the
-first non-Rust corpus to clear the bar on either embedded tokenizer (Python
-clears it only on Qwen3.6). No Java project beyond this one has been hunted,
-so **no general ≥40% claim is made for Java** — one corpus is not a search.
+**commons-lang (Java), added later the same day, was the last gap and was
+closed on 2026-08-05** — and it is the one addition that moved the lists. It
+is a **≥40% candidate on every tokenizer**: -45.5% / -46.6% embedded, and
+-45.3% (Qwen3.6) / -46.6% (GLM-5.2) / -45.5% (Kimi K3) open-model. It is the
+first entry to join any of these lists since tokio, and it joins all five, so
+**tokio is no longer the only corpus clearing the bar everywhere**. Until the
+open-model run it appeared in the two embedded rows and nowhere else, per the
+rule the table above exists to enforce: a ≥40% result on `o200k_base` is a
+claim about OpenAI-family models and is not evidence for the others in either
+direction. The measurement bore the caution out in the useful way — the three
+open-model figures came back *lower* than the OpenAI pair, with Qwen3.6 the
+weakest at -45.3%, so the bar was cleared but by a smaller margin than the
+`o200k_base` proxy would have implied. It is also the first non-Rust corpus
+to clear the bar on either embedded tokenizer (Python clears it only on
+Qwen3.6). No Java project beyond this one has been hunted, so **no general
+≥40% claim is made for Java** — one corpus is not a search.
 
 **csvhelper (C#), added 2026-08-05, is the second corpus measured on the two
 embedded tokenizers only** — the same container, the same huggingface.co
@@ -563,7 +569,7 @@ measured; no number on this page is given or extrapolated for any private
 or closed tokenizer, and none should be.
 
 **Which projects clear 40% depends on the tokenizer.** This is now measured,
-not hypothesized: the per-tokenizer lists above show three of Qwen3.6's four
+not hypothesized: the per-tokenizer lists above show three of Qwen3.6's five
 candidates are invisible on `o200k_base`. Judge savings, and ≥40%
 membership, on the tokenizer of the model you actually use. Each list is
 valid only for models using that tokenizer; Gemma-tokenizer models have no
@@ -580,7 +586,10 @@ to CRLF reproduces the historical numbers exactly.
 measured, not a sample chosen to be representative. Savings depend heavily on
 how much of a tree is prose documentation. JavaScript, Ruby, Go, Java and C#
 are each represented by exactly one project, so `-25.4%`, `-20.8%`, `-19.4%`,
-`-45.5%` and `-38.3%` are data points, not language-level expectations.
+`-45.5%` and `-38.3%` are data points, not language-level expectations — and
+the Java figure is the one most worth reading that way, since it is the
+highest aggressive number of the five and rests entirely on a
+documentation-dense library.
 
 ---
 

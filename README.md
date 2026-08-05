@@ -36,19 +36,25 @@ and all tokenizers.
 | requests | aggressive¹ | -20.6% | -21.0% | -20.7% | -20.2% |
 | ripgrep 14.1.1 | default | -18.9% | **-23.2%** | -18.3% | -18.2% |
 | ripgrep | aggressive² | -38.2% | **-42.7%** | -38.1% | -37.9% |
-| express v5.2.1 | default | -17.3% | *pending* | *pending* | *pending* |
-| express | aggressive³ | -25.4% | *pending* | *pending* | *pending* |
-| rack v3.2.6 | default | -9.2% | *pending* | *pending* | *pending* |
-| rack | aggressive⁴ | -20.8% | *pending* | *pending* | *pending* |
+| express v5.2.1 | default | -17.3% | -25.0% | -17.6% | -17.4% |
+| express | aggressive³ | -25.4% | **-33.3%** | -25.9% | -25.5% |
+| rack v3.2.6 | default | -9.2% | -8.2% | -8.9% | -8.9% |
+| rack | aggressive⁴ | -20.8% | -19.8% | -20.5% | -20.5% |
+| gin v1.11.0 | default | -6.4% | -5.6% | -6.2% | -6.4% |
+| gin | aggressive⁵ | -19.4% | -18.7% | -20.0% | -20.0% |
+| commons-lang 3.17.0 | default | -6.1% | -5.6% | -6.2% | -6.0% |
+| commons-lang | aggressive⁶ | **-45.5%** | **-45.3%** | **-46.6%** | **-45.5%** |
 
 ¹ `--py-strip-comments --py-strip-annotations` ² `--rs-strip-doc-comments`
-³ `--js-strip-comments` ⁴ `--ruby-strip-comments`
+³ `--js-strip-comments` ⁴ `--ruby-strip-comments` ⁵ `--go-strip-comments`
+⁶ `--java-strip-comments`
 
-*pending* means not measured yet: the open-model tokenizer numbers
-(Qwen3.6/GLM-5.2/Kimi K3) for express and rack need Hugging Face tokenizer
-downloads that have not been run for those corpora. See
-[benchmarks/RESULTS.md](benchmarks/RESULTS.md), which uses the same *pending*
-convention.
+Every corpus in this table is measured on every tokenizer listed; nothing
+here is estimated from one tokenizer's number. `cl100k_base` (GPT-4 /
+GPT-3.5-turbo) is omitted for width and is in
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md) along with raw token counts,
+seven further corpora, and the line-ending note that explains why two
+platforms' before-counts differ slightly.
 
 The default setting is context-lossless for Python: comments, docstrings and
 type annotations are all kept; only syntactic noise (whitespace, blank lines,
@@ -208,8 +214,8 @@ not Ruby at all). Measured savings are published for one Ruby corpus,
 rack v3.2.6: -9.2% at default settings and -20.8% with `--ruby-strip-comments`,
 both on `o200k_base` — see the table above and
 [benchmarks/RESULTS.md](benchmarks/RESULTS.md), which also reports
-`cl100k_base` (-8.9% / -20.5%). Only the two embedded tokenizers were
-measured, so the Qwen3.6/GLM-5.2/Kimi K3 columns are still *pending*, and one
+`cl100k_base` (-8.9% / -20.5%). All five tokenizers are measured — the
+open-model three land at -8.2% / -8.9% / -8.9% at default settings — but one
 corpus is not a language-wide claim. That run has one verification refusal,
 `lib/rack/utils.rb` — a documented over-refusal class, in the safe direction:
 the file is left unchanged and nothing that fails the check is written. Ruby is

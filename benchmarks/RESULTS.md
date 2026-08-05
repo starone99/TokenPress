@@ -369,10 +369,12 @@ percentage for another model family in either direction.
 
 What does hold across all five: gin is the lowest-saving corpus in this file
 at **every** tokenizer measured, not just at `o200k_base`. (Superseded in
-part on 2026-08-04 by the Java corpus below, which is lower still at both
-embedded tokenizers — -6.1% and -6.2%. It has no open-model figures, so on
-Qwen3.6, GLM-5.2 and Kimi K3 gin remains the lowest of everything measured,
-and that is all that can be said until commons-lang is measured there.)
+part on 2026-08-04 by the Java corpus below, and the picture completed when
+commons-lang's open-model columns were measured on 2026-08-05: commons-lang is
+lower at four of the five tokenizers, and gin keeps the title at **Qwen3.6
+only**, where the two are a hair apart — -5.57% against -5.65%, both of which
+this file prints as -5.6%. Read the raw counts in the Java table below rather
+than the rounded column if that margin matters to you.)
 
 Like rack's `-9.2%` and unlike express's `-17.3%`, this `-6.4%` **is**
 context-lossless: every comment survives and only whitespace was removed.
@@ -443,13 +445,25 @@ express, rack and gin are: the tables further up were measured on Windows with
 a CRLF checkout, and the line-ending caveat below applies to any comparison
 across the two.
 
-**Only the two embedded tokenizers are measured.** The Qwen3.6, GLM-5.2 and
-Kimi K3 rows are `*pending*`: this measurement container cannot reach
-huggingface.co, so the revision-pinned tokenizer files `fetch.sh` downloads
-are unavailable here, and the project rule is that an unmeasured column is
-written as pending rather than estimated from `o200k_base`. gin and rack sat
-pending for a day for the same reason and were filled in on the maintainer's
-machine; this corpus is waiting on the same run.
+**All five tokenizers are measured.** The two embedded ones were measured with
+the backend on 2026-08-04; the three open-model columns were filled in on
+2026-08-05 on the maintainer's machine, which can reach huggingface.co — the
+measurement container cannot, which is why they were `*pending*` for a day, the same
+way gin's and rack's were. No corpus in this file is missing a tokenizer.
+
+Because the open-model rows were measured separately, the embedded rows were
+**re-run first as a control and reproduced exactly** — 500 files,
+1,736,204 → 1,629,486 at `o200k_base` and 1,736,204 → 945,989 with
+`--java-strip-comments`, matching the recorded figures to the token, and
+cl100k likewise. The corpus was re-checked out with `core.autocrlf false`
+**and `core.eol lf`** to get the same LF tree the original run measured, so
+the open-model rows sit on the same side of the line-ending boundary as the
+embedded ones and the five are directly comparable. Both settings are needed
+here and `core.autocrlf false` alone is not enough, unlike on gin: commons-lang
+ships a `.gitattributes` that marks `*.java` as `text`, and a `text` path is
+checked out in the platform-native ending whenever `core.eol` is left at
+`native`, whatever `core.autocrlf` says. Verified with `git ls-files --eol`
+(575 paths `i/lf w/lf`) rather than assumed.
 
 The whole tree is measured, all 500 files being `.java` and all of them under
 `src/`. This pin holds no file of any other language TokenPress claims — no
@@ -463,14 +477,22 @@ already built in the tree; a fresh clone has no `target/` at all.
 |---|---|---|---|---|---|
 | commons-lang | o200k_base | 500 | 1,736,204 | 1,629,486 | **-6.1%** |
 | commons-lang | cl100k_base | 500 | 1,675,227 | 1,571,424 | **-6.2%** |
-| commons-lang | Qwen3.6 | 500 | *pending* | *pending* | *pending* |
-| commons-lang | GLM-5.2 | 500 | *pending* | *pending* | *pending* |
-| commons-lang | Kimi K3 | 500 | *pending* | *pending* | *pending* |
+| commons-lang | Qwen3.6 | 500 | 1,835,291 | 1,731,602 | **-5.6%** |
+| commons-lang | GLM-5.2 | 500 | 1,677,273 | 1,573,470 | **-6.2%** |
+| commons-lang | Kimi K3 | 500 | 1,737,751 | 1,632,931 | **-6.0%** |
 
-**0 verification refusals** across all 500 files, on both embedded tokenizers
-and at both settings; `tokenpress format` over the tree exits 0 and rewrites
+**0 verification refusals** across all 500 files, at all five tokenizers and at
+both settings; `tokenpress format` over the tree exits 0 and rewrites
 500 of 500 files. Absolute saving at o200k: 106,718 tokens per full-repo
 prompt.
+
+The five agree more closely on this corpus than on any other in this file —
+**-5.6% to -6.2%, a 0.6pp spread**, narrower than gin's 0.8pp. Qwen3.6 is the
+outlier in the same direction it is everywhere: it counts commons-lang **5.7%
+larger** before compression than `o200k_base` does (1,835,291 vs 1,736,204)
+and reports the smallest saving of the five. GLM-5.2 tracks `cl100k_base` to
+within 0.03pp here (1,677,273 vs 1,675,227 before), which is its habit across
+this file and not a Java-specific result.
 
 #### What Java loses at default settings: nothing
 
@@ -559,9 +581,9 @@ below applies to any comparison across the two.
 Kimi K3 rows are `*pending*`: this measurement container cannot reach
 huggingface.co, so the revision-pinned tokenizer files `fetch.sh` downloads
 are unavailable here, and the project rule is that an unmeasured column is
-written as pending rather than estimated from `o200k_base`. gin and rack sat
-pending for a day for the same reason and were filled in on the maintainer's
-machine; commons-lang and this corpus are waiting on the same run.
+written as pending rather than estimated from `o200k_base`. gin, rack and
+commons-lang all sat pending for a day for the same reason and were filled in
+on the maintainer's machine; this corpus is waiting on the same run.
 
 **Why CsvHelper, and what was rejected.** Nothing about a C# corpus was
 pre-validated, and the constraint that decided it was the toolchain rather
@@ -862,9 +884,9 @@ formatter change.**
 | gin | Kimi K3 | 95 | 174,919 | 139,936 | **-20.0%** |
 | commons-lang | o200k_base | 500 | 1,736,204 | 945,989 | **-45.5%** |
 | commons-lang | cl100k_base | 500 | 1,675,227 | 894,692 | **-46.6%** |
-| commons-lang | Qwen3.6 | 500 | *pending* | *pending* | *pending* |
-| commons-lang | GLM-5.2 | 500 | *pending* | *pending* | *pending* |
-| commons-lang | Kimi K3 | 500 | *pending* | *pending* | *pending* |
+| commons-lang | Qwen3.6 | 500 | 1,835,291 | 1,004,068 | **-45.3%** |
+| commons-lang | GLM-5.2 | 500 | 1,677,273 | 896,297 | **-46.6%** |
+| commons-lang | Kimi K3 | 500 | 1,737,751 | 947,047 | **-45.5%** |
 | csvhelper | o200k_base | 459 | 376,214 | 231,961 | **-38.3%** |
 | csvhelper | cl100k_base | 459 | 369,519 | 223,727 | **-39.5%** |
 | csvhelper | Qwen3.6 | 459 | *pending* | *pending* | *pending* |
@@ -1073,6 +1095,39 @@ per full-repo prompt.
 lines, `/*line*/`, build constraints and the cgo preamble — survive it, so
 stripping comments cannot change how a package builds.
 
+##### What `--java-strip-comments` adds
+
+Same corpus, same LF checkout, the added flag being the only difference:
+
+| Corpus | Tokenizer | Without comment stripping | With `--java-strip-comments` | Delta |
+|---|---|---|---|---|
+| commons-lang | o200k_base | -6.1% | **-45.5%** | +39.4pp |
+| commons-lang | cl100k_base | -6.2% | **-46.6%** | +40.4pp |
+| commons-lang | Qwen3.6 | -5.6% | **-45.3%** | +39.6pp |
+| commons-lang | GLM-5.2 | -6.2% | **-46.6%** | +40.4pp |
+| commons-lang | Kimi K3 | -6.0% | **-45.5%** | +39.5pp |
+
+The three open-model rows were added on 2026-08-05, and the finding gin's
+table reported holds here too and more strongly: **the lever is the same size
+for all five**, +39.4pp to +40.4pp, a 1.0pp spread on a delta an order of
+magnitude larger than gin's. Two corpora in two languages now say the same
+thing — the size of a comment-stripping delta is a property of how much of the
+source is comment, not of the tokenizer's vocabulary. That is worth stating
+precisely because the per-tokenizer rule elsewhere in this file warns about
+*totals*: those genuinely do scatter (Qwen3.6 counts this tree 5.7% larger
+than `o200k_base` before compression), and the deltas do not.
+
+**+39.4pp is the largest comment-stripping delta measured in this file** —
+three times gin's +13.0pp, and the reason is that Javadoc is an ordinary block
+comment to the grammar. The flag deletes the whole published API documentation
+of a library whose product *is* its documented API. There is no Javadoc-only
+lever and no directive-comment carve-out of the kind Go has: it takes every
+comment or none.
+
+**0 refusals with the flag**, at all five tokenizers, exactly as without it,
+and the file count is unchanged at 500. Absolute saving at o200k: 790,215
+tokens per full-repo prompt.
+
 ##### What `--csharp-strip-comments` adds
 
 Same corpus, same LF checkout, the added flag being the only difference. Both
@@ -1200,13 +1255,17 @@ models. Embedded-tokenizer columns measured 2026-08-01 (re-measured
 2026-08-02 with the JS-enabled CLI — unchanged except django, see the
 open-model subsection); open-model columns measured 2026-08-02. rack was
 added 2026-08-02 and gin 2026-08-04, both measured on the embedded tokenizers
-only (-20.8% / -20.5% and -19.4% / -19.9%, below the bar on all four); they
-are absent from the open-model columns. **Neither is a ≥40% candidate, so the
-lists below are unchanged by their addition.** commons-lang was added
-2026-08-04 on the embedded tokenizers only as well, and it **is** a candidate
-there (-45.5% / -46.6%), so it joins those two lists and only those two — a
-≥40% result on `o200k_base` is a claim about OpenAI-family models and is not
-evidence for Qwen3.6, GLM-5.2 or Kimi K3 in either direction.
+only at first and completed on the maintainer's machine (-20.8% / -20.5% and
+-19.4% / -19.9% on the embedded pair, and below the bar on all five once the
+open-model columns arrived). **Neither is a ≥40% candidate, so the lists below
+are unchanged by their addition.** commons-lang was added 2026-08-04 on the
+embedded tokenizers and completed on 2026-08-05, and it **is** a candidate on
+all five (-45.5% / -46.6% / -45.3% / -46.6% / -45.5%), so it now joins every
+list rather than the two it sat in while its open-model columns were pending.
+That it clears the bar on the OpenAI pair was never evidence that it would
+clear it on the other three — the lists stay per-tokenizer for the reason
+spelled out below, and Qwen3.6 is exactly where commons-lang came closest to
+falling short.
 
 **Per-tokenizer candidate lists:**
 
@@ -1214,28 +1273,33 @@ evidence for Qwen3.6, GLM-5.2 or Kimi K3 in either direction.
 |---|---|
 | o200k_base | tokio **-50.5%**, commons-lang **-45.5%** |
 | cl100k_base | tokio **-50.9%**, commons-lang **-46.6%** |
-| Qwen3.6 | tokio **-55.2%**, ripgrep **-42.7%**, langchain **-41.1%**, fastapi **-40.1%** |
-| GLM-5.2 | tokio **-50.9%** |
-| Kimi K3 | tokio **-50.6%** |
+| Qwen3.6 | tokio **-55.2%**, commons-lang **-45.3%**, ripgrep **-42.7%**, langchain **-41.1%**, fastapi **-40.1%** |
+| GLM-5.2 | tokio **-50.9%**, commons-lang **-46.6%** |
+| Kimi K3 | tokio **-50.6%**, commons-lang **-45.5%** |
 
-tokio clears the bar on all five tokenizers and stays the headline
-everywhere, commons-lang having only two measured columns; at Qwen3.6 tokio
+**Two corpora now clear the bar on all five tokenizers, not one** — tokio and
+commons-lang, since 2026-08-05. tokio stays the headline because it is ahead
+by percentage at every one of the five; at Qwen3.6 tokio
 reaches **-55.2%** (1,542,030 → 690,601, an
 absolute saving of 851,429 tokens per full-repo prompt). The Qwen3.6 list
-is four deep because Qwen prices whitespace runs comparatively expensively;
+is five deep because Qwen prices whitespace runs comparatively expensively;
 selecting candidates on the `o200k_base` proxy would have missed three of
-its four — which is exactly why this hunt is per-tokenizer. Gemma is not
+its five — which is exactly why this hunt is per-tokenizer. Gemma is not
 measured: the official `google/gemma-*` repos are gated (license acceptance
 plus auth token), so pinning its `tokenizer.json` needs an
 authenticated-download story nothing else needs; it was excluded from this
 run by maintainer decision (2026-08-02).
 
-**Clears ≥40% on the embedded tokenizers — 2 of 12 corpora:**
+**Clears ≥40% on all five tokenizers — 2 of 12 corpora:**
 
 | Project | Language | Commit | o200k_base | cl100k_base | Absolute saving (o200k) |
 |---|---|---|---|---|---|
 | tokio-rs/tokio | Rust | `adc2ae7a` | **-50.5%** | **-50.9%** | 703,851 tokens |
 | apache/commons-lang | Java | `29ccc766` | **-45.5%** | **-46.6%** | 790,215 tokens |
+
+Open-model figures for both are in the per-tokenizer lists above; the two
+embedded columns are kept here because the absolute-saving comparison below
+is quoted at `o200k_base`.
 
 ```bash
 target/release/tokenpress stats benchmarks/corpus/tokio \
@@ -1251,9 +1315,21 @@ disappears. commons-lang saves **more tokens in absolute terms** off a smaller
 tree — 790,215 against tokio's 703,851 — because `--java-strip-comments`
 deletes Javadoc, and a library whose whole product is its documented API is
 mostly Javadoc by weight. It is the first non-Rust corpus to clear the bar on
-either embedded tokenizer (Python clears it only on Qwen3.6), and its
-open-model columns are unmeasured, so its candidacy is stated for
-OpenAI-family models only.
+either embedded tokenizer (Python clears it only on Qwen3.6), and since
+2026-08-05 it is measured on all five, clearing the bar on every one of them.
+
+The absolute-saving comparison holds at four of the five tokenizers, and the
+exception is instructive. Tokens saved per full-repo prompt, commons-lang
+against tokio: 790,215 vs 703,851 at `o200k_base`, 780,535 vs 709,324 at
+`cl100k_base`, 780,976 vs 710,033 at GLM-5.2, 790,704 vs 703,221 at Kimi K3 —
+and **831,223 vs 851,429 at Qwen3.6, the one tokenizer where tokio saves more
+in absolute terms.** It is the same property behind gin losing its
+lowest-saving title everywhere except Qwen3.6: Qwen counts these trees larger
+to begin with, and it inflates tokio's Rust more than commons-lang's Java
+(1,542,030 against o200k's 1,394,248, +10.6%; commons-lang 1,835,291 against
+1,736,204, +5.7%), so the same percentage buys tokio more tokens there. Which
+corpus "saves most" is a per-tokenizer question in absolute terms as well as
+relative ones.
 
 **Near misses (35–40% on o200k_base):**
 
