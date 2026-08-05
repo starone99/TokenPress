@@ -39,9 +39,12 @@ genuine refusal in rack, `lib/rack/utils.rb`, which is a known Ruby
 over-refusal class documented in the Ruby section below. The 95 Go files
 added 2026-08-04 add **no** refusals and no rejected inputs, at either
 setting and either tokenizer, and neither do the 500 Java files added the
-same day. **The 461 C# files added 2026-08-05 do**: 2 at default settings and
-a third under `--csharp-strip-comments`, all three over-refusals of valid
-input, triaged in the C# section below. A refusal writes
+same day. **The 461 C# files added 2026-08-05 do**: 2, at every setting, both
+over-refusals of valid input, triaged in the C# section below. (A third one
+appeared under `--csharp-strip-comments` when this corpus was first measured;
+it was a shared tree-sitter-backend defect, fixed 2026-08-05, and the
+`--csharp-strip-comments` rows below are re-measured after the fix.) A refusal
+writes
 nothing and leaves the file untouched; it is the core invariant working, not
 a corruption. Runs made with the JS/TS-enabled CLI (2026-08-02 onward)
 additionally reject three django `.js` files as invalid input —
@@ -604,9 +607,10 @@ backend's output lands inside a C# measurement.
 | csvhelper | GLM-5.2 | 459 | *pending* | *pending* | *pending* |
 | csvhelper | Kimi K3 | 459 | *pending* | *pending* | *pending* |
 
-`Files` is 459 of the 461, because of **2 verification refusals** at default
-settings, identical on both embedded tokenizers; a third appears only under
-`--csharp-strip-comments`. All three are triaged below. `tokenpress format`
+`Files` is 459 of the 461, because of **2 verification refusals**, identical
+on both embedded tokenizers and at every setting — including
+`--csharp-strip-comments`, which used to add a third and no longer does. Both
+are triaged below. `tokenpress format`
 over the explicit `.cs` list rewrites 459 of 459 formattable files and leaves
 the two refused ones untouched. Absolute saving at o200k: 53,795 tokens per
 full-repo prompt.
@@ -656,17 +660,19 @@ find benchmarks/corpus/csvhelper -not -path '*/.git/*' -name '*.cs' -print0 |
 file, behind commons-lang's +39.4pp. The aggressive rows are in the aggressive
 section below.
 
-#### The three C# refusals, identified — and none is the expected defect
+#### The C# refusals, identified — and none is the expected defect
 
 The C6 scoping predicted two sources of refusal on a real corpus: a slice
 pattern with a designation, and `#if` blocks whose arms are not each a
 complete syntactic unit — the latter measured at 65 of 945 files on the
 Newtonsoft.Json tree and called "the real-world ceiling on C# coverage".
 **Neither fires here.** CsvHelper has 11 `#if` directives across 11 files, 1
-`#region` and 10 `#pragma`s, and every one of them parses clean. The three
-refusals this corpus does produce are two different classes, both previously
+`#region` and 10 `#pragma`s, and every one of them parses clean. The refusals
+this corpus does produce were two different classes, both previously
 unrecorded, and both over-refusals of valid input rather than corruptions —
-nothing was written in either case.
+nothing was written in either case. **Class 2 has since been fixed**, so the
+count as measured today is 2, at every setting; it is kept below because the
+diagnosis is what the fix was built on.
 
 **Class 1, 2 files, default settings and every other setting: an escaped
 brace immediately followed by an interpolation hole that contains a string
@@ -688,22 +694,40 @@ the expression and it prints `{a,b}`. This is a grammar limit in
 `tree-sitter-c-sharp`'s scanner, reached at parse time, so no setting avoids
 it.
 
-**Class 2, 1 file, `--csharp-strip-comments` only: a file whose entire content
-is comments.**
+**Class 2 — FIXED 2026-08-05 — was 1 file, `--csharp-strip-comments` only: a
+file whose entire content is comments.**
 `tests/CsvHelper.Tests/Mappings/ConstructorParameter/HeaderPrefixMapTests.cs`
 is six lines, all of them `//`, explaining why the test class does not exist.
-Stripping the comments leaves nothing, and the empty result is rejected with
+Stripping the comments left nothing, and the empty result was rejected with
 `verification failed: output AST differs from input`. Minimal reproducer:
 a file containing only `// only a comment`.
 
-**Class 2 is not C#-specific, and that is worth recording where someone will
-find it.** The same one-line file refuses identically as `.java` under
-`--java-strip-comments` and as `.go` under `--go-strip-comments`; Ruby and
-Python both handle it (`--py-strip-comments` reports `-100.0%` on it, which is
-the correct answer). commons-lang and gin simply contain no comment-only file,
-so the class went unseen until a corpus had one. It is a pre-existing
-over-refusal shared by three backends, not something the C# work introduced,
-and it is left as a finding here rather than fixed inside a benchmarks task.
+**Class 2 was not C#-specific, and that is worth recording where someone will
+find it.** The same one-line file refused identically as `.java` under
+`--java-strip-comments` and as `.go` under `--go-strip-comments`. commons-lang
+and gin simply contain no comment-only file, so the class went unseen until a
+corpus had one. It was a pre-existing over-refusal shared by three backends,
+not something the C# work introduced, and it was left as a finding here rather
+than fixed inside a benchmarks task.
+
+The cause was **one** bug in the shared engine, not three: in
+`tokenpress-treesitter`'s comparable artifact, the leaf-vs-branch decision
+read the *pre-skip* child count, so a comment-only root took the branch path
+and rendered `(source_file)` while the empty root took the leaf path and
+rendered `(source_file )` — a separator with nothing after it. The leaf path
+now emits nothing after the kind for a zero-width, non-missing node. The
+re-measured `--csharp-strip-comments` rows below cover 459 files instead of
+458, and `HeaderPrefixMapTests.cs` now reports `108 → 1 tokens (-99.1%)`: the
+file carries a UTF-8 BOM, which is not a comment and correctly survives.
+
+**Ruby and Python do not behave the same way on this shape, and the earlier
+write-up wrongly lumped them together.** Re-checked on `# only a comment`:
+`--py-strip-comments` reports `-100.0%` and writes the file empty, which is
+the same verdict the three tree-sitter backends now give; `--ruby-strip-comments`
+reports `5 → 5 tokens (-0.0%)` and leaves the file **byte-identical on disk**.
+Ruby therefore never refused this input, but it never emptied it either — a
+separate finding about the Ruby comment policy, recorded here and deliberately
+not changed by the class-2 fix.
 
 #### Upstream verification of this corpus
 
@@ -841,20 +865,25 @@ formatter change.**
 | commons-lang | Qwen3.6 | 500 | *pending* | *pending* | *pending* |
 | commons-lang | GLM-5.2 | 500 | *pending* | *pending* | *pending* |
 | commons-lang | Kimi K3 | 500 | *pending* | *pending* | *pending* |
-| csvhelper | o200k_base | 458 | 376,106 | 231,960 | **-38.3%** |
-| csvhelper | cl100k_base | 458 | 369,407 | 223,726 | **-39.4%** |
-| csvhelper | Qwen3.6 | 458 | *pending* | *pending* | *pending* |
-| csvhelper | GLM-5.2 | 458 | *pending* | *pending* | *pending* |
-| csvhelper | Kimi K3 | 458 | *pending* | *pending* | *pending* |
+| csvhelper | o200k_base | 459 | 376,214 | 231,961 | **-38.3%** |
+| csvhelper | cl100k_base | 459 | 369,519 | 223,727 | **-39.5%** |
+| csvhelper | Qwen3.6 | 459 | *pending* | *pending* | *pending* |
+| csvhelper | GLM-5.2 | 459 | *pending* | *pending* | *pending* |
+| csvhelper | Kimi K3 | 459 | *pending* | *pending* | *pending* |
 
 `Files` counts files that were successfully formatted; refused files (next
 subsection) are excluded from both the file count and the token totals. The
 langchain and transformers rows were re-measured on 2026-08-01 after the
 PYO3 refusals below were fixed, so they now cover the previously-excluded 19
 files (langchain 2,512 → 2,530, transformers 4,699 → 4,700); every other row
-is the original measurement. Only langchain's percentages moved (-38.5% →
--38.8% at o200k, -39.0% → -39.2% at cl100k); transformers' are unchanged to
-one decimal, the recovered file being one of 4,700.
+is the original measurement, with one later exception: the csvhelper rows were
+re-measured on 2026-08-05 after the comment-only over-refusal (class 2 in the
+C# section above) was fixed, so they now cover 459 files instead of 458
+(376,106 → 376,214 before, 231,960 → 231,961 after at o200k). Only cl100k's
+percentage moved, -39.4% → -39.5%. Only langchain's percentages moved among
+the 2026-08-01 re-measurements (-38.5% → -38.8% at o200k, -39.0% → -39.2% at
+cl100k); transformers' are unchanged to one decimal, the recovered file being
+one of 4,700.
 
 ##### What `--py-strip-docstrings` adds
 
@@ -1047,14 +1076,14 @@ stripping comments cannot change how a package builds.
 ##### What `--csharp-strip-comments` adds
 
 Same corpus, same LF checkout, the added flag being the only difference. Both
-columns are measured over the **458** files that format at *both* settings, so
-the delta is apples-to-apples; the -14.3% / -13.6% in the C# section above are
-over 459 and differ only in the last digit of the cl100k figure:
+columns are measured over the same **459** files — the flag no longer changes
+which files format, so the delta is apples-to-apples and these are exactly the
+percentages in the C# section above and the aggressive table:
 
 | Corpus | Tokenizer | Without comment stripping | With `--csharp-strip-comments` | Delta |
 |---|---|---|---|---|
 | csvhelper | o200k_base | -14.3% | **-38.3%** | +24.0pp |
-| csvhelper | cl100k_base | -13.7% | **-39.4%** | +25.7pp |
+| csvhelper | cl100k_base | -13.6% | **-39.5%** | +25.8pp |
 
 +24.0pp is the second-largest comment-stripping delta in this file, behind
 commons-lang's +39.4pp and ahead of gin's +13.0pp, and it is the same
@@ -1066,11 +1095,13 @@ CsvHelper's documentation is one-line summaries where commons-lang's is
 multi-paragraph Javadoc, and because C#'s brace lines give the *default* run a
 much larger base to start from.
 
-**The refusal count goes from 2 to 3 with the flag**, which is the one place
-in this file where a strip flag adds a refusal. The extra file is
-`HeaderPrefixMapTests.cs`, whose entire content is comments; stripping them
-leaves an empty file and the equivalence check rejects it. Both classes are
-triaged in the C# section above. Absolute saving at o200k: 144,146 tokens per
+**The refusal count stays at 2 with the flag.** It used to go from 2 to 3 —
+the one place in this file where a strip flag added a refusal — the extra file
+being `HeaderPrefixMapTests.cs`, whose entire content is comments; stripping
+them leaves an empty file and the equivalence check rejected it. That was
+class 2, fixed 2026-08-05 in the shared tree-sitter engine and re-measured
+here; both classes are triaged in the C# section above. No strip flag in this
+file adds a refusal any more. Absolute saving at o200k: 144,253 tokens per
 full-repo prompt.
 
 `--csharp-strip-comments` is the C# backend's only lossy flag. Note what it

@@ -426,6 +426,24 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_only_file_is_emptied_rather_than_refused() {
+        // C6(a): a file whose entire content is comments strips down to
+        // nothing, and the equivalence check used to reject the empty result
+        // because the artifact of a root with only comment children differed
+        // from the artifact of an empty root by one space. The empty file is
+        // the correct answer, so it must verify and be returned. CsvHelper
+        // carries exactly one such file, which is where this was found.
+        let source = "// only a comment\n";
+        assert_eq!(stripped(source), "");
+        let r = CSharpFormatter::new(CSharpOptions {
+            strip_comments: true,
+        })
+        .format(Path::new("A.cs"), source, &FormatOptions::default())
+        .unwrap();
+        assert_eq!(r.formatted_tokens, 0);
+    }
+
+    #[test]
     fn cso1_deletes_xml_doc_comments_when_stripping() {
         // The documented consequence of the opt-in, pinned where a user would
         // meet it: `///` is an ordinary `comment` to this grammar — there is

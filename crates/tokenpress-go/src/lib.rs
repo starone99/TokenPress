@@ -79,9 +79,12 @@
 //!
 //! 7,065 files formatted in both configurations, 52 refused at parse — all
 //! deliberately-invalid compiler/type-checker `testdata` — with **0**
-//! re-parse failures and **0** equivalence refusals. There is no known
-//! over-refusal class: every leaf of the artifact is a token, so no captured
-//! text can span rewritten whitespace.
+//! re-parse failures and **0** equivalence refusals — every leaf of the
+//! artifact is a token, so no captured text can span rewritten whitespace.
+//! That is a measurement over this corpus and not a proof: one over-refusal
+//! class did exist (a comment-only file stripping to an empty one was
+//! refused), and no stdlib file is comment-only, which is why the figure
+//! above never saw it. It is fixed in [`tokenpress_treesitter::comparable`].
 //!
 //! The savings from protecting a build-constraint prologue at the *default*
 //! settings, where no comment is being deleted and only the blank line is at
@@ -369,6 +372,23 @@ mod tests {
             stripped(source),
             "package main\nfunc main() {\nx := 1\n_ = x\n}\n"
         );
+    }
+
+    #[test]
+    fn a_comment_only_file_is_emptied_rather_than_refused() {
+        // C6(a): a file whose entire content is comments strips down to
+        // nothing, and the equivalence check used to reject the empty result
+        // because the artifact of a root with only comment children differed
+        // from the artifact of an empty root by one space. The empty file is
+        // the correct answer, so it must verify and be returned.
+        let source = "// only a comment\n";
+        assert_eq!(stripped(source), "");
+        let r = GoFormatter::new(GoOptions {
+            strip_comments: true,
+        })
+        .format(Path::new("a.go"), source, &FormatOptions::default())
+        .unwrap();
+        assert_eq!(r.formatted_tokens, 0);
     }
 
     #[test]

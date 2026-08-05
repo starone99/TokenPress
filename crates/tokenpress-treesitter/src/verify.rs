@@ -53,8 +53,8 @@
 //! [`crate::parser::LanguageConfig::comment_kinds`], so a comment that changed
 //! — or vanished entirely — produces the *same* artifact and passes
 //! [`equivalent`]. That is not an oversight to be patched at this level: it is
-//! what lets the comment stripper exist at all, and it is why the artifact has
-//! no known over-refusal class. Comment policy is consequently verified
+//! what lets the comment stripper exist at all. Comment policy is consequently
+//! verified
 //! elsewhere and never here — by the per-language external gate (a comment
 //! carrying a build constraint or a `//go:` directive changes what the
 //! toolchain does with the file, which is exactly what running the toolchain
@@ -63,12 +63,18 @@
 //! with no comment kinds makes comments part of the artifact, and then a
 //! comment-only change *is* refused. Both directions are pinned below.
 //!
-//! # There is no known over-refusal class
+//! # Over-refusal
 //!
 //! Every leaf of a tree-sitter tree is a token, so no captured text spans
 //! rewritten whitespace; see [`crate::comparable`] for the measurement over
 //! the Go stdlib. This module adds no comparison of its own on top of the
-//! artifact, so it inherits that result unchanged.
+//! artifact, so it inherits that result unchanged — and inherits its
+//! over-refusals too. There **was** one class, contrary to what this doc used
+//! to claim absolutely: a comment-only source and the empty source it strips
+//! to rendered one space apart, so the correct empty output was refused. It is
+//! fixed in [`crate::comparable`] and pinned there and in the three backends;
+//! no other class is known, which is a statement about what has been measured
+//! and not a proof.
 
 use crate::comparable;
 use crate::parser::{self, LanguageConfig};

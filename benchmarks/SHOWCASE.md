@@ -70,7 +70,7 @@ way). `Files` is the number of files successfully formatted.
 | [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | Rust | `adc2ae7af2caaea83985fbdfbc7884c159c486f2` | 790 | **-50.5%** | **-50.9%** |
 | [apache/commons-lang](https://github.com/apache/commons-lang) | Java | `29ccc7665f3bc5d84155a3092ab2209a053324e6` (tag `rel/commons-lang-3.17.0`) | 500 | **-45.5%** | **-46.6%** |
 | [langchain-ai/langchain](https://github.com/langchain-ai/langchain) | Python | `a1a1ad3bb3eb6cf7680b39ff0fb37f7150393a25` | 2,530 | -38.8% | -39.2% |
-| [JoshClose/CsvHelper](https://github.com/JoshClose/CsvHelper) | C# | `5dad8b8b1d8b074f8353cfd482e939db788a8927` (tag `33.1.0`) | 458 | -38.3% | -39.4% |
+| [JoshClose/CsvHelper](https://github.com/JoshClose/CsvHelper) | C# | `5dad8b8b1d8b074f8353cfd482e939db788a8927` (tag `33.1.0`) | 459 | -38.3% | -39.5% |
 | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) | Rust | `4649aa97` (tag 14.1.1) | 98 | -37.4% | -37.6% |
 | [fastapi/fastapi](https://github.com/fastapi/fastapi) | Python | `95f8322ee1dcda7ceace7b1c4f6c9915b36d748f` | 1,136 | -36.2% | -36.9% |
 | [psf/requests](https://github.com/psf/requests) | Python | `0e322af8` (tag v2.32.3) | 36 | -36.0% | -36.3% |
@@ -97,7 +97,7 @@ Raw token counts for the same runs:
 | uv | 4,806,817 | 3,773,907 | 4,779,673 | 3,739,347 |
 | gin | 173,337 | 139,758 | 172,761 | 138,297 |
 | commons-lang | 1,736,204 | 945,989 | 1,675,227 | 894,692 |
-| csvhelper | 376,106 | 231,960 | 369,407 | 223,726 |
+| csvhelper | 376,214 | 231,961 | 369,519 | 223,727 |
 
 ### Flags used
 
@@ -109,7 +109,7 @@ Raw token counts for the same runs:
 | Ruby (rack: 93 `.rb`, 9 `.ru`, `rack.gemspec`, `Gemfile`, `Rakefile`) | `--ruby-strip-comments` |
 | Go (gin: 95 `.go`) | `--go-strip-comments` |
 | Java (commons-lang: 500 `.java`) | `--java-strip-comments` |
-| C# (csvhelper: 461 `.cs`, of which 458 format at this setting) | `--csharp-strip-comments` |
+| C# (csvhelper: 461 `.cs`, of which 459 format at this setting) | `--csharp-strip-comments` |
 | Mixed (uv: 624 `.rs` + 94 `.py`) | all four Python/Rust flags — per-language flags are language-scoped, so passing a Rust flag to a Python tree is a verified no-op |
 
 ### Why commons-lang is second, and what its default number is
@@ -323,7 +323,7 @@ so **no general ≥40% claim is made for Java** — one corpus is not a search.
 
 **csvhelper (C#), added 2026-08-05, is the second corpus measured on the two
 embedded tokenizers only** — the same container, the same huggingface.co
-block. Unlike commons-lang it does *not* clear the bar (-38.3% / -39.4%), so
+block. Unlike commons-lang it does *not* clear the bar (-38.3% / -39.5%), so
 **no list above moves**, and its Qwen3.6, GLM-5.2 and Kimi K3 figures stay
 `*pending*` rather than being inferred from the two that exist. -38.3% is
 close enough to 40% that the inference would be tempting and this project's
@@ -336,19 +336,19 @@ hunted, so **no general ≥40% claim is made for C#** either.
 ## Verification
 
 * **Every file counted above passed TokenPress verification** (re-parse plus
-  token/AST equivalence). The runs reported here have **4 verification
+  token/AST equivalence). The runs reported here have **3 verification
   refusals in total**, in two corpora. One is rack's `lib/rack/utils.rb`, at
   default settings and with `--ruby-strip-comments` alike, so it is excluded
-  from rack's 104-file count and from its token totals. The other three are
-  csvhelper's, which is why its `Files` reads 458 of 461: two are refused at
+  from rack's 104-file count and from its token totals. The other two are
+  csvhelper's, which is why its `Files` reads 459 of 461: both are refused at
   every setting (an escaped brace written directly against an interpolation
   hole whose body contains a string literal — valid C# that
-  `tree-sitter-c-sharp` does not parse), and the third only under
-  `--csharp-strip-comments`, being a file whose entire content is comments, so
-  stripping them leaves nothing for the equivalence check to match. That third
-  class is not C#-specific: the same one-line file refuses as `.java` and as
-  `.go` under their strip flags, and it went unseen until a corpus contained
-  one. It is a documented Ruby over-refusal class
+  `tree-sitter-c-sharp` does not parse). A third csvhelper refusal existed
+  under `--csharp-strip-comments` when this corpus was first measured — a file
+  whose entire content is comments, which strips to an empty file — and it was
+  a shared tree-sitter-backend defect, fixed 2026-08-05; the csvhelper rows
+  above are re-measured after the fix, which is why they read 459 rather than
+  458. rack's is a documented Ruby over-refusal class
   — a location slice that spans a multi-line index call — and it is the safe
   direction: the file is left byte-for-byte alone and no output that failed
   the check is ever written. `RESULTS.md` has the minimal reproducer. Two

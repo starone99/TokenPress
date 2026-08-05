@@ -24,9 +24,14 @@
 //!
 //! - a leaf renders as `(kind text)` — one raw space, then the leaf's source
 //!   bytes;
+//! - a **zero-width** leaf renders as `(kind)`: it has no text, and the space
+//!   alone would be the only thing separating it from an interior node whose
+//!   children were all comments — which is a distinction this artifact
+//!   deliberately does not make (see the over-refusal section);
 //! - an interior node renders as `(kind` followed by its children and `)`,
 //!   with no separator, because every child starts with `(`;
-//! - a missing node renders as `(kind \<MISSING>)`.
+//! - a missing node renders as `(kind \<MISSING>)`. Missing nodes are
+//!   zero-width too, so the marker is checked first and survives.
 //!
 //! ```text
 //! (source_file(var_declaration(var var)(var_spec(identifier x)…)))
@@ -36,12 +41,12 @@
 //! structure: `\` becomes `\\`, `(` and `)` become `\(` and `\)`, a space
 //! becomes `\s`, and every byte outside ASCII becomes `\xNN`. That makes the
 //! artifact ASCII whatever the source encoding, and it makes the shapes above
-//! mutually exclusive — after a kind comes either a raw space (a leaf), a `(`
-//! (an interior node) or a `)` (an interior node whose children were all
-//! comments). The [`MISSING`] marker starts with a *raw* backslash, which
-//! escaped text can never produce.
+//! unforgeable — after a kind comes either a raw space (a leaf with text, or
+//! a missing node), a `(` (an interior node) or a `)` (a zero-width leaf, or
+//! an interior node whose children were all comments). The [`MISSING`] marker
+//! starts with a *raw* backslash, which escaped text can never produce.
 //!
-//! # There is no known over-refusal class
+//! # Over-refusal
 //!
 //! `tokenpress-ruby`'s artifact keeps prism's recorded source slices, some of
 //! which span more than one token (a multi-line `message_loc`, a `<<~`
@@ -51,6 +56,19 @@
 //! rewritten whitespace, and inter-token whitespace is not captured at all.
 //! Measured over the 7,065 parseable Go 1.24.7 stdlib files, in both comment
 //! configurations: **0** equivalence refusals.
+//!
+//! That measurement was once written up as "there is no known over-refusal
+//! class", and the absolute was wrong: one class existed and the Go stdlib
+//! simply has no file in it. A **comment-only** source strips to an empty
+//! one, and the two rendered differently — the comment-only root took the
+//! interior-node path and its one child was skipped, giving `(source_file)`,
+//! while the empty root took the leaf path and emitted a separator before its
+//! empty text, giving `(source_file )`. One space, and the correct output was
+//! refused by all three tree-sitter backends under their strip flags
+//! (CsvHelper carries 1 such file in 461). The leaf path now emits nothing
+//! after the kind for a zero-width, non-missing node, which is what makes the
+//! two shapes meet. No other over-refusal class is known, and the claim is
+//! kept relative to what has been measured rather than absolute.
 //!
 //! The flip side is the deliberate blind spot: the artifact ignores comments
 //! *by construction*, so every language semantic that lives in a comment (Go's
@@ -106,14 +124,22 @@ fn push_node(config: &LanguageConfig, source: &[u8], node: Node, artifact: &mut 
     artifact.push('(');
     push_escaped(artifact, node.kind().as_bytes());
     if node.child_count() == 0 {
-        artifact.push(' ');
         if node.is_missing() {
             // A missing node is zero-width, so its source slice would render
-            // as nothing at all; the marker keeps it distinguishable.
+            // as nothing at all; the marker keeps it distinguishable. Checked
+            // first for exactly that reason — the zero-width case below would
+            // otherwise swallow it.
+            artifact.push(' ');
             artifact.push_str(MISSING);
-        } else {
+        } else if !node.byte_range().is_empty() {
+            artifact.push(' ');
             push_escaped(artifact, &source[node.byte_range()]);
         }
+        // Otherwise the node is zero-width and not missing: there is no text
+        // to emit, and emitting the separator alone would be the only thing
+        // distinguishing it from a node whose children were all comments. An
+        // empty file's root and a comment-only file's root are the same tree
+        // once comments are invisible, so they must render the same.
     } else {
         let mut cursor = node.walk();
         // `children` yields anonymous nodes too — operators, keywords and
@@ -458,7 +484,38 @@ mod tests {
     #[test]
     fn an_empty_source_has_an_artifact() {
         let config = go_config();
-        assert_eq!(comparable(&config, b"").unwrap(), "(source_file )");
+        assert_eq!(comparable(&config, b"").unwrap(), "(source_file)");
+    }
+
+    #[test]
+    fn a_comment_only_source_is_equivalent_to_an_empty_one() {
+        // The over-refusal class this artifact was once claimed not to have:
+        // stripping every comment out of a comment-only file yields an empty
+        // file, and the two must compare equal or the correct output is
+        // refused. The comment-only root has one child, all of it skipped, so
+        // it renders as an interior node with no children; the empty root has
+        // no children at all. Both are `(source_file)`.
+        let config = go_config();
+        assert_eq!(
+            comparable(&config, b"// only a comment\n").unwrap(),
+            "(source_file)"
+        );
+        assert!(equivalent(&config, b"// only a comment\n", b"").unwrap());
+    }
+
+    #[test]
+    fn a_zero_width_leaf_renders_no_separator() {
+        // The leaf branch's third case: a node with no children whose byte
+        // range is empty and which is not MISSING. It emits nothing after the
+        // kind, so it cannot be told apart from an interior node whose
+        // children were all comments — which is exactly the comment
+        // invisibility the artifact is built for.
+        let config = go_config();
+        assert_eq!(
+            comparable(&config, b"\n\n// a\n/* b */\n").unwrap(),
+            "(source_file)"
+        );
+        assert_eq!(comparable(&config, b"   \n").unwrap(), "(source_file)");
     }
 
     #[test]
