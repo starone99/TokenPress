@@ -1,0 +1,62 @@
+[package]
+name = "tokenpress-csharp"
+description = "TokenPress for C#: the C#-specific half of the tree-sitter backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["hf-tokenizer"]
+# Forwarded to tokenpress-core; see its manifest. Both dependencies below take
+# it, because the engine forwards the same feature to the same crate: leaving
+# the engine's copy off would leave `tokenpress-core` built without it for the
+# engine's own use, which cargo would then have to reconcile as two feature
+# sets of one crate.
+hf-tokenizer = [
+    "tokenpress-core/hf-tokenizer",
+    "tokenpress-treesitter/hf-tokenizer",
+]
+
+[dependencies]
+# Path dependencies, not `workspace = true`, for the reason the sibling crates
+# record: `default-features = false` is ignored on an inherited dependency, and
+# the `hf-tokenizer` feature has to be switchable by any consumer that cannot
+# build it. It reaches `tokenpress-core` twice — directly, and through the
+# engine — so both are declared with core's default off and the feature
+# forwarded above.
+tokenpress-core = { path = "../tokenpress-core", default-features = false }
+tokenpress-treesitter = { path = "../tokenpress-treesitter", default-features = false }
+# Grammar crates are pre-1.0 and version-locked to a generated parser ABI, so
+# the ruff/oxc/prism rule applies unchanged: pin the exact version and confine
+# **all** grammar API access to one module — `src/config.rs` here, the way
+# `tokenpress-python` confines ruff to `src/parser.rs`.
+#
+# The pin is `=0.23.5`, the highest published version. Two things differ from
+# the `tokenpress-java` manifest this one otherwise mirrors:
+#
+# 1. **ABI 15, the ceiling of the window.** The engine's
+#    `tree-sitter = "=0.26.11"` accepts [13, 15]; `tree-sitter-go` reports 15,
+#    `tree-sitter-java` 14, and this grammar 15. Sitting at the ceiling makes
+#    C# the grammar most exposed to a future runtime bump that raises
+#    `MIN_COMPATIBLE_LANGUAGE_VERSION`: a grammar below the ceiling has room
+#    to be left behind, this one does not. `src/config.rs` ships the
+#    `abi_version()` test every grammar pin owes, asserting the *window*
+#    rather than the number, which is what would catch such a bump at
+#    `cargo test` time instead of in a user's run.
+# 2. **A live external scanner — the first in this workspace.**
+#    `bindings/rust/build.rs` compiles `parser.c` **and** `scanner.c` with
+#    `.std("c11").include("src")`, where Go's scanner branch is dead and
+#    Java's is absent altogether. So this is the first grammar here that
+#    actually compiles a second C file. It changes nothing about the
+#    prerequisite: still `cc`, still C11, and a search of the vendored `src/`
+#    for `*.cc` / `*.cpp` / `*.cxx` finds nothing, so there is no C++, no
+#    bindgen and no libclang. **No CI change** — `.github/actions/libclang`
+#    already provides everything the second file needs. (The `parser.c` is
+#    29 MB against Java's 2.5 MB and is still not a build-time problem;
+#    watch binary size rather than build time.)
+#
+# There is deliberately no direct `tree-sitter` dependency: the runtime is the
+# engine's, and `tree_sitter_c_sharp::LANGUAGE` converts into the engine's
+# re-exported `Language` type without naming the runtime crate here.
+tree-sitter-c-sharp = "=0.23.5"
