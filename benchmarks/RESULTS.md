@@ -5,9 +5,9 @@ JavaScript/TypeScript corpus added 2026-08-02; the Ruby corpus added
 2026-08-02; per-tokenizer aggressive run and the express open-model rows
 added 2026-08-02; the Go corpus added 2026-08-04; the gin and rack open-model
 rows, default and aggressive, added 2026-08-04 — with that, every corpus in
-this file had all five tokenizers; the Java corpus added 2026-08-04 on the two
-embedded tokenizers only, so it is the one corpus here still missing its three
-open-model columns)
+this file had all five tokenizers; the Java corpus added 2026-08-04 and the C#
+corpus 2026-08-05, both on the two embedded tokenizers only, so they are the
+two corpora here still missing their three open-model columns)
 Binary: `cargo build --release -p tokenpress-cli` at the commit containing this file
 Command: `tokenpress stats <corpus> --tokenizer <name> [options]`
 Platform: Windows 11, rustc 1.95.0
@@ -28,6 +28,7 @@ Platform: Windows 11, rustc 1.95.0
 | rack/rack | v3.2.6 | `e1f22fdb` | 105 Ruby (93 `.rb`, 9 `.ru`, `rack.gemspec`, `Gemfile`, `Rakefile`) |
 | gin-gonic/gin | v1.11.0 | `6ad6205e` | 95 `.go` (whole tree) |
 | apache/commons-lang | 3.17.0 | `29ccc766` | 500 `.java` (whole tree, all under `src/`) |
+| JoshClose/CsvHelper | 33.1.0 | `5dad8b8b` | 461 `.cs` (whole tree; its 4 `.js` are generated-site assets and are excluded) |
 
 **Every parseable file passed verification, with one measured exception**
 (re-parse + token/AST equivalence). The only skipped files across ~13,800 are
@@ -38,7 +39,9 @@ genuine refusal in rack, `lib/rack/utils.rb`, which is a known Ruby
 over-refusal class documented in the Ruby section below. The 95 Go files
 added 2026-08-04 add **no** refusals and no rejected inputs, at either
 setting and either tokenizer, and neither do the 500 Java files added the
-same day. A refusal writes
+same day. **The 461 C# files added 2026-08-05 do**: 2 at default settings and
+a third under `--csharp-strip-comments`, all three over-refusals of valid
+input, triaged in the C# section below. A refusal writes
 nothing and leaves the file untouched; it is the core invariant working, not
 a corruption. Runs made with the JS/TS-enabled CLI (2026-08-02 onward)
 additionally reject three django `.js` files as invalid input —
@@ -400,7 +403,8 @@ the whitespace work — which is a fact about the language's culture, not a
 weakness in the backend. The comment lever, when it is pulled, adds +13.0pp
 (see `--go-strip-comments` below) — the largest of the comment-stripping
 deltas in this file until Java's `--java-strip-comments` was measured at
-+39.4pp on 2026-08-04, and still ahead of Ruby's +11.6pp and JS/TS's +8.1pp.
++39.4pp on 2026-08-04 and C#'s at +24.0pp the next day, and still ahead of
+Ruby's +11.6pp and JS/TS's +8.1pp.
 
 ```bash
 target/release/tokenpress stats benchmarks/corpus/gin --tokenizer o200k_base
@@ -506,7 +510,8 @@ target/release/tokenpress stats benchmarks/corpus/commons-lang \
 
 **`--java-strip-comments` is the largest single lever measured anywhere in
 this file: +39.4pp**, taking commons-lang from -6.1% to **-45.5%** at o200k
-(Go's `--go-strip-comments` adds +13.0pp, Ruby's +11.6pp, JS/TS's +8.1pp).
+(C#'s `--csharp-strip-comments` adds +24.0pp, Go's +13.0pp, Ruby's +11.6pp,
+JS/TS's +8.1pp).
 Javadoc is a block comment as far as the grammar is concerned, so the flag
 takes the entire API documentation of a library whose documentation is most of
 its text. The aggressive rows are in the aggressive section below.
@@ -536,6 +541,182 @@ Timing note, and the reason this target stays on `--verify ast`: Java's
 `--verify external` is one `javac` probe plus **three** ~0.4 s `javac` spawns
 per file, so over 500 files it would measure JVM startup rather than
 TokenPress. The external gate is exercised by the crate's own tests instead.
+
+### C# — JoshClose/CsvHelper (default settings, added 2026-08-05)
+
+Measured 2026-08-05, Linux LF checkout, rustc 1.95.0, .NET SDK 8.0.129, on the
+commit pinned in `fetch.sh`/`fetch.ps1`
+(`5dad8b8b1d8b074f8353cfd482e939db788a8927`, tag `33.1.0`). This is the first
+corpus for the `tokenpress-csharp` backend, and it is reported on its own for
+the same reason express, rack, gin and commons-lang are: the tables further up
+were measured on Windows with a CRLF checkout, and the line-ending caveat
+below applies to any comparison across the two.
+
+**Only the two embedded tokenizers are measured.** The Qwen3.6, GLM-5.2 and
+Kimi K3 rows are `*pending*`: this measurement container cannot reach
+huggingface.co, so the revision-pinned tokenizer files `fetch.sh` downloads
+are unavailable here, and the project rule is that an unmeasured column is
+written as pending rather than estimated from `o200k_base`. gin and rack sat
+pending for a day for the same reason and were filled in on the maintainer's
+machine; commons-lang and this corpus are waiting on the same run.
+
+**Why CsvHelper, and what was rejected.** Nothing about a C# corpus was
+pre-validated, and the constraint that decided it was the toolchain rather
+than the language: CI pins .NET SDK 8.0.129, and a `global.json` that asks for
+a newer SDK is a hard failure, not a warning. Seven candidates were cloned and
+checked before this one was pinned.
+
+| Candidate | License | Verdict |
+|---|---|---|
+| JamesNK/Newtonsoft.Json | MIT | rejected — `Src/global.json` asks for SDK `8.0.300` with `rollForward: latestFeature`, which 8.0.129 does not satisfy (a *lower* feature band, not a lower patch). Every commit whose test project can target `net8.0` carries that pin or the later `9.0.300` one; the last commit with an older pin, tag `13.0.3`, asks for `6.0.400` and tests only up to `net6.0`. |
+| serilog/serilog | Apache-2.0 | rejected — `global.json` pins SDK `10.0.100`. |
+| App-vNext/Polly | BSD-3-Clause | rejected — `global.json` pins SDK `10.0.302`. |
+| FluentValidation | Apache-2.0 | rejected — `global.json` pins SDK `10.0.0`. |
+| Humanizr/Humanizer | MIT | rejected — `global.json` pins an SDK 11 preview; the newest tags pin 10. |
+| nodatime/nodatime | Apache-2.0 | rejected — `global.json` pins SDK `10.0.101`; the last tag without a 10.x pin tests on `netcoreapp3.1`/`net6.0`, runtimes SDK 8 does not ship. |
+| jbogard/MediatR | Apache-2.0 | rejected — no `global.json`, but every test project targets `net10.0` only. |
+| **JoshClose/CsvHelper** | **MS-PL / Apache-2.0** | **pinned** — no `global.json`, the test project lists `net8.0`, and its suite is 1,063 tests in ~2 s. |
+
+This is J6(a)'s gson lesson applied in advance: a corpus is only usable if its
+own build accepts the available toolchain, and for .NET that question is
+settled by one file. It is worth stating what the survivor costs. CsvHelper's
+projects list `net9.0` first and `net48`/`net47`/`net462` last, so every
+`dotnet` invocation here passes `-p:TargetFrameworks=net8.0` — without it the
+*restore* fails for all frameworks, not just the unsupported one
+(`NETSDK1045`), and the `net4x` ones could not run on Linux in any case. That
+is a build-invocation choice, not a source filter: all 461 `.cs` files are
+measured either way.
+
+The whole tree's `.cs` files are measured, 461 of them, spread over five
+projects (191 library, 244 tests, 22 docs generator, 2 benchmarks, 2 website).
+Unlike gin and commons-lang, and like rack, this pin does hold files of
+another language TokenPress claims — four `.js` files under `docs/scripts/`
+and `src/CsvHelper.Website/input/scripts/`, assets of a generated
+documentation site that no project compiles. The `.cs` paths are therefore
+passed explicitly rather than handing the tree to the formatter, so no other
+backend's output lands inside a C# measurement.
+
+| Corpus | Tokenizer | Files | Before | After | Saved |
+|---|---|---|---|---|---|
+| csvhelper | o200k_base | 459 | 376,214 | 322,419 | **-14.3%** |
+| csvhelper | cl100k_base | 459 | 369,519 | 319,090 | **-13.6%** |
+| csvhelper | Qwen3.6 | 459 | *pending* | *pending* | *pending* |
+| csvhelper | GLM-5.2 | 459 | *pending* | *pending* | *pending* |
+| csvhelper | Kimi K3 | 459 | *pending* | *pending* | *pending* |
+
+`Files` is 459 of the 461, because of **2 verification refusals** at default
+settings, identical on both embedded tokenizers; a third appears only under
+`--csharp-strip-comments`. All three are triaged below. `tokenpress format`
+over the explicit `.cs` list rewrites 459 of 459 formattable files and leaves
+the two refused ones untouched. Absolute saving at o200k: 53,795 tokens per
+full-repo prompt.
+
+#### What C# loses at default settings: nothing
+
+Checked rather than assumed, the same way the Java section checks it. For
+every one of the 461 files — the 459 rewritten ones and the 2 refused ones —
+the original and the formatted output are **identical once all whitespace
+characters are deleted from both**. Nothing was dropped, added or reordered:
+`///` documentation comments and ordinary `//` and `/* */` comments all
+survive, in place, with their text intact, and so do the preprocessor
+directives, which are not comments at all. (As with Java, that test deletes
+whitespace *inside* string literals on both sides, so it does not by itself
+speak for them; those are covered by the backend contract that string content
+is never touched and by the token/AST equivalence check that gates every
+write.) The CLI accordingly prints **no caveat warning** for a C#-only run,
+for the same reason there is no Ruby, Go or Java one. So this `-14.3%`, like
+rack's `-9.2%` and gin's `-6.4%` and commons-lang's `-6.1%`, and unlike
+express's `-17.3%` and any Rust figure, is genuinely context-lossless.
+
+#### -14.3% is the highest context-lossless figure here, and braces are why
+
+The four backends that discard nothing at default settings had, before this
+corpus, produced -9.2% (rack), -6.4% (gin) and -6.1% (commons-lang). C# more
+than doubles the best of them, and it does so from an *unfavourable* starting
+point: CsvHelper is tab-indented, 38,532 of its 51,745 `.cs` lines beginning
+with a tab against 240 beginning with a space, so the cheap-indentation
+advantage that holds gin's number down applies here too.
+
+What outweighs it is brace style. C# convention puts `{` and `}` on lines of
+their own, and **11,307 of the corpus's 51,745 lines (21.8%) contain a single
+brace and nothing else**; a further 6,971 (13.5%) are blank. Roughly a third
+of the file is therefore lines the emitter can join away without touching a
+comment or a literal. Java shares the language family but not the layout —
+commons-lang is checkstyle-formatted K&R, where the opening brace rides the
+statement line it belongs to — which is most of the gap between -6.1% and
+-14.3%.
+
+```bash
+find benchmarks/corpus/csvhelper -not -path '*/.git/*' -name '*.cs' -print0 |
+    xargs -0 target/release/tokenpress stats --tokenizer o200k_base
+```
+
+`--csharp-strip-comments` adds a further **+24.0pp**, taking the corpus to
+-38.3% at o200k — the second-largest comment-stripping lever measured in this
+file, behind commons-lang's +39.4pp. The aggressive rows are in the aggressive
+section below.
+
+#### The three C# refusals, identified — and none is the expected defect
+
+The C6 scoping predicted two sources of refusal on a real corpus: a slice
+pattern with a designation, and `#if` blocks whose arms are not each a
+complete syntactic unit — the latter measured at 65 of 945 files on the
+Newtonsoft.Json tree and called "the real-world ceiling on C# coverage".
+**Neither fires here.** CsvHelper has 11 `#if` directives across 11 files, 1
+`#region` and 10 `#pragma`s, and every one of them parses clean. The three
+refusals this corpus does produce are two different classes, both previously
+unrecorded, and both over-refusals of valid input rather than corruptions —
+nothing was written in either case.
+
+**Class 1, 2 files, default settings and every other setting: an escaped
+brace immediately followed by an interpolation hole that contains a string
+literal.** `docs-src/CsvHelper.DocsGenerator/Extensions.cs` and
+`.../Formatters/XmlDocFormatter.cs` are reported as
+`parse error: syntax error`, and the byte offsets in both point at the same
+shape:
+
+```csharp
+return $"{{{string.Join(",", parts)}}}";
+```
+
+Delta-debugged, the trigger needs all three parts. `$"{{{g}}}"` parses, and so
+does `$"{{{g.Trim()}}}"`. `$"{g.Trim(",")}"` parses. `$"{{ {g.Trim(",")} }}"`
+parses — one space between the escaped brace and the hole is enough. Only `{{`
+written directly against a hole whose body contains a `"` fails. That the
+input is valid C# was confirmed by compiling and running it: Roslyn accepts
+the expression and it prints `{a,b}`. This is a grammar limit in
+`tree-sitter-c-sharp`'s scanner, reached at parse time, so no setting avoids
+it.
+
+**Class 2, 1 file, `--csharp-strip-comments` only: a file whose entire content
+is comments.**
+`tests/CsvHelper.Tests/Mappings/ConstructorParameter/HeaderPrefixMapTests.cs`
+is six lines, all of them `//`, explaining why the test class does not exist.
+Stripping the comments leaves nothing, and the empty result is rejected with
+`verification failed: output AST differs from input`. Minimal reproducer:
+a file containing only `// only a comment`.
+
+**Class 2 is not C#-specific, and that is worth recording where someone will
+find it.** The same one-line file refuses identically as `.java` under
+`--java-strip-comments` and as `.go` under `--go-strip-comments`; Ruby and
+Python both handle it (`--py-strip-comments` reports `-100.0%` on it, which is
+the correct answer). commons-lang and gin simply contain no comment-only file,
+so the class went unseen until a corpus had one. It is a pre-existing
+over-refusal shared by three backends, not something the C# work introduced,
+and it is left as a finding here rather than fixed inside a benchmarks task.
+
+#### Upstream verification of this corpus
+
+`benchmarks/verify-upstream.sh csharp` runs CsvHelper's own xunit suite over an
+unformatted and a formatted copy and diffs the outcomes per test id; the full
+write-up is under "Behavioral verification against upstream test suites"
+below. The verdict is **IDENTICAL**, exit 0, reproduced twice.
+
+Timing note, and the reason this target stays on `--verify ast`: C#'s
+`--verify external` is one `csc` probe plus **three** ~0.358 s `dotnet csc.dll`
+spawns per file, so over 461 files it would measure toolchain startup rather
+than TokenPress. The external gate is exercised by the crate's own tests
+instead.
 
 ### Aggressive settings (accepting context loss)
 
@@ -608,6 +789,12 @@ Exact flags:
   the grammar, so `--java-strip-comments` takes the library's entire API
   documentation with the rest. That is why it is the largest lever in this
   file (+39.4pp).
+* C# corpus (csvhelper): `--csharp-strip-comments`. The same case once more —
+  the C# default keeps every comment, so the flag is the whole
+  comments-kept-vs-dropped difference and the only lossy lever the C# backend
+  has, and `///` documentation is an ordinary comment to the grammar and goes
+  with the rest. Preprocessor directives are *not* comments and survive it, so
+  stripping cannot change which arm of an `#if` compiles.
 
 **Line-ending caveat — read before comparing against the tables above.**
 The earlier tables were measured on Windows, where git checks the corpus out
@@ -654,6 +841,11 @@ formatter change.**
 | commons-lang | Qwen3.6 | 500 | *pending* | *pending* | *pending* |
 | commons-lang | GLM-5.2 | 500 | *pending* | *pending* | *pending* |
 | commons-lang | Kimi K3 | 500 | *pending* | *pending* | *pending* |
+| csvhelper | o200k_base | 458 | 376,106 | 231,960 | **-38.3%** |
+| csvhelper | cl100k_base | 458 | 369,407 | 223,726 | **-39.4%** |
+| csvhelper | Qwen3.6 | 458 | *pending* | *pending* | *pending* |
+| csvhelper | GLM-5.2 | 458 | *pending* | *pending* | *pending* |
+| csvhelper | Kimi K3 | 458 | *pending* | *pending* | *pending* |
 
 `Files` counts files that were successfully formatted; refused files (next
 subsection) are excluded from both the file count and the token totals. The
@@ -831,8 +1023,10 @@ property of the source, not of the vocabulary — worth stating because the
 per-tokenizer rule elsewhere in this file is a warning about *totals*, and it
 would have been just as easy for the deltas to scatter.
 
-**+13.0pp is the largest comment-stripping delta measured in this file**,
-ahead of rack's +11.6pp and express's +8.1pp, and it is the same structural
+**+13.0pp was the largest comment-stripping delta measured in this file** when
+it was taken, ahead of rack's +11.6pp and express's +8.1pp; commons-lang's
++39.4pp on the same day and csvhelper's +24.0pp the next have since put it
+third. It is the same structural
 reason as Ruby's only more so: the Go default keeps *every* comment, so the
 flag is the whole difference, and Go's convention of a doc comment on each
 exported identifier makes gin comment-dense to begin with. It flips the two
@@ -849,6 +1043,40 @@ per full-repo prompt.
 *not* remove: the comments the Go toolchain reads as directives — `//go:`
 lines, `/*line*/`, build constraints and the cgo preamble — survive it, so
 stripping comments cannot change how a package builds.
+
+##### What `--csharp-strip-comments` adds
+
+Same corpus, same LF checkout, the added flag being the only difference. Both
+columns are measured over the **458** files that format at *both* settings, so
+the delta is apples-to-apples; the -14.3% / -13.6% in the C# section above are
+over 459 and differ only in the last digit of the cl100k figure:
+
+| Corpus | Tokenizer | Without comment stripping | With `--csharp-strip-comments` | Delta |
+|---|---|---|---|---|
+| csvhelper | o200k_base | -14.3% | **-38.3%** | +24.0pp |
+| csvhelper | cl100k_base | -13.7% | **-39.4%** | +25.7pp |
+
++24.0pp is the second-largest comment-stripping delta in this file, behind
+commons-lang's +39.4pp and ahead of gin's +13.0pp, and it is the same
+structural reason as Java's: the C# default keeps every comment, so the flag
+is the whole difference, and `///` documentation on every public member makes
+a library corpus comment-dense — 5,387 of CsvHelper's 51,745 lines are `///`
+lines before any `//` or `/* */` is counted. It is smaller than Java's because
+CsvHelper's documentation is one-line summaries where commons-lang's is
+multi-paragraph Javadoc, and because C#'s brace lines give the *default* run a
+much larger base to start from.
+
+**The refusal count goes from 2 to 3 with the flag**, which is the one place
+in this file where a strip flag adds a refusal. The extra file is
+`HeaderPrefixMapTests.cs`, whose entire content is comments; stripping them
+leaves an empty file and the equivalence check rejects it. Both classes are
+triaged in the C# section above. Absolute saving at o200k: 144,146 tokens per
+full-repo prompt.
+
+`--csharp-strip-comments` is the C# backend's only lossy flag. Note what it
+does *not* remove: preprocessor directives are not comments, so `#if`,
+`#region`, `#pragma` and `#nullable` all survive it and stripping cannot
+change which arm of a conditional compiles.
 
 ##### Open-model tokenizers (Qwen3.6 / GLM-5.2 / Kimi K3, added 2026-08-02)
 
@@ -1084,6 +1312,17 @@ Two caveats on this list:
   semicolon insertion forbids joining lines, so the newlines Rust deletes
   outright all stay. What is left to remove at default settings is small;
   what is left in the comments is not.
+* C# is the other extreme of that axis, and it settles that the axis is
+  *layout*, not language family. csvhelper's default `-14.3%` is the highest
+  context-lossless figure in this file — more than double rack's `-9.2%`,
+  gin's `-6.4%` and commons-lang's `-6.1%` — while its
+  `--csharp-strip-comments` delta (+24.0pp) is the second-largest. C# and Java
+  are the same kind of language with the same comment conventions, so the gap
+  between -14.3% and -6.1% is not about the grammar: CsvHelper puts braces on
+  lines of their own (21.8% of its lines hold one brace and nothing else) and
+  commons-lang, checkstyle-formatted, does not. Tab indentation, which is what
+  holds gin down, does not save a corpus that spends a fifth of its lines on
+  punctuation.
 * Context math: with default settings alone, ripgrep's full source drops
   from ~3.3 to ~2.7 fills of a 128k context (o200k).
 
@@ -1171,6 +1410,20 @@ target/release/tokenpress stats benchmarks/corpus/commons-lang \
 # startup rather than TokenPress. The external Java gate is covered by the
 # crate's own tests.
 
+# C# corpus - like rack and unlike the Go and Java pins, this one does hold
+# files of another supported language (4 generated-site `.js`), so the `.cs`
+# paths are listed explicitly
+find benchmarks/corpus/csvhelper -not -path '*/.git/*' -name '*.cs' -print0 \
+    >/tmp/csvhelper-files.nul
+xargs -0 target/release/tokenpress stats --tokenizer o200k_base \
+    </tmp/csvhelper-files.nul                      # default settings
+xargs -0 target/release/tokenpress stats --tokenizer o200k_base \
+    --csharp-strip-comments </tmp/csvhelper-files.nul   # full aggressive
+# no --verify external run is recorded for this corpus either: it is one probe
+# plus three ~0.358 s `dotnet csc.dll` spawns per file, which over 461 files
+# measures toolchain startup rather than TokenPress. The external C# gate is
+# covered by the crate's own tests.
+
 # repeat any of the above with --tokenizer cl100k_base for the second column
 ```
 
@@ -1224,14 +1477,15 @@ compares the result, per test id, against an unformatted baseline copy.
 ### Methodology
 
 The script
-(`benchmarks/verify-upstream.sh <requests|ripgrep|express|rack|go|java|all>`)
+(`benchmarks/verify-upstream.sh <requests|ripgrep|express|rack|go|java|csharp|all>`)
 does the same thing for every target:
 
 1. **Pinned corpus, SHA-asserted.** The corpus is cloned at the same tag as
    `fetch.ps1`/`fetch.sh` and its `HEAD` is asserted against a hard-coded
    commit SHA, so a retagged upstream cannot silently change what is verified
    (requests `0e322af8`, ripgrep `4649aa97`, express `dbac741a`, rack
-   `e1f22fdb`, gin `6ad6205e`, commons-lang `29ccc766`).
+   `e1f22fdb`, gin `6ad6205e`, commons-lang `29ccc766`, csvhelper
+   `5dad8b8b`).
 2. **Two pristine copies** of that corpus in a private work directory:
    `*-baseline` (untouched) and `*-formatted`.
 3. **Format at default settings only** — no aggressive flags. Files that fail
@@ -1259,6 +1513,7 @@ Isolation, per target:
 | rack | `bundle exec rake test:regular` and `bundle exec rake test:separate` — both of rack's test tasks, invoked separately | one `bundle install`, run in the baseline copy, its `Gemfile.lock` copied to the formatted copy and one `BUNDLE_PATH` vendored inside the work directory shared by both; private `TMPDIR` per run; proxy env vars stripped for both runs |
 | go | `go test -json -count=1 ./...` | one `go mod download`, warmed from the baseline copy; `-count=1` disables Go's test result cache; a `GOCACHE` inside the work directory, shared by both runs, so the user's build cache is never written to; private `TMPDIR` per run; proxy env vars stripped for both runs |
 | java | `mvn -B -Dmaven.test.failure.ignore=true test` | each copy builds into its own `target/`; the baseline runs first and warms the Maven local repository, so the formatted run resolves the same artifacts from cache (formatting never touches `pom.xml`); private `TMPDIR` per run; proxy env vars **kept** for both runs, because Maven needs Maven Central and this suite drives no localhost servers |
+| csharp | `dotnet build` then `dotnet test --no-build --logger trx`, both with `-p:TargetFrameworks=net8.0` | each copy builds into its own `bin/` and `obj/` and writes its trx to its own results directory; the baseline runs first and warms the NuGet package folder, so the formatted run restores the same packages from cache (formatting never touches a `.csproj`); private `TMPDIR` per run; proxy env vars **kept** for both runs, for the same reason as java |
 
 The shared `node_modules` is not a convenience. express sets
 `package-lock=false` in its `.npmrc` and ships no lockfile, so two independent
@@ -1362,12 +1617,44 @@ Three java-specific choices, finally:
   would report failure 100% of the time. Exit code and report files are the
   signals.
 
+Three csharp-specific choices, which are the java ones re-derived against a
+different toolchain:
+
+* **Build and test are two invocations.** `dotnet test` has no equivalent of
+  `-Dmaven.test.failure.ignore=true`: it exits 1 both for a failing test and
+  for a project that does not compile, and those are precisely the two cases
+  this harness must keep apart. Building first and then running
+  `dotnet test --no-build` separates them — the build must exit 0, the test
+  run may exit 1, and anything above 1 means VSTest never produced a
+  comparable result.
+* **`-p:TargetFrameworks=net8.0` on every invocation, and it is not a
+  preference.** CsvHelper's projects list `net9.0` first and `net48`, `net47`
+  and `net462` last. An SDK that cannot target .NET 9 fails the *restore* of
+  every framework rather than just that one (`NETSDK1045`), so without the
+  override the pinned SDK 8 produces no run at all; and the three `net4x`
+  frameworks are not runnable on Linux under any SDK. It is a global MSBuild
+  property, so it reaches the referenced library project too and both copies
+  are built identically. All 461 `.cs` files are formatted and measured
+  either way — this narrows what is *executed*, not what is rewritten.
+* **The reducer is a C# program, built with the SDK the target already
+  requires.** Its per-test data comes from the `trx` logger's XML, because
+  VSTest's console output prints only a per-assembly summary — the aggregate
+  this harness refuses to compare. Unlike the java reducer it cannot be run
+  from source: `dotnet run app.cs` first exists in SDK 10, and this target is
+  built for SDK 8, so it is compiled once into its own output directory and
+  the assembly invoked directly. `dotnet run` is avoided even where it would
+  work, because it writes build output to stdout and that would land in the
+  reduced listing. It uses only the BCL's XML reader — no package, no network.
+
 Unlike the go and rack targets, whose dependencies can be warmed once and then
 worked from, **the java target needs Maven Central reachable at run time**:
 Maven resolves commons-lang's test dependencies *and* its build plugins from
 there into the Maven local repository, and there is no offline path that does
 not presume that repository is already populated. A run that dies resolving
-dependencies is a network problem, not a flake, and the script says so.
+dependencies is a network problem, not a flake, and the script says so. **The
+csharp target is in the same position**, for the same reason: NuGet resolves
+CsvHelper's test dependencies into the machine-wide package folder, and there
+is no offline path that does not assume that folder is already populated.
 
 Normalizations are needed to make the comparison meaningful, and each is
 deliberately narrow:
@@ -1415,6 +1702,14 @@ deliberately narrow:
   class between passing and being assumption-aborted would not be seen. Every
   other outcome in the 11,720 is compared exactly, and the printed
   baseline/formatted tallies show the unfolded counts.
+* **csharp**: none, in either direction. The `testName` the trx logger records
+  is the fully-qualified method name, with a theory's arguments appended and
+  neither a path nor a line number anywhere in it — checked against the run
+  directory, which appears 1,071 times in the report and never once inside a
+  `testName`. And unlike commons-lang's, none of CsvHelper's outcomes needed
+  folding: two pristine copies of the *unformatted* tree, built and tested
+  back to back exactly as the harness does, produced byte-identical listings.
+  Every one of the 1,063 outcomes is compared exactly.
 
 **Methodology gotcha worth recording**: the first requests attempt reported a
 false divergence. requests' own `extract_zipped_paths()` caches its output
@@ -1775,20 +2070,107 @@ files here. Every one of the 500 `.java` files is under `src/main/java` or
 `src/test/java` and is compiled by the run, so unlike gin's five tag-gated
 files, nothing was formatted without also being compiled.
 
+### csvhelper 33.1.0 — IDENTICAL
+
+Run 2026-08-05, the first behavioral verification of the `tokenpress-csharp`
+backend. Linux, .NET SDK 8.0.129, target framework `net8.0`.
+
+| | Value |
+|---|---|
+| `.cs` files | 461 |
+| Rewritten | 459 |
+| Refused by verification | 2 (`docs-src/…/Extensions.cs`, `docs-src/…/Formatters/XmlDocFormatter.cs`) |
+| Unchanged | 0 |
+| Verdict | **IDENTICAL** — exit 0 |
+
+| Outcome | Baseline | Formatted |
+|---|---|---|
+| pass | 1,059 | 1,059 |
+| fail | 4 | 4 |
+| skip | 0 | 0 |
+
+1,063 rows on each side, the whole of `CsvHelper.Tests` on `net8.0`. Both
+`dotnet build` invocations exit 0 and both `dotnet test` invocations exit 1,
+that 1 being the four failures below rather than anything about the build. The
+whole target takes ~42 s end to end, the fastest of the seven.
+
+**The 4 failures are environment artifacts and fail identically on the
+unformatted copy** — the requests case, not the rack case. Two of them
+(`TypeConverterFactoryTests.WriteTypeConverterFactory` and
+`…WriteTypeConverterGenericInt`) compare CsvHelper's RFC-4180 `\r\n` output
+against a C# **raw string literal**, whose content is whatever line endings
+the checkout has: LF here, so the expectation is `\n` and the test fails;
+on a CRLF checkout the same two tests pass. That makes the baseline failure
+count itself checkout-dependent, which is the sharpest argument in this file
+for comparing a baseline run against a formatted run made in the same
+environment rather than against a recorded constant. One
+(`MultipleFieldsFromOnePropertyTests.WriteMultipleFieldsFromSinglePropertyTest`)
+compares a formatted `DateTime` against a literal that predates the CLDR
+change to the space before `AM`/`PM`; one
+(`CultureInfoAttributeTests.CsvConfiguration_FromType_InvalidAttribute_ThrowsCultureNotFoundException`)
+expects an invalid culture name to throw, which ICU on Linux does not do.
+None involves formatting, and the claim being made is *identical outcomes*,
+not *all tests pass*.
+
+**Reproduced twice, byte-identically, plus a control.** Two consecutive
+end-to-end runs of the target both reported IDENTICAL and exited 0, and a
+separate control — two copies of the *unformatted* tree, built and tested back
+to back exactly as the harness does — produced listings that diff clean. There
+is no commons-lang-style unstable axis in this suite and therefore no fold:
+all 1,063 outcomes are compared exactly.
+
+**`--csharp-strip-comments` was checked separately, by hand, and is also
+IDENTICAL.** The target itself formats at default settings only, like every
+other target in this harness, so this was run outside it: a third copy of the
+tree formatted with the flag (3 refusals rather than 2, the extra being the
+comment-only file), built and tested the same way, produced a listing that
+diffs clean against the baseline — 1,059 pass / 4 fail again. Comments do not
+run, so this is a weaker statement than the default-settings one and is
+recorded as a check rather than promoted into the script; what it rules out is
+the whitespace *around* a deleted comment being mis-joined.
+
+**The two refused files never reach the compiler anyway**, which is worth
+saying so the verdict is not read as stronger than it is. Both live in
+`docs-src/CsvHelper.DocsGenerator`, a `netcoreapp2.2` documentation generator
+that this target does not build; they are unformatted in the formatted copy
+and identical to the baseline, so they contribute to neither side. What the
+suite covers is `src/CsvHelper` and `tests/CsvHelper.Tests` — 435 of the 461
+files, all of them rewritten.
+
+Three limits on what the run proves:
+
+* **`net8.0` only.** The pin's projects also list `net9.0`, `net48`, `net47`
+  and `net462`; the first cannot be targeted by the pinned SDK and the other
+  three cannot be executed on Linux. Formatting is applied to all 461 files
+  regardless — this narrows what is *run*, not what is *rewritten* — but a
+  framework-conditional code path behind `#if NET462` is compiled by neither
+  copy. CsvHelper has 11 `#if` directives in total.
+* **Line numbers are not preserved by any backend, and this suite does not
+  test them.** .NET stack traces carry `file:line` and CsvHelper's own
+  exceptions carry rich context, but no assertion in its 1,063 tests reads a
+  line number out of one. The class is untested by this corpus, not disproved
+  by it — the same position gin and commons-lang are in, and the opposite of
+  rack's.
+* **No test can observe a comment.** Comments do not run, so an IDENTICAL
+  verdict says nothing about comment preservation either way. For C# that is
+  moot at default settings — the rewrite is whitespace-only, verified
+  file-by-file above — but the caveat is the same one recorded for Rust,
+  JS/TS, Go and Java.
+
 ### Scope and caveats
 
 * These runs verify **default settings only**. The aggressive settings above
   (`--py-strip-comments`, `--py-strip-annotations`, `--rs-strip-doc-comments`,
   `--js-strip-comments`, `--ruby-strip-comments`, `--go-strip-comments`,
-  `--java-strip-comments`) are
+  `--java-strip-comments`, `--csharp-strip-comments`) are
   knowingly lossy and are not covered by this harness — stripping doc comments would delete the doc
   tests being compared.
 * The Rust and JS/TS comment-loss caveats still stand: Rust `//` and `/* */`
   comments, and JS/TS trailing and expression-position comments, are dropped
   unconditionally, and no test suite can detect that, because comments do not
-  run. Behavioral equivalence is not context equivalence. Ruby, Go and Java
-  are the exceptions — they drop no comments at default settings — but they
-  share the line-number caveat below.
+  run. Behavioral equivalence is not context equivalence. Ruby, Go, Java and
+  C# are the exceptions — they drop no comments at default settings — but
+  they share the line-number caveat below.
 * **Line numbers are not preserved by any backend**, and the rack run above is
   the measured proof that this is observable: `__LINE__`, `caller`, backtraces
   and anything derived from them move when blank lines and indentation go.
@@ -1797,22 +2179,30 @@ files, nothing was formatted without also being compiled.
   gin's own `recovery.go` builds a stack trace from `runtime.Caller`, but no
   gin test asserts on a line number, so the class is untested there rather
   than absent, and commons-lang's is the same case — Java stack traces carry
-  `file:line`, but nothing in its 11,720 tests asserts on one.
-* Only six corpora are covered (requests, ripgrep, express, rack, gin,
-  commons-lang). The larger corpora in the table above are verified
+  `file:line`, but nothing in its 11,720 tests asserts on one. csvhelper is
+  the same case a third time.
+* Only seven corpora are covered (requests, ripgrep, express, rack, gin,
+  commons-lang, csvhelper). The larger corpora in the table above are verified
   structurally, not behaviorally.
-* The 5 requests failures and the 2 rack failures are environment artifacts,
-  not upstream-green results; the claim is *identical outcomes*, not *all
-  tests pass*.
+* The 5 requests failures, the 2 rack failures and the 4 csvhelper failures
+  are environment artifacts, not upstream-green results; the claim is
+  *identical outcomes*, not *all tests pass*. Two of csvhelper's four are
+  artifacts of the checkout's *line endings* and would pass on Windows, which
+  is the clearest case in this file for why the baseline is re-measured on
+  every run instead of recorded.
 * The express target additionally requires `node`, `npm` and npm registry
   access; the rack target requires `ruby`, `bundler` and rubygems.org access;
   the go target requires the Go toolchain and Go module proxy access; the java
-  target requires `mvn`, a JDK and Maven Central access. They are the only
-  targets with a network prerequisite beyond the git clone; without it the run
-  exits 2 (never ran) rather than reporting a verdict. java is the strictest
-  of the four: unlike the go and rack dependencies, Maven's cannot be warmed
-  once and then worked from offline, because the build plugins themselves are
-  resolved from Central.
+  target requires `mvn`, a JDK and Maven Central access; the csharp target
+  requires the .NET SDK and nuget.org access. They are the only targets with a
+  network prerequisite beyond the git clone; without it the run exits 2 (never
+  ran) rather than reporting a verdict. java and csharp are the strictest of
+  the five: unlike the go and rack dependencies, neither Maven's nor NuGet's
+  can be warmed once and then worked from offline.
+* **The csharp target additionally pins a single target framework**
+  (`-p:TargetFrameworks=net8.0`), because the corpus lists one framework the
+  pinned SDK cannot target and three that Linux cannot execute. Everything is
+  formatted; only `net8.0` is run.
 
 ### Reproduce
 
@@ -1823,8 +2213,9 @@ files, nothing was formatted without also being compiled.
 ./benchmarks/verify-upstream.sh rack       # minitest, reporter-plugin per-test-id diff
 ./benchmarks/verify-upstream.sh go         # go test -json, per-test-id diff
 ./benchmarks/verify-upstream.sh java       # mvn surefire, XML per-test-id diff
+./benchmarks/verify-upstream.sh csharp     # dotnet test, trx per-test-id diff
 ./benchmarks/verify-upstream.sh all
 # exit 0 = identical, 1 = diverged, 2 = the comparison never ran
 # the rack target currently exits 1 - see the __LINE__ finding above
-# the go and java targets exit 0
+# the go, java and csharp targets exit 0
 ```

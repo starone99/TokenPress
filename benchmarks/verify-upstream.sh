@@ -7,7 +7,7 @@
 # settings, and runs the project's real test suite against both. The run only
 # succeeds if every test reaches the same outcome on both copies.
 #
-# Usage: verify-upstream.sh <requests|ripgrep|express|rack|go|java|all>
+# Usage: verify-upstream.sh <requests|ripgrep|express|rack|go|java|csharp|all>
 #
 # Exit codes: 0 = outcomes identical, 1 = outcomes diverged, 2 = usage or
 # infrastructure error (the comparison never ran).
@@ -52,6 +52,31 @@ gin_sha="6ad6205e9c94a4b8a320219e28c37c29d22a7a2c"
 commons_lang_tag="rel/commons-lang-3.17.0"
 commons_lang_sha="29ccc7665f3bc5d84155a3092ab2209a053324e6"
 
+# Same pin as fetch.sh (JoshClose/CsvHelper 33.1.0), asserted the same way.
+# Unlike rack's and commons-lang's this is a lightweight tag, so the SHA is the
+# commit it names directly. The target is spelled `csharp` rather than
+# `csvhelper`, matching `go` and `java`: the corpus directory, the pin variables
+# and the work-directory names all keep the project name, so a second C# corpus
+# can be added without renaming anything.
+csvhelper_tag="33.1.0"
+csvhelper_sha="5dad8b8b1d8b074f8353cfd482e939db788a8927"
+
+# The single target framework the corpus is built and tested against, passed to
+# every `dotnet` invocation as a global MSBuild property. Two independent
+# reasons, and neither is a preference:
+#
+#   * The pin's projects list `net9.0` first, and an SDK that cannot target
+#     .NET 9 fails the *restore* of every framework, not just that one
+#     (`NETSDK1045`). CI pins SDK 8.0.129, so without the override no run
+#     happens at all.
+#   * The list also holds `net48`, `net47` and `net462`. Those are runnable
+#     only under .NET Framework or Mono, so on the Linux hosts this harness
+#     targets they could never contribute a comparable outcome either.
+#
+# It is a global property, so it reaches the referenced library project too and
+# both copies are built exactly the same way.
+csvhelper_tfm="net8.0"
+
 work_dir=""
 cleanup() {
     status=$?
@@ -82,7 +107,10 @@ targets:
              suite (needs the go toolchain and Go module proxy access)
   java       apache/commons-lang 3.17.0 - the same comparison against its
              surefire suite (needs maven, a JDK and Maven Central access)
-  all        every target (requests, ripgrep, express, rack, go, then java)
+  csharp     JoshClose/CsvHelper 33.1.0 - the same comparison against its
+             xunit suite (needs the .NET SDK and nuget.org access)
+  all        every target (requests, ripgrep, express, rack, go, java, then
+             csharp)
 EOF
 }
 
@@ -189,6 +217,22 @@ ensure_commons_lang_corpus() {
         die "corpus $dest is at $head, expected the pinned $commons_lang_sha"
     fi
     echo "corpus: apache/commons-lang $commons_lang_tag ($commons_lang_sha)"
+}
+
+# The same for the pinned CsvHelper corpus.
+ensure_csvhelper_corpus() {
+    local dest="$corpus/csvhelper"
+    if [ ! -e "$dest" ]; then
+        mkdir -p "$corpus"
+        git clone --quiet --depth 1 --branch "$csvhelper_tag" \
+            https://github.com/JoshClose/CsvHelper "$dest"
+    fi
+    local head
+    head="$(git -C "$dest" rev-parse HEAD)"
+    if [ "$head" != "$csvhelper_sha" ]; then
+        die "corpus $dest is at $head, expected the pinned $csvhelper_sha"
+    fi
+    echo "corpus: JoshClose/CsvHelper $csvhelper_tag ($csvhelper_sha)"
 }
 
 # --- helpers ----------------------------------------------------------------
@@ -1468,6 +1512,314 @@ verify_java() {
     return 1
 }
 
+# Writes the .trx reducer project into $1 and echoes the project file's path.
+#
+# VSTest's console output prints only a per-assembly summary line, which is
+# exactly the aggregate this harness refuses to compare, so the per-test data
+# is taken from the `trx` logger's XML report and parsed rather than
+# pattern-matched.
+#
+# The reducer is a C# program built with the SDK the target already requires,
+# the same reasoning the java target uses for `java Reduce.java`, the go target
+# for its `go run` reducer and the express target for parsing its report with
+# node. It uses only the BCL's own XML reader, so it needs no package and no
+# network. Unlike the java one it cannot be run from source - a single-file
+# launcher (`dotnet run app.cs`) first exists in SDK 10, and this target is
+# built for SDK 8 - so it is compiled once into its own output directory and
+# the resulting assembly is invoked directly. `dotnet run` is deliberately not
+# used even where it would work: it writes build output to stdout, which would
+# land in the reduced listing.
+#
+# Rows are "outcome<TAB>test id". The trx outcome vocabulary is mapped onto the
+# same three words the other targets print; anything else VSTest can record
+# (`Aborted`, `Timeout`, ...) passes through lowercased rather than being
+# folded into one of them.
+write_trx_reducer() {
+    local dir="$1"
+    mkdir -p "$dir" || die "cannot create the trx reducer directory $dir"
+    cat >"$dir/Reduce.csproj" <<EOF
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>$csvhelper_tfm</TargetFramework>
+    <AssemblyName>Reduce</AssemblyName>
+    <RootNamespace>Reduce</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+</Project>
+EOF
+    cat >"$dir/Program.cs" <<'CSHARP'
+// Reduces a VSTest .trx report into "outcome<TAB>test id" rows, one per test
+// result. Usage: Reduce <report.trx>
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+using System.Xml.Linq;
+
+public static class Reduce
+{
+    public static int Main(string[] args)
+    {
+        if (args.Length != 1)
+        {
+            Console.Error.WriteLine("usage: Reduce <report.trx>");
+            return 2;
+        }
+        XDocument doc;
+        try
+        {
+            doc = XDocument.Load(args[0]);
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine("cannot read " + args[0] + ": " + e.Message);
+            return 2;
+        }
+        // Matched on the local name: the trx schema puts everything in a
+        // versioned namespace, and pinning that namespace would make the
+        // reducer break on a logger update for no gain.
+        List<string> rows = new List<string>();
+        foreach (XElement result in doc.Descendants())
+        {
+            if (result.Name.LocalName != "UnitTestResult")
+            {
+                continue;
+            }
+            rows.Add(Outcome(result) + "\t" + Attribute(result, "testName"));
+        }
+        StringBuilder text = new StringBuilder();
+        foreach (string row in rows)
+        {
+            text.Append(row).Append('\n');
+        }
+        try
+        {
+            // Checked explicitly, like the go and java reducers' flushes: a
+            // silently truncated listing would be a wrong answer rather than a
+            // missing one.
+            using (Stream stdout = Console.OpenStandardOutput())
+            using (StreamWriter writer = new StreamWriter(stdout, new UTF8Encoding(false)))
+            {
+                writer.Write(text.ToString());
+                writer.Flush();
+            }
+        }
+        catch (IOException e)
+        {
+            Console.Error.WriteLine("cannot write the reduced listing: " + e.Message);
+            return 2;
+        }
+        return 0;
+    }
+
+    private static string Attribute(XElement element, string name)
+    {
+        XAttribute attribute = element.Attribute(name);
+        return attribute == null ? "" : attribute.Value;
+    }
+
+    private static string Outcome(XElement result)
+    {
+        string outcome = Attribute(result, "outcome");
+        if (outcome == "Passed")
+        {
+            return "pass";
+        }
+        if (outcome == "Failed")
+        {
+            return "fail";
+        }
+        if (outcome == "NotExecuted")
+        {
+            return "skip";
+        }
+        return outcome.ToLowerInvariant();
+    }
+}
+CSHARP
+    echo "$dir/Reduce.csproj"
+}
+
+# Builds CsvHelper's test project in $1 and then runs it, appending both phases
+# to the log $2. $3 is "baseline" or "formatted" and only decides how a build
+# failure is reported; $4 is the directory the trx report is written to.
+#
+# Build and test are two invocations on purpose. `dotnet test` has no
+# equivalent of Maven's `-Dmaven.test.failure.ignore=true`: it exits 1 both for
+# a failing test and for a project that does not compile, and a failing test is
+# the thing being measured while a compile error must stop the run. Building
+# first separates them - the build must exit 0, and the `--no-build` test run
+# that follows may then exit 1 without ambiguity. Anything above 1 means VSTest
+# itself could not produce a comparable result.
+#
+# Isolation, mirroring the other runners: a private TMPDIR per run, a private
+# results directory, and each copy builds into its own bin/ and obj/, so
+# nothing is shared between the two beyond the NuGet package cache, which is a
+# coordinate-addressed download cache and cannot carry one run's build output
+# into the other. Like the java runner and unlike the requests, rack and go
+# ones this one keeps the calling shell's proxy environment: NuGet needs it to
+# reach nuget.org, and CsvHelper's suite is a pure-library suite that drives no
+# localhost servers and asserts nothing about proxy handling.
+#
+# Nothing is gated on stderr, for the same reason the java runner is not: the
+# .NET CLI can write to stderr on a completely successful run. Exit code and
+# the report file are the signals.
+run_dotnet_test() {
+    local dir="$1" log="$2" role="$3" results="$4"
+    local tmp="$log.tmpdir"
+    mkdir -p "$tmp" || die "cannot create the run directory for $log"
+    local project="$dir/tests/CsvHelper.Tests/CsvHelper.Tests.csproj"
+    local rc=0
+    (
+        cd "$dir"
+        env TMPDIR="$tmp" DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+            DOTNET_GENERATE_ASPNET_CERTIFICATE=false \
+            dotnet build "$project" "-p:TargetFrameworks=$csvhelper_tfm"
+    ) >"$log" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        tail -n 30 "$log" >&2
+        if [ "$role" = "baseline" ]; then
+            die "the unformatted copy does not build, so nothing can be compared (if the failure is a package that could not be restored, this target needs nuget.org - see the note above verify_csharp)"
+        fi
+        # A formatted copy that no longer compiles is the strongest divergence
+        # there is, but it yields no per-test outcomes to diff, so it is called
+        # out here rather than left to the caller.
+        echo "verdict: DIVERGED - the formatted copy no longer builds"
+        exit 1
+    fi
+    rc=0
+    (
+        cd "$dir"
+        env TMPDIR="$tmp" DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+            DOTNET_GENERATE_ASPNET_CERTIFICATE=false \
+            dotnet test "$project" "-p:TargetFrameworks=$csvhelper_tfm" \
+            --no-build --results-directory "$results" \
+            --logger "trx;LogFileName=results.trx"
+    ) >>"$log" 2>&1 || rc=$?
+    if [ "$rc" -gt 1 ]; then
+        tail -n 30 "$log" >&2
+        die "dotnet test exited $rc in $dir (it never produced a comparable result)"
+    fi
+    if [ ! -s "$results/results.trx" ]; then
+        tail -n 30 "$log" >&2
+        die "dotnet test wrote no trx report in $results (it never produced a comparable result)"
+    fi
+}
+
+# Note on the network: like the java target and unlike go and rack, this target
+# needs nuget.org reachable when it runs. NuGet resolves CsvHelper's test
+# dependencies into the machine-wide package folder (~/.nuget/packages by
+# default), and there is no offline path that does not assume that folder is
+# already populated.
+#
+# The baseline runs first and warms it, so the formatted run restores from an
+# already-populated cache: formatting never touches a `.csproj`, so both copies
+# resolve the same package identities.
+verify_csharp() {
+    ensure_csvhelper_corpus
+
+    local tokenpress
+    tokenpress="$(build_tokenpress)"
+
+    local baseline="$work_dir/csvhelper-baseline"
+    local formatted="$work_dir/csvhelper-formatted"
+    cp -a "$corpus/csvhelper" "$baseline" || die "cannot copy the csvhelper corpus"
+    cp -a "$corpus/csvhelper" "$formatted" || die "cannot copy the csvhelper corpus"
+
+    # Default settings only - no --csharp-strip-comments. Like Ruby and Go and
+    # Java, and unlike Rust and JS/TS, the C# backend drops nothing at this
+    # level: every comment survives, `///` documentation included, and the
+    # rewrite is whitespace only.
+    #
+    # The `.cs` paths are passed explicitly rather than handing the tree to the
+    # formatter, for the same reason the rack target passes Ruby paths
+    # explicitly: this pin ships a generated documentation site, and four files
+    # under `docs/scripts/` and `src/CsvHelper.Website/input/scripts/` are
+    # `.js`. They are website assets that no project compiles and no test
+    # loads, so formatting them would put another backend's output inside a C#
+    # measurement for nothing.
+    #
+    # Verification stays at the default `--verify ast`. `--verify external`
+    # would be one probe plus three ~0.4 s `csc` spawns per file, which over a
+    # 461-file tree makes the measurement toolchain-startup-bound and says
+    # nothing more about behaviour than the suite below already does.
+    local format_log="$work_dir/csvhelper-format.log"
+    local rc=0
+    find "$formatted" -not -path '*/.git/*' -name '*.cs' -print0 |
+        xargs -0 "$tokenpress" format >"$format_log" 2>&1 || rc=$?
+    local refused
+    refused="$(grep -c '^error: ' "$format_log" || true)"
+    # xargs reports 123 when a command it ran exited non-zero, so the exit
+    # status here is not tokenpress's own; the refusal count is what separates
+    # "some files were refused" from "the formatter could not run".
+    if [ "$rc" -ne 0 ] && [ "$refused" -eq 0 ]; then
+        tail -n 30 "$format_log" >&2
+        die "tokenpress format exited $rc"
+    fi
+    local changed
+    changed="$(git -C "$formatted" status --porcelain | wc -l)"
+    # -type f for the same reason as the go and java targets, and bin/ and obj/
+    # are excluded so the count means the same thing whether or not a build has
+    # run in the tree - a fresh clone has neither, but a corpus someone has
+    # already built in would otherwise contribute generated sources.
+    local total
+    total="$(find "$formatted" -type f -name '*.cs' \
+        -not -path '*/.git/*' -not -path '*/bin/*' -not -path '*/obj/*' | wc -l)"
+
+    run_dotnet_test "$baseline" "$work_dir/csvhelper-baseline.log" baseline \
+        "$work_dir/csvhelper-baseline-results"
+    run_dotnet_test "$formatted" "$work_dir/csvhelper-formatted.log" formatted \
+        "$work_dir/csvhelper-formatted-results"
+
+    local reducer
+    reducer="$(write_trx_reducer "$work_dir/csvhelper-reducer")"
+    dotnet build "$reducer" -c Release -o "$work_dir/csvhelper-reducer/out" \
+        >"$work_dir/csvhelper-reducer-build.log" 2>&1 ||
+        die "cannot build the trx reducer"
+    # Reduced first, sorted second, for the same reason as the go and java
+    # targets: a pipeline would hide a failing reducer behind sort's exit
+    # status.
+    local side
+    for side in baseline formatted; do
+        dotnet "$work_dir/csvhelper-reducer/out/Reduce.dll" \
+            "$work_dir/csvhelper-$side-results/results.trx" \
+            >"$work_dir/csvhelper-$side.rows" \
+            2>"$work_dir/csvhelper-$side-reduce.log" ||
+            die "cannot reduce the $side trx report"
+        sort "$work_dir/csvhelper-$side.rows" \
+            >"$work_dir/csvhelper-$side.outcomes" ||
+            die "cannot sort the $side outcomes"
+    done
+    if [ ! -s "$work_dir/csvhelper-baseline.outcomes" ]; then
+        die "no test results were parsed from the baseline run"
+    fi
+
+    echo
+    echo "csvhelper $csvhelper_tag ($csvhelper_tfm)"
+    echo "  .cs files          $total"
+    echo "  rewritten          $changed"
+    echo "  refused by verify  $refused"
+    echo "  unchanged          $((total - changed - refused))"
+    echo "baseline outcomes:"
+    tally "$work_dir/csvhelper-baseline.outcomes"
+    echo "formatted outcomes:"
+    tally "$work_dir/csvhelper-formatted.outcomes"
+
+    if diff -u "$work_dir/csvhelper-baseline.outcomes" \
+        "$work_dir/csvhelper-formatted.outcomes" \
+        >"$work_dir/csvhelper-outcomes.diff"; then
+        echo "verdict: IDENTICAL - every test reached the same outcome on both copies"
+        return 0
+    fi
+    echo "verdict: DIVERGED - the formatted copy behaves differently:"
+    sed 's/^/  /' "$work_dir/csvhelper-outcomes.diff"
+    return 1
+}
+
 # --- main -------------------------------------------------------------------
 
 main() {
@@ -1480,7 +1832,7 @@ main() {
         usage
         exit 0
         ;;
-    requests | ripgrep | express | rack | go | java | all) ;;
+    requests | ripgrep | express | rack | go | java | csharp | all) ;;
     *)
         usage
         exit 2
@@ -1519,6 +1871,13 @@ main() {
         command -v mvn >/dev/null || die "maven (and a JDK) is required for the java target"
         ;;
     esac
+    # One command covers both the corpus build and the report reducer, so
+    # unlike the java target there is nothing behind it to name separately.
+    case "$1" in
+    csharp | all)
+        command -v dotnet >/dev/null || die "the .NET SDK is required for the csharp target"
+        ;;
+    esac
     work_dir="$(mktemp -d "${TMPDIR:-/tmp}/tokenpress-verify-XXXXXX")"
 
     # A target returns 1 when the outcomes diverged; that is a result, not an
@@ -1533,6 +1892,7 @@ main() {
     rack) verify_rack || diverged=1 ;;
     go) verify_go || diverged=1 ;;
     java) verify_java || diverged=1 ;;
+    csharp) verify_csharp || diverged=1 ;;
     all)
         verify_requests || diverged=1
         verify_ripgrep || diverged=1
@@ -1540,6 +1900,7 @@ main() {
         verify_rack || diverged=1
         verify_go || diverged=1
         verify_java || diverged=1
+        verify_csharp || diverged=1
         ;;
     esac
     return "$diverged"

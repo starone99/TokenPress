@@ -18,11 +18,11 @@ echo "requests: $(git -C "$corpus/requests" rev-parse HEAD)"
 echo "ripgrep:  $(git -C "$corpus/ripgrep" rev-parse HEAD)"
 
 # Well-known projects, pinned to the exact commits measured in RESULTS.md.
-# Four of them are pinned at a tagged release rather than a snapshot: express
+# Five of them are pinned at a tagged release rather than a snapshot: express
 # `dbac741a` is tag v5.2.1, rack `e1f22fdb` is tag v3.2.6, gin `6ad6205e` is
-# tag v1.11.0 and commons-lang `29ccc766` is tag rel/commons-lang-3.17.0. Those
-# are the tags verify-upstream.sh clones, and it asserts the same SHAs after
-# the clone.
+# tag v1.11.0, commons-lang `29ccc766` is tag rel/commons-lang-3.17.0 and
+# csvhelper `5dad8b8b` is tag 33.1.0. Those are the tags verify-upstream.sh
+# clones, and it asserts the same SHAs after the clone.
 known=(
     "django|https://github.com/django/django|50d706d0aebcc2d073c8d034b6e22fc98fad49f2"
     "fastapi|https://github.com/fastapi/fastapi|95f8322ee1dcda7ceace7b1c4f6c9915b36d748f"
@@ -34,6 +34,7 @@ known=(
     "rack|https://github.com/rack/rack|e1f22fdbe99afd2126b6fbf05bb12399359574b7"
     "gin|https://github.com/gin-gonic/gin|6ad6205e9c94a4b8a320219e28c37c29d22a7a2c"
     "commons-lang|https://github.com/apache/commons-lang|29ccc7665f3bc5d84155a3092ab2209a053324e6"
+    "csvhelper|https://github.com/JoshClose/CsvHelper|5dad8b8b1d8b074f8353cfd482e939db788a8927"
 )
 for entry in "${known[@]}"; do
     IFS='|' read -r name url sha <<< "$entry"

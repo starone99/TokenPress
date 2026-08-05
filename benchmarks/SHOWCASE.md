@@ -1,6 +1,6 @@
 # TokenPress Showcase
 
-Measured token reduction on twelve commit-pinned open-source repositories, at
+Measured token reduction on thirteen commit-pinned open-source repositories, at
 the *aggressive* (lossy) settings. Every number on this page is taken from
 [`RESULTS.md`](RESULTS.md), which holds the full methodology, the platform
 notes, and the default-setting numbers. Nothing here is extrapolated.
@@ -9,12 +9,12 @@ Five public tokenizers: `o200k_base` (OpenAI GPT-4o / GPT-4.1 / o-series,
 including Codex models) and `cl100k_base` (GPT-4 / GPT-3.5-turbo), both
 embedded in the binary, plus three open-model tokenizers measured
 2026-08-02 from revision-pinned files — Qwen3.6, GLM-5.2 and Kimi K3
-(gin and rack added to those three on 2026-08-04). **Eleven of the twelve
+(gin and rack added to those three on 2026-08-04). **Eleven of the thirteen
 corpora are measured on all five tokenizers; commons-lang, added 2026-08-04,
-is measured on the two embedded tokenizers only** — the container it was
-measured in cannot reach huggingface.co, so its Qwen3.6, GLM-5.2 and Kimi K3
-figures are `*pending*` a run on the maintainer's machine and are not
-estimated from `o200k_base`.
+and csvhelper, added 2026-08-05, are measured on the two embedded tokenizers
+only** — the container they were measured in cannot reach huggingface.co, so
+their Qwen3.6, GLM-5.2 and Kimi K3 figures are `*pending*` a run on the
+maintainer's machine and are not estimated from `o200k_base`.
 Candidate lists are per-tokenizer (see below); Gemma is not measured.
 
 ---
@@ -62,14 +62,15 @@ target/release/tokenpress stats benchmarks/corpus/tokio \
 ## Full corpus table (aggressive settings)
 
 Measured 2026-08-01 on a Linux LF checkout of the pinned commits (express and
-rack 2026-08-02, gin and commons-lang 2026-08-04, same way). `Files` is the
-number of files successfully formatted.
+rack 2026-08-02, gin and commons-lang 2026-08-04, csvhelper 2026-08-05, same
+way). `Files` is the number of files successfully formatted.
 
 | Project | Lang | Pinned commit | Files | `o200k_base` | `cl100k_base` |
 |---|---|---|---|---|---|
 | [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | Rust | `adc2ae7af2caaea83985fbdfbc7884c159c486f2` | 790 | **-50.5%** | **-50.9%** |
 | [apache/commons-lang](https://github.com/apache/commons-lang) | Java | `29ccc7665f3bc5d84155a3092ab2209a053324e6` (tag `rel/commons-lang-3.17.0`) | 500 | **-45.5%** | **-46.6%** |
 | [langchain-ai/langchain](https://github.com/langchain-ai/langchain) | Python | `a1a1ad3bb3eb6cf7680b39ff0fb37f7150393a25` | 2,530 | -38.8% | -39.2% |
+| [JoshClose/CsvHelper](https://github.com/JoshClose/CsvHelper) | C# | `5dad8b8b1d8b074f8353cfd482e939db788a8927` (tag `33.1.0`) | 458 | -38.3% | -39.4% |
 | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) | Rust | `4649aa97` (tag 14.1.1) | 98 | -37.4% | -37.6% |
 | [fastapi/fastapi](https://github.com/fastapi/fastapi) | Python | `95f8322ee1dcda7ceace7b1c4f6c9915b36d748f` | 1,136 | -36.2% | -36.9% |
 | [psf/requests](https://github.com/psf/requests) | Python | `0e322af8` (tag v2.32.3) | 36 | -36.0% | -36.3% |
@@ -96,6 +97,7 @@ Raw token counts for the same runs:
 | uv | 4,806,817 | 3,773,907 | 4,779,673 | 3,739,347 |
 | gin | 173,337 | 139,758 | 172,761 | 138,297 |
 | commons-lang | 1,736,204 | 945,989 | 1,675,227 | 894,692 |
+| csvhelper | 376,106 | 231,960 | 369,407 | 223,726 |
 
 ### Flags used
 
@@ -107,6 +109,7 @@ Raw token counts for the same runs:
 | Ruby (rack: 93 `.rb`, 9 `.ru`, `rack.gemspec`, `Gemfile`, `Rakefile`) | `--ruby-strip-comments` |
 | Go (gin: 95 `.go`) | `--go-strip-comments` |
 | Java (commons-lang: 500 `.java`) | `--java-strip-comments` |
+| C# (csvhelper: 461 `.cs`, of which 458 format at this setting) | `--csharp-strip-comments` |
 | Mixed (uv: 624 `.rs` + 94 `.py`) | all four Python/Rust flags — per-language flags are language-scoped, so passing a Rust flag to a Python tree is a verified no-op |
 
 ### Why commons-lang is second, and what its default number is
@@ -139,6 +142,44 @@ per-tokenizer table below shows Qwen3.6 promoting three corpora that
 direction. It is listed under the two embedded tokenizers and deliberately
 absent from the other three.
 
+### Why csvhelper is fourth, and what its default number is
+
+csvhelper is the only C# corpus, and at **-38.3%** it is the highest
+non-Rust, non-Java total on this page. Its **default-settings figure is
+-14.3% on `o200k_base`, -13.6% on `cl100k_base`** — and that is the number
+worth looking at, because it is **the highest context-lossless figure
+anywhere on this page**, more than double rack's -9.2%, gin's -6.4% and
+commons-lang's -6.1%. Like Ruby's, Go's and Java's and unlike Rust's and
+JavaScript's, the C# default discards nothing: checked file by file across all
+461, the formatted output is identical to the original once every whitespace
+character is deleted from both, `///` documentation and preprocessor
+directives included.
+
+The reason is brace layout, not the language. CsvHelper is tab-indented
+(38,532 of its 51,745 lines start with a tab, 240 with a space), so the
+`gofmt` advantage that holds gin's number down applies here too — and it is
+overwhelmed by C#'s convention of putting `{` and `}` on lines of their own:
+**11,307 lines, 21.8% of the corpus, hold a single brace and nothing else**,
+and a further 13.5% are blank. commons-lang is the same language family with
+the opposite layout (checkstyle K&R, braces on the statement line), which is
+most of the gap between -6.1% and -14.3%.
+
+`--csharp-strip-comments` is the entire comments-kept-vs-dropped difference
+and adds **+24.0pp**, second only to Java's +39.4pp. `///` documentation is an
+ordinary comment to the grammar and goes with the rest; preprocessor
+directives are not comments and survive, so stripping cannot change which arm
+of an `#if` compiles. **No C# project has been hunted for a ≥40% result**, and
+csvhelper does not reach it, so this page makes **no ≥40% claim for C# in
+either direction**.
+
+CsvHelper was picked on toolchain grounds after seven candidates were checked
+and rejected. Newtonsoft.Json, Serilog, Polly, FluentValidation, Humanizer and
+NodaTime all pin an SDK newer than the 8.0.129 CI uses, in a `global.json`
+that is a hard failure rather than a warning; MediatR has no `global.json` but
+tests only on `net10.0`. CsvHelper has no `global.json`, lists `net8.0` among
+its target frameworks, and its 1,063 tests run in about two seconds and are
+bit-for-bit reproducible. `RESULTS.md` has the full candidate table.
+
 ### Why rack is low, and what its default number is
 
 rack is the only Ruby corpus, and Ruby is one of the two backends (with Go)
@@ -146,9 +187,9 @@ whose *default* settings discard nothing at all: every `#` comment and every
 `=begin`/`=end` embdoc survives, so the default-settings figure — **-9.2% on `o200k_base`,
 -8.9% on `cl100k_base`** — is genuinely context-lossless, unlike the Rust and
 JavaScript defaults. `--ruby-strip-comments` is the entire
-comments-kept-vs-dropped difference and adds +11.6pp on top — the second
-largest of the three measured comment-stripping deltas, behind Go's +13.0pp,
-which is the same structural case. rack is also
+comments-kept-vs-dropped difference and adds +11.6pp on top — fourth of the
+five measured comment-stripping deltas, behind Java's +39.4pp, C#'s +24.0pp
+and Go's +13.0pp, all of which are the same structural case. rack is also
 comment-dense rather than prose-dense, which is why the total lands near
 django's. **No Ruby project has been hunted for a ≥40% result**, so this page
 makes **no ≥40% claim for Ruby in either direction**.
@@ -176,9 +217,9 @@ Its **default-settings figure is -6.4% on `o200k_base`, -6.2% on
 arrived, and, like Ruby's and unlike Rust's
 and JavaScript's, genuinely context-lossless: every comment survives, including
 the ones the Go toolchain reads as directives. `--go-strip-comments` is the
-entire comments-kept-vs-dropped difference and adds **+13.0pp** — second only
-to Java's +39.4pp among the comment-stripping deltas measured, and ahead of
-Ruby's +11.6pp and JS/TS's +8.1pp
+entire comments-kept-vs-dropped difference and adds **+13.0pp** — behind
+Java's +39.4pp and C#'s +24.0pp among the comment-stripping deltas measured,
+and ahead of Ruby's +11.6pp and JS/TS's +8.1pp
 (Rust's `--rs-strip-doc-comments` has no equivalent measurement). Go convention
 puts a doc comment on every exported identifier, so the prose is where gin's
 compressible bulk actually is. **No Go project has been hunted for a ≥40% result**, so this page
@@ -280,15 +321,34 @@ first non-Rust corpus to clear the bar on either embedded tokenizer (Python
 clears it only on Qwen3.6). No Java project beyond this one has been hunted,
 so **no general ≥40% claim is made for Java** — one corpus is not a search.
 
+**csvhelper (C#), added 2026-08-05, is the second corpus measured on the two
+embedded tokenizers only** — the same container, the same huggingface.co
+block. Unlike commons-lang it does *not* clear the bar (-38.3% / -39.4%), so
+**no list above moves**, and its Qwen3.6, GLM-5.2 and Kimi K3 figures stay
+`*pending*` rather than being inferred from the two that exist. -38.3% is
+close enough to 40% that the inference would be tempting and this project's
+rule forbids it in both directions: Qwen3.6 promoted three corpora that
+`o200k_base` ranked below the bar. No C# project beyond this one has been
+hunted, so **no general ≥40% claim is made for C#** either.
+
 ---
 
 ## Verification
 
 * **Every file counted above passed TokenPress verification** (re-parse plus
-  token/AST equivalence). The runs reported here have **1 verification
-  refusal in total**, in rack: `lib/rack/utils.rb`, at default settings and
-  with `--ruby-strip-comments` alike, so it is excluded from rack's 104-file
-  count and from its token totals. It is a documented Ruby over-refusal class
+  token/AST equivalence). The runs reported here have **4 verification
+  refusals in total**, in two corpora. One is rack's `lib/rack/utils.rb`, at
+  default settings and with `--ruby-strip-comments` alike, so it is excluded
+  from rack's 104-file count and from its token totals. The other three are
+  csvhelper's, which is why its `Files` reads 458 of 461: two are refused at
+  every setting (an escaped brace written directly against an interpolation
+  hole whose body contains a string literal — valid C# that
+  `tree-sitter-c-sharp` does not parse), and the third only under
+  `--csharp-strip-comments`, being a file whose entire content is comments, so
+  stripping them leaves nothing for the equivalence check to match. That third
+  class is not C#-specific: the same one-line file refuses as `.java` and as
+  `.go` under their strip flags, and it went unseen until a corpus contained
+  one. It is a documented Ruby over-refusal class
   — a location slice that spans a multi-line index call — and it is the safe
   direction: the file is left byte-for-byte alone and no output that failed
   the check is ever written. `RESULTS.md` has the minimal reproducer. Two
@@ -306,7 +366,7 @@ so **no general ≥40% claim is made for Java** — one corpus is not a search.
 ### Behavioral verification against upstream test suites
 
 Structural equivalence is not behavioral equivalence, so
-`benchmarks/verify-upstream.sh` runs six projects' own upstream test suites
+`benchmarks/verify-upstream.sh` runs seven projects' own upstream test suites
 against a TokenPress-formatted copy and diffs the outcome **per test id**
 against an unformatted baseline copy.
 
@@ -318,6 +378,7 @@ against an unformatted baseline copy.
 | rack v3.2.6 (`rake test:regular` + `rake test:separate`) | 105 Ruby | 103 | 1 | **DIVERGED** — 1 of 2,354 outcomes; 2,348→2,346 passed, 2→4 failed, exit 1 |
 | gin v1.11.0 (`go test -json -count=1 ./...`) | 95 `.go` | 94 | 0 | **IDENTICAL** — 592 passed / 0 failed / 3 skipped on both copies, exit 0 |
 | commons-lang 3.17.0 (`mvn -B test`, surefire XML) | 500 `.java` | 500 | 0 | **IDENTICAL** — 11,707 passed / 0 failed / 13 skipped on both copies, exit 0 |
+| csvhelper 33.1.0 (`dotnet test`, trx XML, `net8.0`) | 461 `.cs` | 459 | 2 | **IDENTICAL** — 1,059 passed / 4 failed / 0 skipped on both copies, exit 0 |
 
 All caveats matter:
 
@@ -373,6 +434,23 @@ All caveats matter:
   11,720 tests asserts on one. The java target needs `mvn`, a JDK and Maven
   Central access to run at all, and unlike the go and rack dependencies
   Maven's cannot be warmed once and then used offline.
+* **csvhelper is the only target with refusals in its own file count** — 2 of
+  461, both the same parse-time over-refusal: an escaped brace written
+  directly against an interpolation hole whose body contains a string literal
+  (`$"{{{string.Join(",", parts)}}}"`), which Roslyn compiles and
+  `tree-sitter-c-sharp` does not parse. Both files live in a documentation
+  generator that this target does not build, so they are identical on both
+  copies and contribute to neither side; `RESULTS.md` has the delta-debugged
+  reproducer. Its 4 failures are environment artifacts that fail identically
+  on the unformatted copy, and **two of them are artifacts of the checkout's
+  line endings** — C# raw string literals carry the file's own newlines, so
+  the same two tests pass on a CRLF checkout. That is the clearest case in
+  this harness for re-measuring the baseline on every run rather than
+  recording it. The target pins a single framework
+  (`-p:TargetFrameworks=net8.0`): the corpus lists one framework the pinned
+  SDK cannot target and three that Linux cannot execute. Everything is
+  formatted; only `net8.0` is run. It needs the .NET SDK and nuget.org access
+  to run at all.
 * These runs cover **default settings only**. The aggressive flags on this
   page are not covered by that harness — stripping doc comments would delete
   the doc tests being compared.
@@ -397,6 +475,7 @@ each removes information from the source:
 | `--ruby-strip-comments` | Ruby `#` comments and `=begin`/`=end` embdocs — all of them, this being the only Ruby lever. The shebang and the leading magic-comment window (`# frozen_string_literal: true` and friends) survive, being semantic rather than prose |
 | `--go-strip-comments` | Go `//` and `/* */` comments — all of them, this being the only Go lever. The comments the toolchain reads as directives (`//go:` lines, `/*line*/`, build constraints and the cgo preamble) survive, being semantic rather than prose |
 | `--java-strip-comments` | Java `//`, `/* */` **and `/** */`** comments — all of them, this being the only Java lever, and there is no carve-out: Javadoc is an ordinary block comment to the grammar, so a stripped file loses the library's entire API documentation |
+| `--csharp-strip-comments` | C# `//`, `/* */` and `///` comments — all of them, this being the only C# lever, and as with Java there is no carve-out for documentation. Preprocessor directives (`#if`, `#region`, `#pragma`, `#nullable`) are not comments and survive |
 
 **Token savings are not free context.** Every comment and docstring stripped
 above is prose the model can no longer read. Whether that degrades the quality
@@ -497,11 +576,11 @@ CRLF, which raises the before-counts (requests: 86,331 LF vs 86,922 CRLF at
 aggressive table — the flag set is unchanged. Converting the LF checkout back
 to CRLF reproduces the historical numbers exactly.
 
-**Eleven corpora is not a population.** These are the repositories measured,
-not a sample chosen to be representative. Savings depend heavily on how much
-of a tree is prose documentation. JavaScript, Ruby and Go are each represented
-by exactly one project, so `-25.4%`, `-20.8%` and `-19.4%` are data points,
-not language-level expectations.
+**Thirteen corpora is not a population.** These are the repositories
+measured, not a sample chosen to be representative. Savings depend heavily on
+how much of a tree is prose documentation. JavaScript, Ruby, Go, Java and C#
+are each represented by exactly one project, so `-25.4%`, `-20.8%`, `-19.4%`,
+`-45.5%` and `-38.3%` are data points, not language-level expectations.
 
 ---
 
@@ -544,6 +623,13 @@ target/release/tokenpress stats benchmarks/corpus/gin --tokenizer o200k_base \
 target/release/tokenpress stats benchmarks/corpus/commons-lang \
     --tokenizer o200k_base --java-strip-comments
 
+# C# corpus - like rack and unlike the Go and Java pins, this one ships files
+# of another supported language (4 generated-site `.js`), so the `.cs` paths
+# are listed explicitly
+find benchmarks/corpus/csvhelper -not -path '*/.git/*' -name '*.cs' -print0 |
+    xargs -0 target/release/tokenpress stats --tokenizer o200k_base \
+        --csharp-strip-comments
+
 # Mixed tree
 target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
     --py-strip-comments --py-strip-annotations --py-strip-docstrings \
@@ -554,10 +640,11 @@ target/release/tokenpress stats benchmarks/corpus/uv --tokenizer o200k_base \
 # upstream behavioral check (default settings)
 # express additionally needs node, npm and npm registry access; rack needs
 # ruby, bundler and rubygems.org access; go needs the Go toolchain and Go
-# module proxy access; java needs mvn, a JDK and Maven Central access
+# module proxy access; java needs mvn, a JDK and Maven Central access; csharp
+# needs the .NET SDK and nuget.org access
 ./benchmarks/verify-upstream.sh all   # 0 = identical, 1 = diverged, 2 = never ran
 # this currently exits 1: the rack target diverges on the __LINE__ test above.
-# the go and java targets on their own exit 0.
+# the go, java and csharp targets on their own exit 0.
 ```
 
 `fetch.sh` exits non-zero at the tokenizer-download step when huggingface.co
