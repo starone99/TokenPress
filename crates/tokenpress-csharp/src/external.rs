@@ -7,7 +7,8 @@
 //! # The checker
 //!
 //! `dotnet <sdk>/Roslyn/bincore/csc.dll /nologo /noconfig /nostdlib+
-//! /t:library /langversion:latest <file>` — the C# compiler, run over one file
+//! /t:library /langversion:latest /preferreduilang:en-US <file>` — the C#
+//! compiler, run over one file
 //! with **no reference assemblies at all**. `/nostdlib+` is what makes that
 //! possible: no ref pack, no project file, no restore and no network, so an
 //! arbitrary user file can be handed to it in isolation.
@@ -187,12 +188,18 @@ const CSC_RELATIVE: [&str; 3] = ["Roslyn", "bincore", "csc.dll"];
 /// check an arbitrary file. `/langversion:latest` is passed rather than left
 /// to the SDK's default so that today's syntax is not reported as tomorrow's
 /// syntax error; `langversion_latest_accepts_current_syntax` pins it.
-const CSC_ARGS: [&str; 5] = [
+/// `/preferreduilang:en-US` keeps the *text* of a diagnostic out of the
+/// machine's locale -- Roslyn otherwise localises it, so on a ko-KR install
+/// CS1026 reads ")가 필요합니다" instead of "') expected". The verdict is
+/// computed from the codes and never moved, but the text is quoted verbatim
+/// into what a user reads and into what the tests assert on.
+const CSC_ARGS: [&str; 6] = [
     "/nologo",
     "/noconfig",
     "/nostdlib+",
     "/t:library",
     "/langversion:latest",
+    "/preferreduilang:en-US",
 ];
 
 /// The file names the fixtures are checked under; all four are private to a

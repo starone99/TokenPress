@@ -5,33 +5,36 @@ the *aggressive* (lossy) settings. Every number on this page is taken from
 [`RESULTS.md`](RESULTS.md), which holds the full methodology, the platform
 notes, and the default-setting numbers. Nothing here is extrapolated.
 
-Five public tokenizers: `o200k_base` (OpenAI GPT-4o / GPT-4.1 / o-series,
+Six public tokenizers: `o200k_base` (OpenAI GPT-4o / GPT-4.1 / o-series,
 including Codex models) and `cl100k_base` (GPT-4 / GPT-3.5-turbo), both
-embedded in the binary, plus three open-model tokenizers measured
-2026-08-02 from revision-pinned files — Qwen3.6, GLM-5.2 and Kimi K3
-(gin and rack added to those three on 2026-08-04, commons-lang on 2026-08-05).
-**Twelve of the thirteen corpora are measured on all five tokenizers;
-csvhelper, added 2026-08-05, is measured on the two embedded tokenizers
-only** — the container it was measured in cannot reach huggingface.co, so its
-Qwen3.6, GLM-5.2 and Kimi K3 figures are `*pending*` a run on the maintainer's
-machine and are not estimated from `o200k_base`.
-Candidate lists are per-tokenizer (see below); Gemma is not measured.
+embedded in the binary, plus four open-model tokenizers measured from
+revision-pinned files — Qwen3.6, GLM-5.2 and Kimi K3 on 2026-08-02
+(gin and rack added to those three on 2026-08-04, commons-lang on 2026-08-05),
+and Gemma 4 on 2026-08-06.
+**All thirteen corpora are measured on Gemma 4. Twelve of the thirteen are
+measured on the other five; csvhelper, added 2026-08-05, is measured on the
+two embedded tokenizers only** — the container it was measured in cannot reach
+huggingface.co, so its Qwen3.6, GLM-5.2 and Kimi K3 figures are `*pending*` a
+run on the maintainer's machine and are not estimated from `o200k_base`.
+Candidate lists are per-tokenizer (see below); Gemma 2 and Gemma 3 are not
+measured, their repos being gated.
 
 ---
 
 ## Headline: tokio, -50.5%
 
-The deepest reduction on **all five** tokenizers — -50.5% on `o200k_base`,
+The deepest reduction on **all six** tokenizers — -50.5% on `o200k_base`,
 and **-55.2% on Qwen3.6** (1,542,030 → 690,601). On Qwen3.6 specifically,
 three more corpora clear the bar; see "Per-tokenizer ≥40% candidates" below.
 
-apache/commons-lang clears 40% on all five as well, measured 2026-08-05
-(**-45.5%** / **-46.6%** / **-45.3%** / **-46.6%** / **-45.5%**), so tokio is
-no longer alone in that. tokio keeps the headline on percentage, where it
-leads at every one of the five. By *absolute* tokens saved the order flips:
-commons-lang saves more on four of the five (790,215 against tokio's 703,851
-at `o200k_base`), and tokio wins only at Qwen3.6 (851,429 against 831,223).
-See RESULTS.md for why — Qwen counts tokio's Rust proportionally larger than
+apache/commons-lang clears 40% on all six as well — **-45.5%** / **-46.6%** /
+**-45.3%** / **-46.6%** / **-45.5%** measured 2026-08-05, and **-42.9%** on
+Gemma 4 on 2026-08-06 — so tokio is no longer alone in that. tokio keeps the
+headline on percentage, where it leads at every one of the six. By *absolute*
+tokens saved the order flips: commons-lang saves more on four of the six
+(790,215 against tokio's 703,851 at `o200k_base`), and tokio wins at Qwen3.6
+(851,429 against 831,223) and at Gemma 4 (861,587 against 848,285). See
+RESULTS.md for why — those two count tokio's Rust proportionally larger than
 commons-lang's Java before compression.
 
 | | |
@@ -134,15 +137,17 @@ documentation — the thing commons-lang is most made of. There is no
 Javadoc-only lever and no directive-comment carve-out the way Go has one:
 `--java-strip-comments` takes every comment or none.
 
-**commons-lang clears the 40% bar on all five tokenizers**, its Qwen3.6,
-GLM-5.2 and Kimi K3 figures having been measured on 2026-08-05: **-45.3%**,
-**-46.6%** and **-45.5%** against the embedded -45.5% / -46.6%. It is listed
-under every tokenizer in the per-tokenizer table below. That was not a
-foregone conclusion from the embedded pair — this project's rule is that a
-≥40% result on `o200k_base` is evidence for `o200k_base` and nothing else,
-and the same table shows Qwen3.6 promoting three corpora that `o200k_base`
-ranked below the bar. Qwen3.6 is also where commons-lang came closest to
-missing, at -45.3%, its weakest of the five.
+**commons-lang clears the 40% bar on all six tokenizers**, its Qwen3.6,
+GLM-5.2 and Kimi K3 figures having been measured on 2026-08-05 — **-45.3%**,
+**-46.6%** and **-45.5%** against the embedded -45.5% / -46.6% — and Gemma 4
+on 2026-08-06 at **-42.9%**. It is listed under every tokenizer in the
+per-tokenizer table below. That was not a foregone conclusion from the
+embedded pair — this project's rule is that a ≥40% result on `o200k_base` is
+evidence for `o200k_base` and nothing else, and the same table shows Qwen3.6
+promoting three corpora that `o200k_base` ranked below the bar. Gemma 4 is
+where commons-lang came closest to missing, at -42.9%, its weakest of the six
+and 2.4pp nearer the bar than Qwen3.6's -45.3%, which held that title until
+Gemma was measured.
 
 ### Why csvhelper is fourth, and what its default number is
 
@@ -279,13 +284,27 @@ notes.
 | Qwen3.6 | Qwen3.6 family | tokio **-55.2%**, commons-lang **-45.3%**, ripgrep **-42.7%**, langchain **-41.1%**, fastapi **-40.1%** |
 | GLM-5.2 | GLM-5.2 | tokio **-50.9%**, commons-lang **-46.6%** |
 | Kimi K3 | Kimi K3 | tokio **-50.6%**, commons-lang **-45.5%** |
+| Gemma 4 | Gemma 4 family | tokio **-51.9%**, commons-lang **-42.9%** |
 
 The Qwen3.6 list is five deep because Qwen prices whitespace runs
 comparatively expensively — the same property that makes it save +7.9pp
 more than `o200k_base` on express. Selecting candidates on `o200k_base`
-would have missed three of Qwen's five. No list exists for Gemma-tokenizer
-models: the official Gemma repos are gated, so its tokenizer is not in the
-benchmark set (maintainer decision, 2026-08-02).
+would have missed three of Qwen's five.
+
+**Gemma 4, added 2026-08-06, makes the same point from the opposite end.** It
+is the strictest tokenizer in the set: its list is the same two corpora the
+OpenAI pair gives, and ripgrep misses the bar by 0.4pp (-39.6%) where Qwen3.6
+clears it at -42.6%. It also counts source much larger than the others before
+any compression — transformers +25.1% against `o200k_base` — so a context
+budget sized for GPT-4o is not a Gemma budget. One caution specific to it:
+Gemma is an order of magnitude more CRLF-sensitive than anything else here
+(+11.2% on a CRLF ripgrep checkout, where `o200k_base` moves +1.3% and
+Qwen3.6 not at all), and on CRLF ripgrep reads -45.1% and looks like a
+candidate. **The list above is LF and ripgrep is not on it.**
+
+Gemma 2 and Gemma 3 remain unmeasured — those repos are genuinely gated
+(license acceptance plus an auth token). Gemma 4 is not, which is why it
+could be added at all; `RESULTS.md` records the correction.
 
 This run covers the nine corpora that existed when it was made. Two were
 missing from it: rack (Ruby), added later the same day, and gin (Go), added
@@ -572,8 +591,9 @@ or closed tokenizer, and none should be.
 not hypothesized: the per-tokenizer lists above show three of Qwen3.6's five
 candidates are invisible on `o200k_base`. Judge savings, and ≥40%
 membership, on the tokenizer of the model you actually use. Each list is
-valid only for models using that tokenizer; Gemma-tokenizer models have no
-list, because Gemma is not in the benchmark tokenizer set (gated repos).
+valid only for models using that tokenizer. Gemma 4 has had its own list
+since 2026-08-06; Gemma 2 and Gemma 3 are still absent, their repos being
+gated.
 
 **Line endings shift the baseline slightly.** These runs are a Linux LF
 checkout; the earlier tables in `RESULTS.md` were measured on Windows with

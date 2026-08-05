@@ -59,11 +59,25 @@ template/fixture files, listed in the open-model subsection below.
 | Qwen3.6 | Qwen/Qwen3.6-35B-A3B (rev `995ad96e`) | `--tokenizer hf:` + tokenizer.json | measured locally |
 | GLM-5.2 | zai-org/GLM-5.2 (rev `b4734de4`) | `--tokenizer hf:` + tokenizer.json | measured locally |
 | Kimi K3 | moonshotai/Kimi-K3 (rev `9f62e4e9`) | `--tokenizer kimi:` + tiktoken.model | tiktoken ranks + Kimi pat_str loader |
+| Gemma 4 | google/gemma-4-31B (rev `5bbc2fb1`) | `--tokenizer hf:` + tokenizer.json | measured locally; added 2026-08-06 |
 
 Claude is not yet measured — its vocabulary is private, so numbers require
 the `count_tokens` API. **Never extrapolate private-tokenizer savings from
 the numbers below** (project rule). Tokenizer files are downloaded
 revision-pinned by `benchmarks/fetch.ps1`.
+
+**Gemma needed no authentication, contrary to what this file said until
+2026-08-06.** Gemma was excluded from the 2026-08-02 tokenizer hunt as gated,
+and that was correct for the generations that existed then — `google/gemma-2-*`
+and `google/gemma-3-*` still report `gated: manual` (license acceptance plus an
+auth token). **Gemma 4 does not**: `google/gemma-4-31B` reports `gated: false`
+and its `tokenizer.json` downloads over plain HTTP with no `HF_TOKEN`, which is
+how `fetch.sh` now takes it. No community mirror is involved, so the provenance
+objection that rejected one earlier does not apply. Only the 31B base repo is
+pinned; the other Gemma 4 base repos (12B, 26B-A4B, E4B) serve a byte-identical
+`tokenizer.json` — same 32,170,070 bytes, same LFS oid — so the column is a
+Gemma 4 figure and not a 31B-only one. `google/gemma-4-31B-it` differs and is
+not used.
 
 ## Results
 
@@ -1245,6 +1259,91 @@ for two days: the `o200k_base` figure was never a proxy for the other three
 corpus), so "far below the bar on `o200k_base`" was not by itself a reason to
 believe the open-model figures were too. They are, and now it is measured.
 
+##### Gemma 4 (added 2026-08-06)
+
+Measured 2026-08-06 on the maintainer's Windows machine, rustc 1.95.0, from
+the same **LF checkout** as the table above, with
+`--tokenizer hf:benchmarks/tokenizers/gemma-4.json`. Two `o200k_base` sanity
+checks anchor it to that run before any Gemma number was taken: requests
+aggressive and express default reproduced 86,331 → 55,265 and
+135,740 → 112,307 exactly. Unlike the 2026-08-02 run this one covers **every**
+corpus in the file — all thirteen, at both settings — because the corpus set
+stopped growing after csvhelper.
+
+| Corpus | Files | default | aggressive | before (Gemma 4) | after (aggr.) |
+|---|---|---|---|---|---|
+| tokio | 790 | -17.4% | **-51.9%** | 1,659,757 | 798,170 |
+| commons-lang | 500 | -5.0% | **-42.9%** | 1,975,634 | 1,127,349 |
+| ripgrep | 99 | -20.9% | -39.6% | 494,063 | 298,643 |
+| langchain | 2,531 | -12.7% | -37.1% | 3,575,462 | 2,248,729 |
+| fastapi | 1,140 | -23.9% | -37.0% | 917,394 | 578,406 |
+| csvhelper | 459 / 458 | -12.4% | -36.2% | 456,124 / 455,994 | 291,052 |
+| requests | 36 | -7.3% | -31.9% | 105,590 | 71,871 |
+| transformers | 4,700 | -7.0% | -30.3% | 21,303,227 | 14,852,082 |
+| express | 142 | -21.7% | -29.6% | 168,589 | 118,742 |
+| uv | 719 | -15.3% | -22.8% | 5,948,169 | 4,590,330 |
+| django | 3,032 | -9.8% | -20.7% | 5,791,716 | 4,591,172 |
+| gin | 95 | -6.8% | -18.8% | 216,156 | 175,474 |
+| rack | 104 | -7.6% | -18.2% | 224,100 | 183,226 |
+
+**ripgrep reads 99 files here, not the 98 of the table above.** The extra file
+is `pkg/brew/ripgrep-bin.rb`, a Ruby file inside the Rust corpus that the
+`tokenpress-ruby` backend now covers; it accounts for exactly the 268-token
+before-count difference. This is a coverage change of the same kind as the
+`.js` additions noted above, not a formatter change, and it is worth 0.1pp at
+most: re-measuring ripgrep's whole row at 99 files gives -37.4% / -37.6% /
+-42.6% / -37.6% / -37.3%, against the published -37.4% / -37.6% / **-42.7%** /
+-37.6% / -37.3%. Only Qwen3.6 moves, by 0.1pp, so the table above is left
+as measured and this is recorded rather than propagated.
+
+csvhelper is the one corpus whose file count differs between the two settings
+(459 default, 458 aggressive), for the comment-only-file reason documented in
+its own section. **0 verification refusals** at either setting on every other
+corpus, matching what the other five tokenizers report.
+
+**Two corpora clear the ≥40% bar on Gemma 4 — tokio and commons-lang — which
+is the same pair `o200k_base` gives and three fewer than Qwen3.6.** Gemma is
+therefore the *strictest* tokenizer in the set for this hunt, not the most
+generous, and ripgrep misses by 0.4pp (-39.6%) where Qwen3.6 clears it at
+-42.6%. This is one more instance of the rule the per-tokenizer lists exist to
+enforce, and the first where a newly added tokenizer *shrank* no list but
+confirmed the OpenAI pair's.
+
+**Gemma 4 counts source substantially larger than every other tokenizer
+here** — before-compression, and at LF: transformers 21.30M against
+`o200k_base`'s 17.03M (+25.1%), ripgrep 494,063 against 415,858 (+18.8%),
+commons-lang 1,975,634 against 1,736,204 (+13.8%). Qwen3.6 was the previous
+outlier at +5.7% on that Java tree; Gemma is a much larger one. The totals
+rule at the top of this file applies with more force than before: **a token
+budget computed for a GPT-4o context is not a Gemma budget.**
+
+**There is no simple story about which setting Gemma likes.** Its default
+saving beats `o200k_base`'s on some corpora and trails it on others —
+express -21.7% vs -17.3% and gin -6.8% vs -6.4%, but rack -7.6% vs -9.2%,
+commons-lang -5.0% vs -6.1% and csvhelper -12.4% vs -14.3%. Nothing here
+supports a per-language or per-setting generalisation, and none is made.
+
+**Gemma 4 is an order of magnitude more sensitive to CRLF than anything else
+measured.** Re-running ripgrep and requests from a CRLF clone of the same
+pins moves the before-counts like this:
+
+| Tokenizer | ripgrep LF → CRLF | requests LF → CRLF |
+|---|---|---|
+| `o200k_base` | +1.3% | +0.7% |
+| `cl100k_base` | +0.9% | — |
+| Qwen3.6 | +0.0% | — |
+| GLM-5.2 | +0.9% | — |
+| Kimi K3 | +1.0% | — |
+| **Gemma 4** | **+11.2%** | **+12.6%** |
+
+Qwen3.6 is exactly unchanged; Gemma inflates by more than a tenth. The
+practical consequence is a trap: on the CRLF clone ripgrep's aggressive run
+reads **-45.1%** on Gemma and would look like a ≥40% candidate, where the LF
+figure is -39.6% and is not. **The candidate lists below are LF figures and
+ripgrep is not on Gemma's list.** The flip side is a real and previously
+unstated saving — for a Gemma-tokenizer model, converting a CRLF tree to LF
+is worth about 11-13% on its own, before TokenPress runs at all.
+
 #### Showcase candidates (≥40% aggressive reduction)
 
 Recorded for the ROADMAP P3 task ("hunt for well-known projects per
@@ -1276,21 +1375,23 @@ falling short.
 | Qwen3.6 | tokio **-55.2%**, commons-lang **-45.3%**, ripgrep **-42.7%**, langchain **-41.1%**, fastapi **-40.1%** |
 | GLM-5.2 | tokio **-50.9%**, commons-lang **-46.6%** |
 | Kimi K3 | tokio **-50.6%**, commons-lang **-45.5%** |
+| Gemma 4 | tokio **-51.9%**, commons-lang **-42.9%** |
 
-**Two corpora now clear the bar on all five tokenizers, not one** — tokio and
-commons-lang, since 2026-08-05. tokio stays the headline because it is ahead
-by percentage at every one of the five; at Qwen3.6 tokio
+**Two corpora now clear the bar on all six tokenizers, not one** — tokio and
+commons-lang, since 2026-08-05, and Gemma 4 joined the grid on 2026-08-06
+without changing that. tokio stays the headline because it is ahead
+by percentage at every one of the six; at Qwen3.6 tokio
 reaches **-55.2%** (1,542,030 → 690,601, an
 absolute saving of 851,429 tokens per full-repo prompt). The Qwen3.6 list
 is five deep because Qwen prices whitespace runs comparatively expensively;
 selecting candidates on the `o200k_base` proxy would have missed three of
-its five — which is exactly why this hunt is per-tokenizer. Gemma is not
-measured: the official `google/gemma-*` repos are gated (license acceptance
-plus auth token), so pinning its `tokenizer.json` needs an
-authenticated-download story nothing else needs; it was excluded from this
-run by maintainer decision (2026-08-02).
+its five — which is exactly why this hunt is per-tokenizer. Gemma 4 makes the
+same point from the other end: it is the strictest of the six, agreeing with
+the OpenAI pair on a two-corpus list while ripgrep misses by 0.4pp. Gemma's
+figures here are LF; its CRLF ripgrep run reads -45.1% and must not be read
+as a candidate (see the Gemma 4 subsection above).
 
-**Clears ≥40% on all five tokenizers — 2 of 12 corpora:**
+**Clears ≥40% on all six tokenizers — 2 of 13 corpora:**
 
 | Project | Language | Commit | o200k_base | cl100k_base | Absolute saving (o200k) |
 |---|---|---|---|---|---|
@@ -1379,9 +1480,9 @@ Two caveats on this list:
 * **Each list is valid only for models using that tokenizer.** The per-
   tokenizer measurement (2026-08-02) confirmed the gap is decisive: three of
   Qwen3.6's four candidates are invisible on the `o200k_base` proxy. Judge
-  ≥40% membership on the tokenizer of the model you actually run. Gemma
-  remains unmeasured (gated repos — see the note above), so no candidate
-  list exists for Gemma-tokenizer models.
+  ≥40% membership on the tokenizer of the model you actually run. Gemma 4
+  was added 2026-08-06 and has its own list; Gemma 2 and Gemma 3 remain
+  unmeasured, and their repos really are gated.
 
 ## Interpretation
 

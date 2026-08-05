@@ -58,6 +58,13 @@ downloads=(
     "qwen3.6.json|https://huggingface.co/Qwen/Qwen3.6-35B-A3B/resolve/995ad96eacd98c81ed38be0c5b274b04031597b0/tokenizer.json"
     "glm-5.2.json|https://huggingface.co/zai-org/GLM-5.2/resolve/b4734de4facf877f85769a911abafc5283eab3d9/tokenizer.json"
     "kimi-k3.tiktoken|https://huggingface.co/moonshotai/Kimi-K3/resolve/9f62e4e9fffbd0a83ddd60e1c209d828994b3569/tiktoken.model"
+    # Pinned at the google/gemma-4-31B *base* repo, like the three above.
+    # Gemma 2 and Gemma 3 are gated (`gated: manual` — license acceptance plus
+    # an auth token); Gemma 4 is not, so this needs no HF_TOKEN and no
+    # community mirror. Only the 31B base is pinned, but the other Gemma 4
+    # base repos (12B, 26B-A4B, E4B) serve a byte-identical tokenizer.json
+    # (same 32,170,070 bytes, same LFS oid); `-it` does not.
+    "gemma-4.json|https://huggingface.co/google/gemma-4-31B/resolve/5bbc2fb1c1b2c611d06e3d9f23c170ba21659d89/tokenizer.json"
 )
 for entry in "${downloads[@]}"; do
     IFS='|' read -r name url <<< "$entry"

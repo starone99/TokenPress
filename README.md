@@ -30,24 +30,35 @@ Full corpora, every file passing verification. See
 [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for methodology, corpus pins,
 and all tokenizers.
 
-| Corpus | Setting | GPT-4o/o-series (`o200k_base`) | Qwen3.6 | GLM-5.2 | Kimi K3 |
-|---|---|---|---|---|---|
-| requests v2.32.3 | default | -9.0% | -9.8% | -9.0% | -8.7% |
-| requests | aggressive¹ | -20.6% | -21.0% | -20.7% | -20.2% |
-| ripgrep 14.1.1 | default | -18.9% | **-23.2%** | -18.3% | -18.2% |
-| ripgrep | aggressive² | -38.2% | **-42.7%** | -38.1% | -37.9% |
-| express v5.2.1 | default | -17.3% | -25.0% | -17.6% | -17.4% |
-| express | aggressive³ | -25.4% | **-33.3%** | -25.9% | -25.5% |
-| rack v3.2.6 | default | -9.2% | -8.2% | -8.9% | -8.9% |
-| rack | aggressive⁴ | -20.8% | -19.8% | -20.5% | -20.5% |
-| gin v1.11.0 | default | -6.4% | -5.6% | -6.2% | -6.4% |
-| gin | aggressive⁵ | -19.4% | -18.7% | -20.0% | -20.0% |
-| commons-lang 3.17.0 | default | -6.1% | -5.6% | -6.2% | -6.0% |
-| commons-lang | aggressive⁶ | **-45.5%** | **-45.3%** | **-46.6%** | **-45.5%** |
+| Corpus | Setting | GPT-4o/o-series (`o200k_base`) | Qwen3.6 | GLM-5.2 | Kimi K3 | Gemma 4 |
+|---|---|---|---|---|---|---|
+| requests v2.32.3 | default | -9.0% | -9.8% | -9.0% | -8.7% | -16.4%⁷ |
+| requests | aggressive¹ | -20.6% | -21.0% | -20.7% | -20.2% | -25.7%⁷ |
+| ripgrep 14.1.1 | default | -18.9% | **-23.2%** | -18.3% | -18.2% | -28.0%⁷ |
+| ripgrep | aggressive² | -38.2% | **-42.7%** | -38.1% | -37.9% | -45.1%⁷ |
+| express v5.2.1 | default | -17.3% | -25.0% | -17.6% | -17.4% | -21.7% |
+| express | aggressive³ | -25.4% | **-33.3%** | -25.9% | -25.5% | -29.6% |
+| rack v3.2.6 | default | -9.2% | -8.2% | -8.9% | -8.9% | -7.6% |
+| rack | aggressive⁴ | -20.8% | -19.8% | -20.5% | -20.5% | -18.2% |
+| gin v1.11.0 | default | -6.4% | -5.6% | -6.2% | -6.4% | -6.8% |
+| gin | aggressive⁵ | -19.4% | -18.7% | -20.0% | -20.0% | -18.8% |
+| commons-lang 3.17.0 | default | -6.1% | -5.6% | -6.2% | -6.0% | -5.0% |
+| commons-lang | aggressive⁶ | **-45.5%** | **-45.3%** | **-46.6%** | **-45.5%** | **-42.9%** |
 
 ¹ `--py-strip-comments --py-strip-annotations` ² `--rs-strip-doc-comments`
 ³ `--js-strip-comments` ⁴ `--ruby-strip-comments` ⁵ `--go-strip-comments`
 ⁶ `--java-strip-comments`
+
+⁷ **Read these four Gemma cells with the line-ending caveat, not without
+it.** The requests and ripgrep rows are CRLF measurements — that is what
+their other four columns are too, so the rows are internally consistent —
+but Gemma 4 is an order of magnitude more CRLF-sensitive than any other
+tokenizer here (a CRLF checkout inflates its before-count ~11-13%, where
+`o200k_base` moves ~1% and Qwen3.6 not at all). On an LF checkout the same
+runs read -7.3% / -25.7% / -20.9% / **-39.6%**. In particular **ripgrep's
+-45.1% is not a ≥40% showcase candidate**: at LF it is -39.6% and misses the
+bar, and `benchmarks/SHOWCASE.md`'s per-tokenizer lists are LF throughout.
+The other rows in this table are LF and need no such adjustment.
 
 Every corpus in this table is measured on every tokenizer listed; nothing
 here is estimated from one tokenizer's number. `cl100k_base` (GPT-4 /
