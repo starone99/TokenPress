@@ -30,6 +30,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      # `tokenpress-csharp`'s external-verification tests spawn Roslyn's `csc`;
+      # same reasoning, same pin and same private install directory as the CI
+      # workflow's test job. This job runs `cargo test --workspace` too, so a
+      # tag must not depend on whatever SDK the runner image happens to ship.
+      - uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: '8.0.129'
       - name: Build
         run: cargo build --workspace
       - name: Test

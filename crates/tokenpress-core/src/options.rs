@@ -15,13 +15,17 @@ pub enum VerifyLevel {
     ///
     /// Implemented by the JavaScript/TypeScript backend, which runs
     /// `tsc --noEmit` (falling back to `node --check`), by the Ruby backend,
-    /// which runs `ruby -c`, by the Go backend, which runs `gofmt -e`, and by
-    /// the Java backend, which runs `javac` stopped after its parse phase
-    /// (`javac -XDshould-stop.ifNoError=PARSE`). All four run on top of
-    /// [`VerifyLevel::AstEquiv`] and fail when the tool they need is not on
-    /// PATH. Python (`py_compile`) and Rust (`rustc --emit=metadata`) do not
-    /// implement it yet and treat this level exactly like
-    /// [`VerifyLevel::AstEquiv`].
+    /// which runs `ruby -c`, by the Go backend, which runs `gofmt -e`, by the
+    /// Java backend, which runs `javac` stopped after its parse phase
+    /// (`javac -XDshould-stop.ifNoError=PARSE`), and by the C# backend, which
+    /// runs Roslyn's `csc` over the input and the output and requires the two
+    /// runs to report the **same multiset of `error CS####` codes** — C# has
+    /// no parse-only compiler mode, so the semantic noise is made to cancel
+    /// rather than removed, and the verdict is never the exit status. All five
+    /// run on top of [`VerifyLevel::AstEquiv`] and fail when the tool they
+    /// need is not on PATH. Python (`py_compile`) and Rust
+    /// (`rustc --emit=metadata`) do not implement it yet and treat this level
+    /// exactly like [`VerifyLevel::AstEquiv`].
     External,
 }
 

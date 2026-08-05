@@ -503,108 +503,239 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
 // XML documentation along with every other comment, an opt-in exactly as
 // Java's flag is.
 
-// `--verify external` is real for JavaScript/TypeScript, for Ruby, for Go and
-// for Java, but still equals `--verify ast` for Python, Rust and C#, so a run
-// containing files of those three languages must not read the level as a
+// `--verify external` is real for JavaScript/TypeScript, for Ruby, for Go, for
+// Java and now for C#, but still equals `--verify ast` for Python and Rust, so
+// a run containing files of those two languages must not read the level as a
 // stronger guarantee than it is.
 //
-// The tail — which backends do *not* have it — used to be a single fixed
-// string, when the only two left were Python and Rust, both unconditional
-// backends. C# joins them without an external checker of its own (C5 is what
-// wires `csc` up), and `csharp` *is* a cargo feature, so the tail now varies:
-// two variants, on `csharp` alone, and `NO_EXTERNAL_VERIFY_EXTENSIONS` with
-// them. A build without the feature has no `.cs` path to reach at all, so
-// naming C# there would describe a backend that does not exist in it.
-// The head — which backends *do* have it — names only backends this binary
-// was actually built with:
-// promising Ruby's, Go's or Java's checker in a build that refuses `.rb`,
-// `.go` or `.java` outright would be a lie about this binary. JS/TS is
-// unconditional and always leads; the other three are cargo features, which is
-// why the head is a 2×2×2 cross-product of `ruby`/`go`/`java` and why the
-// grammar of the closing clause ("it"/"both"/"each") differs per variant with
-// the number of checkers named. `csharp` does *not* multiply the head — a
-// backend with no external checker cannot appear on the implemented side — so
-// the head stays at 8 variants and the cross-product is head × tail = 16
-// rendered messages from 10 constants. Head and tail are written out as one
-// block by `warn_external_verify`.
-#[cfg(all(feature = "ruby", feature = "go", feature = "java"))]
+// The tail -- which backends do *not* have it -- is a single fixed string
+// again. It varied while C# was on it, because `csharp` is a cargo feature and
+// a build without the backend has no `.cs` path to name; with C5's `csc` gate
+// landed the only two left are Python and Rust, both unconditional backends,
+// so there is nothing for it to vary with. `NO_EXTERNAL_VERIFY_EXTENSIONS`
+// went back to being unconditional with it.
+//
+// The head -- which backends *do* have it -- names only backends this binary
+// was actually built with: promising Ruby's, Go's, Java's or C#'s checker in a
+// build that refuses `.rb`, `.go`, `.java` or `.cs` outright would be a lie
+// about this binary. JS/TS is unconditional and always leads; the other four
+// are cargo features, which is why the head is a 2x2x2x2 cross-product of
+// `ruby`/`go`/`java`/`csharp` and why the grammar of the closing clause
+// ("it"/"both"/"each") differs per variant with the number of checkers named.
+// C# now multiplies the head instead of the tail -- it changed sides the
+// moment it got a checker -- so the head is 16 variants and the tail one: 16
+// rendered messages from 17 constants, where the cross-product used to need
+// 10. Head and tail are written out as one block by `warn_external_verify`.
+#[cfg(all(feature = "ruby", feature = "go", feature = "java", feature = "csharp"))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
-warning: external-tooling verification is implemented for JavaScript/TypeScript,
-  where `--verify external` runs `tsc --noEmit` (falling back to
-  `node --check`), for Ruby, where it runs `ruby -c`, for Go, where it runs
-  `gofmt -e`, and for Java, where it runs `javac`; each fails if the tool it
-  needs is not on PATH.";
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Ruby, where it runs `ruby -c`, for
+  Go, where it runs `gofmt -e`, for Java, where it runs `javac`, and for C#,
+  where it runs `csc`; each fails if the tool it needs is not on PATH.";
 
-#[cfg(all(feature = "ruby", feature = "go", not(feature = "java")))]
+#[cfg(all(
+    feature = "ruby",
+    feature = "go",
+    feature = "java",
+    not(feature = "csharp")
+))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
-warning: external-tooling verification is implemented for JavaScript/TypeScript,
-  where `--verify external` runs `tsc --noEmit` (falling back to
-  `node --check`), for Ruby, where it runs `ruby -c`, and for Go, where it runs
-  `gofmt -e`; each fails if the tool it needs is not on PATH.";
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Ruby, where it runs `ruby -c`, for
+  Go, where it runs `gofmt -e`, and for Java, where it runs `javac`; each
+  fails if the tool it needs is not on PATH.";
 
-#[cfg(all(feature = "ruby", not(feature = "go"), feature = "java"))]
+#[cfg(all(
+    feature = "ruby",
+    feature = "go",
+    not(feature = "java"),
+    feature = "csharp"
+))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
-warning: external-tooling verification is implemented for JavaScript/TypeScript,
-  where `--verify external` runs `tsc --noEmit` (falling back to
-  `node --check`), for Ruby, where it runs `ruby -c`, and for Java, where it
-  runs `javac`; each fails if the tool it needs is not on PATH.";
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Ruby, where it runs `ruby -c`, for
+  Go, where it runs `gofmt -e`, and for C#, where it runs `csc`; each fails
+  if the tool it needs is not on PATH.";
 
-#[cfg(all(feature = "ruby", not(feature = "go"), not(feature = "java")))]
+#[cfg(all(
+    feature = "ruby",
+    feature = "go",
+    not(feature = "java"),
+    not(feature = "csharp")
+))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
-warning: external-tooling verification is implemented for JavaScript/TypeScript,
-  where `--verify external` runs `tsc --noEmit` (falling back to
-  `node --check`), and for Ruby, where it runs `ruby -c`; both fail if the tool
-  they need is not on PATH.";
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Ruby, where it runs `ruby -c`, and
+  for Go, where it runs `gofmt -e`; each fails if the tool it needs is not on
+  PATH.";
 
-#[cfg(all(not(feature = "ruby"), feature = "go", feature = "java"))]
+#[cfg(all(
+    feature = "ruby",
+    not(feature = "go"),
+    feature = "java",
+    feature = "csharp"
+))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
-warning: external-tooling verification is implemented for JavaScript/TypeScript,
-  where `--verify external` runs `tsc --noEmit` (falling back to
-  `node --check`), for Go, where it runs `gofmt -e`, and for Java, where it
-  runs `javac`; each fails if the tool it needs is not on PATH.";
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Ruby, where it runs `ruby -c`, for
+  Java, where it runs `javac`, and for C#, where it runs `csc`; each fails if
+  the tool it needs is not on PATH.";
 
-#[cfg(all(not(feature = "ruby"), feature = "go", not(feature = "java")))]
+#[cfg(all(
+    feature = "ruby",
+    not(feature = "go"),
+    feature = "java",
+    not(feature = "csharp")
+))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
-warning: external-tooling verification is implemented for JavaScript/TypeScript,
-  where `--verify external` runs `tsc --noEmit` (falling back to
-  `node --check`), and for Go, where it runs `gofmt -e`; both fail if the tool
-  they need is not on PATH.";
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Ruby, where it runs `ruby -c`, and
+  for Java, where it runs `javac`; each fails if the tool it needs is not on
+  PATH.";
 
-#[cfg(all(not(feature = "ruby"), not(feature = "go"), feature = "java"))]
+#[cfg(all(
+    feature = "ruby",
+    not(feature = "go"),
+    not(feature = "java"),
+    feature = "csharp"
+))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
-warning: external-tooling verification is implemented for JavaScript/TypeScript,
-  where `--verify external` runs `tsc --noEmit` (falling back to
-  `node --check`), and for Java, where it runs `javac`; both fail if the tool
-  they need is not on PATH.";
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Ruby, where it runs `ruby -c`, and
+  for C#, where it runs `csc`; each fails if the tool it needs is not on
+  PATH.";
 
-#[cfg(all(not(feature = "ruby"), not(feature = "go"), not(feature = "java")))]
+#[cfg(all(
+    feature = "ruby",
+    not(feature = "go"),
+    not(feature = "java"),
+    not(feature = "csharp")
+))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
-warning: external-tooling verification is implemented for JavaScript/TypeScript,
-  where `--verify external` runs `tsc --noEmit` (falling back to
-  `node --check`); it fails if the tool it needs is not on PATH.";
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), and for Ruby, where it runs `ruby -c`;
+  both fail if the tool they need is not on PATH.";
 
-// The tail — which backends the level does *not* reach. Python and Rust are
-// unconditional backends and are always here; `ruby`, `go` and `java` cannot
-// appear at all, because all three of those checkers are real. C# is the one
-// that varies: it has no external checker yet, so it belongs here, but only in
-// a build that has the backend in the first place.
-#[cfg(feature = "csharp")]
-const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python, Rust and C#: neither
-  `py_compile` nor `rustc --emit=metadata` nor a C# compiler is invoked, so for
-  `.py`, `.rs` and `.cs` this level behaves exactly like `--verify ast`, i.e.
-  the output is re-parsed and compared for AST / token-stream equivalence.";
+#[cfg(all(
+    not(feature = "ruby"),
+    feature = "go",
+    feature = "java",
+    feature = "csharp"
+))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Go, where it runs `gofmt -e`, for
+  Java, where it runs `javac`, and for C#, where it runs `csc`; each fails if
+  the tool it needs is not on PATH.";
 
-#[cfg(not(feature = "csharp"))]
-const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python and Rust: neither
-  `py_compile` nor `rustc --emit=metadata` is invoked, so for `.py` and `.rs`
-  this level behaves exactly like `--verify ast`, i.e. the output is re-parsed
-  and compared for AST / token-stream equivalence.";
+#[cfg(all(
+    not(feature = "ruby"),
+    feature = "go",
+    feature = "java",
+    not(feature = "csharp")
+))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Go, where it runs `gofmt -e`, and for
+  Java, where it runs `javac`; each fails if the tool it needs is not on
+  PATH.";
+
+#[cfg(all(
+    not(feature = "ruby"),
+    feature = "go",
+    not(feature = "java"),
+    feature = "csharp"
+))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Go, where it runs `gofmt -e`, and for
+  C#, where it runs `csc`; each fails if the tool it needs is not on PATH.";
+
+#[cfg(all(
+    not(feature = "ruby"),
+    feature = "go",
+    not(feature = "java"),
+    not(feature = "csharp")
+))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), and for Go, where it runs `gofmt -e`;
+  both fail if the tool they need is not on PATH.";
+
+#[cfg(all(
+    not(feature = "ruby"),
+    not(feature = "go"),
+    feature = "java",
+    feature = "csharp"
+))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), for Java, where it runs `javac`, and for
+  C#, where it runs `csc`; each fails if the tool it needs is not on PATH.";
+
+#[cfg(all(
+    not(feature = "ruby"),
+    not(feature = "go"),
+    feature = "java",
+    not(feature = "csharp")
+))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), and for Java, where it runs `javac`; both
+  fail if the tool they need is not on PATH.";
+
+#[cfg(all(
+    not(feature = "ruby"),
+    not(feature = "go"),
+    not(feature = "java"),
+    feature = "csharp"
+))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`), and for C#, where it runs `csc`; both
+  fail if the tool they need is not on PATH.";
+
+#[cfg(all(
+    not(feature = "ruby"),
+    not(feature = "go"),
+    not(feature = "java"),
+    not(feature = "csharp")
+))]
+const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
+warning: external-tooling verification is implemented for
+  JavaScript/TypeScript, where `--verify external` runs `tsc --noEmit`
+  (falling back to `node --check`); it fails if the tool it needs is not on
+  PATH.";
+
+// The tail -- which backends the level does *not* reach. Python and Rust are
+// unconditional backends, and every other backend's checker is real, so this
+// no longer varies with anything. It opens on its own newline rather than on
+// a space: it is written out immediately after a head whose last line differs
+// per variant, and joining them mid-line would leave one seam per variant at
+// a width nothing in this file controls.
+const EXTERNAL_VERIFY_WARNING_TAIL: &str = "
+  It is not implemented for Python and Rust: neither `py_compile` nor
+  `rustc --emit=metadata` is invoked, so for `.py` and `.rs` this level
+  behaves exactly like `--verify ast`, i.e. the output is re-parsed and
+  compared for AST / token-stream equivalence.";
 
 /// Extensions the warning above is about: the backends the external level does
-/// not reach yet. Varies with `csharp` alone, for the reason the tail does.
-#[cfg(feature = "csharp")]
-const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 3] = ["py", "rs", "cs"];
-#[cfg(not(feature = "csharp"))]
+/// not reach. Unconditional, because both of them are.
 const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 2] = ["py", "rs"];
 
 /// True when `path` belongs to a backend the external level does not reach.
@@ -1947,19 +2078,79 @@ mod tests {
 
     #[cfg(feature = "csharp")]
     #[test]
-    fn the_external_verify_warning_names_csharp_among_the_backends_without_it() {
-        // C# has no external checker yet (C5 is what wires one up), so the
-        // level is a no-op for `.cs` and the warning has to say so — on the
-        // *unimplemented* side, beside Python and Rust.
+    fn external_verify_warning_names_csharp_as_implemented() {
+        // C#'s `External` level really runs Roslyn's `csc` and compares the
+        // diagnostic multisets, so the warning has to name it on the
+        // *implemented* side and must no longer list `.cs` among the
+        // extensions the level does not reach.
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, out, err) =
+            run_cli_err(&["format", "--verify", "external", py.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("csc"), "{err}");
+        assert!(!err.contains("`.cs`"), "{err}");
+        assert!(err.contains("py_compile"), "{err}");
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn external_verify_warning_is_absent_for_csharp_paths() {
+        // A C#-only run must not be told the level is a no-op for it.
         let dir = Scratch::new();
         let cs = dir.file("A.cs", "public  class  A  {}\n");
         let (code, out, err) =
             run_cli_err(&["format", "--verify", "external", cs.to_str().unwrap()]);
         assert_eq!(code, 0, "{out}");
-        assert_eq!(err.matches("warning:").count(), 1);
-        assert!(err.contains("`.cs`"), "{err}");
-        assert!(err.contains("--verify ast"), "{err}");
+        assert_eq!(err, "");
         assert_eq!(std::fs::read_to_string(&cs).unwrap(), "public class A {}\n");
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn external_verify_runs_the_real_checker_over_csharp() {
+        // End to end at the level that spawns `csc`: the output is accepted,
+        // written, and stable on a second pass. The file is named after none
+        // of the fixed scratch names the gate writes under, which is part of
+        // what makes it an end-to-end check.
+        let dir = Scratch::new();
+        let cs = dir.file(
+            "Real.cs",
+            "public class Real\n{\n\n    int F(int a)\n    {\n        return a;\n    }\n}\n",
+        );
+        let path = cs.to_str().unwrap();
+        let (code, _, _) = run_cli_err(&["format", "--verify", "external", path]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&cs).unwrap(),
+            "public class Real\n{\nint F(int a)\n{\nreturn a;\n}\n}\n"
+        );
+        let (code, out, _) = run_cli_err(&["check", "--verify", "external", path]);
+        assert_eq!(code, 0, "{out}");
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn external_verify_does_not_blame_csharp_input_the_checker_already_rejects() {
+        // `99999999999999999999999` is a clean tree-sitter parse and
+        // `error CS1021: Integral constant is too large` to `csc`. The
+        // diagnostic multiset design is what makes that a non-event: the same
+        // complaint appears on both sides and cancels, so the run succeeds
+        // instead of failing on the user's own input.
+        let dir = Scratch::new();
+        let cs = dir.file(
+            "Big.cs",
+            "class Big\n{\n    long  x  =  99999999999999999999999;\n}\n",
+        );
+        let (code, out, err) =
+            run_cli_err(&["format", "--verify", "external", cs.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(err, "");
+        assert_eq!(
+            std::fs::read_to_string(&cs).unwrap(),
+            "class Big\n{\nlong x = 99999999999999999999999;\n}\n"
+        );
     }
 
     #[cfg(feature = "csharp")]
@@ -3027,17 +3218,16 @@ mod tests {
     #[cfg(not(feature = "csharp"))]
     #[test]
     fn the_external_verify_warning_does_not_mention_csharp_without_the_feature() {
-        // C# sits on the *unimplemented* side of the warning, so a build
-        // without the backend must leave it out for the mirror image of the
-        // reason a build without `java` leaves Java off the implemented side:
-        // there is no `.cs` path for this binary to reach either way.
+        // A build that cannot format C# at all must not advertise C#'s
+        // external checker, exactly as it must not advertise Ruby's, Go's or
+        // Java's: there is no `.cs` path for it to reach.
         let dir = Scratch::new();
         let py = dir.file("a.py", "x = 1\n");
         let (code, _, err) = run_cli_err(&["format", "--verify", "external", py.to_str().unwrap()]);
         assert_eq!(code, 0);
         assert_eq!(err.matches("warning:").count(), 1);
         assert!(err.contains("py_compile"), "{err}");
-        assert!(!err.contains("`.cs`"), "{err}");
+        assert!(!err.contains("csc"), "{err}");
         assert!(!err.contains("C#"), "{err}");
     }
 

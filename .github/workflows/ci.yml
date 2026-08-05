@@ -42,6 +42,18 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      # `tokenpress-csharp`'s external-verification tests spawn Roslyn's `csc`
+      # out of a .NET SDK, discovered through `dotnet --list-sdks`. Pinned to
+      # the SDK the diagnostic-multiset gate was measured against, and
+      # installed into a directory of its own on purpose: the gate takes the
+      # *newest* SDK the host reports, so sharing a root with whatever the
+      # runner image ships would quietly run the check against a different
+      # compiler than the pinned one.
+      - uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: '8.0.129'
       - name: Build
         run: cargo build --workspace
       - name: Test
@@ -352,11 +364,17 @@ jobs:
       # ruby-prism-sys needs libclang (bindgen) + a C compiler
       - uses: ./.github/actions/libclang
       # The gate runs the whole suite under instrumentation, so it needs every
-      # external checker the suite spawns -- `javac` included.
+      # external checker the suite spawns -- `javac` and Roslyn's `csc`
+      # included. Same pin and same private install directory as the test job.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
+      - uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: '8.0.129'
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
         with:

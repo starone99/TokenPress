@@ -229,11 +229,39 @@ without a word about the flag. That is why the checker self-tests the gate
 over a built-in valid-but-unresolvable fixture before trusting it, and why
 that self-test is not optional.
 
-**C# needs nothing on PATH yet.** `tokenpress-csharp` has no `--verify
-external` implementation — the level folds into `AstEquiv` for `.cs`, and no
-`dotnet`, `csc`, `mcs` or `mono` is spawned by any test. That changes when the
-external checker lands, and the paragraph above this one is the shape the
-`csc`-on-PATH note will take.
+**`dotnet` must be on PATH to run the suite too**, on the same terms:
+`tokenpress-csharp` implements `--verify external` by running Roslyn's `csc`,
+and its tests exercise that against real processes. `csc` is not a program on
+PATH — it ships inside the SDK as a managed assembly the `dotnet` host runs —
+so the checker asks `dotnet --list-sdks` where it is and builds the path to
+`<sdk>/Roslyn/bincore/csc.dll` itself. **The SDK version is discovered at run
+time and must never be hardcoded**: the directory shape differs between Linux
+(`/usr/lib/dotnet/sdk`) and Windows (`C:\Program Files\dotnet\sdk`), and CI
+runs both. Any .NET SDK provides it — CI installs one explicitly with
+`actions/setup-dotnet` (pinned to 8.0.129, the SDK the gate was measured
+against, into an install directory of its own so the newest SDK on the machine
+*is* the pinned one) rather than relying on whatever a runner image ships.
+What cannot be arranged on demand (a machine with no `dotnet`, a process that
+fails to spawn, an SDK whose diagnostics can no longer be read) goes through
+the same injectable `Tools` seam. On a local Linux checkout,
+`apt-get update && apt-get install -y dotnet-sdk-8.0` is enough; the
+`apt-get update` is not optional, since a stale package index 404s.
+
+Note that C#'s gate is the one that does **not** work like the others. C# has
+no parse-only compiler mode, so there is nothing to stop `csc` at: run over a
+single file with `/nostdlib+` it reports a pile of unresolved-type errors for
+any real source. The verdict is therefore the **multiset of `error CS####`
+codes**, compared between the input and the output, and it is read from
+`csc`'s **stdout** — never from the exit status, which is non-zero for exactly
+the noise the design tolerates. Never add a code-range filter: a top-level
+statement after a type declaration is `CS8803`, as much a syntax error as
+`CS1026` and outside the `CS1xxx` range, and there is a test that fails if
+anyone tries. Because the whole verdict is parsed text, the checker self-tests
+the gate over a built-in valid-but-unresolvable fixture before trusting it —
+requiring both that the fixture's known codes were extracted at all and that
+they cancel between the pair — and that self-test is not optional: without it,
+a reworded diagnostic format would leave every file comparing an empty
+multiset against an empty multiset and passing.
 
 **Getting `ruby` and `gofmt` onto a Windows machine without administrator
 rights**, since CI preinstalls both and a local checkout does not: Go ships a
@@ -246,8 +274,11 @@ Both were measured this way (exit 0, no UAC prompt); with those two on PATH
 plus `LIBCLANG_PATH`, `scripts\coverage.ps1` runs to completion and exits 0.
 Without them six `external_verify_*` tests in `tokenpress-cli` fail — a
 missing toolchain, not a regression. A JDK is now a **third** local
-prerequisite on the same footing; no per-user Windows install has been
-measured for it yet, and the six-test figure predates the Java checker.
+prerequisite on the same footing, and a .NET SDK a **fourth**; no per-user
+Windows install has been measured for either, and the six-test figure predates
+both the Java and the C# checker. The .NET SDK is the least awkward of the
+four on Windows, since `dotnet-install.ps1` takes `-InstallDir` and needs no
+elevation.
 
 ## Integration surfaces
 

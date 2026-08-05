@@ -83,16 +83,11 @@ not a character minifier.
 | Ruby | `.rb` `.rake` `.gemspec` `.ru`, plus the exact file names `Gemfile` and `Rakefile` | Supported (context-lossless at default settings; see below) |
 | Go | `.go` | Supported (context-lossless at default settings; see below) |
 | Java | `.java` | Supported (context-lossless at default settings; see below) |
-| C# | `.cs` | **Experimental** (context-lossless at default settings; no external verification yet — see below) |
+| C# | `.cs` | Supported (context-lossless at default settings; see below) |
 
-**`--verify external` is real for JavaScript/TypeScript, Ruby, Go and Java**,
-which is what "Supported" is gated on here: the output is handed to the
-language's own toolchain, on top of the built-in AST-equivalence check. C# is
-labelled **experimental** for exactly that reason and no other: everything
-else a supported backend has, it has — the parse gate, the re-emit, the
-built-in re-parse-plus-AST-equivalence check and the refusal to write anything
-that fails it. What is missing is the compiler-side check, and the label comes
-off when it lands.
+**`--verify external` is real for every language in the table except Python and
+Rust**, which is what "Supported" is gated on here: the output is handed to the
+language's own toolchain, on top of the built-in AST-equivalence check.
 
 For JavaScript/TypeScript it runs
 `tsc --noEmit --noCheck --skipLibCheck --allowJs --jsx preserve` over the
@@ -138,24 +133,49 @@ option if a JDK ever stops honouring it — otherwise the check would quietly
 become a whole-program compile and start blaming TokenPress for your
 classpath.
 
+For C# it runs Roslyn's own `csc` — and not the way any of the others work,
+because **C# has no parse-only compiler mode**. Run with `/nostdlib+` (no
+reference assemblies, so no project file, no restore and no network) over a
+file from a real project, `csc` reports a pile of unresolved-type errors that
+say nothing about whether the file is well-formed. So the noise is not removed,
+it is made to **cancel**: the compiler is run over your input *and* over the
+candidate, the `error CS####` codes of each run are collected into a multiset
+with their positions discarded, and the output is accepted only when the two
+multisets are equal. Unresolvable references produce the same complaints on
+both sides; a syntax error introduced by formatting appears on one side only,
+in **any** code range — a top-level statement after a type declaration is
+`CS8803`, not `CS1xxx`, which is why there is no code-range shortcut here. The
+verdict is therefore the diagnostics and **never the exit status**, since `csc`
+exits non-zero for exactly the noise this design tolerates. `--verify external`
+requires `dotnet` (any .NET SDK; the SDK's own version is discovered at run
+time, never hardcoded) on PATH for C# paths and **fails naming it** when it is
+missing. Because the whole verdict is parsed text, TokenPress runs the gate
+over a built-in valid-but-unresolvable fixture before trusting it and fails
+loudly if the codes can no longer be read — otherwise a reworded diagnostic
+format would leave two empty multisets comparing equal and a check that passes
+everything.
+
 The candidate is checked in a private temp file — carrying the target's
 extension for JS/TS, always `.rb` for Ruby, which is what makes the
 extensionless `Gemfile` and `Rakefile` checkable at all, always `.go` for Go,
 always `.java` for Java (safe because Java's public-class/filename rule is a
-semantic check the parse gate stops before reaching); nothing is written to
-your file until every check has passed. Python, Rust and C# do not implement
-the level yet and still treat it as `--verify ast`; the CLI says so on stderr
-when a `.py`, `.rs` or `.cs` path is in the run.
+semantic check the parse gate stops before reaching), always `.cs` for C#;
+nothing is written to your file until every check has passed. Python and Rust
+do not implement the level yet and still treat it as `--verify ast`; the CLI
+says so on stderr when a `.py` or `.rs` path is in the run.
 
 If your *input* does not pass the external checker (a file the toolchain
 already rejects — ESM syntax in a `.cjs`, a syntax newer than your `tsc`, a
 regexp literal prism parses and MRI refuses to compile, a `.go` file with no
-package clause, a Java `long x = 99999999999;` with no `L` suffix), the output
-is not checked against it and the file is accepted on the built-in equivalence
-check alone: TokenPress does not fail a run over a file that was already broken
-before it ran. Expect the level to be substantially slower than
-`--verify ast` — it spawns a probe and two checker processes per file, and
-three for Java, where the third is the gate's own self-test.
+package clause, a Java `long x = 99999999999;` with no `L` suffix, a C#
+`long x = 99999999999999999999999;`), the output is not checked against it and
+the file is accepted on the built-in equivalence check alone: TokenPress does
+not fail a run over a file that was already broken before it ran. For C# that
+is not even a special case — the identical complaint appears on both sides of
+the comparison and cancels like any other noise. Expect the level to be
+substantially slower than `--verify ast` — it spawns a probe and two checker
+processes per file, three for Java, where the third is the gate's own
+self-test, and four for C#, whose self-test is a before/after pair.
 
 `.jsx` and `.tsx` are accepted, with one caveat that limits what they can save:
 **JSX text is never compressed.** Whitespace inside element children is
@@ -285,14 +305,15 @@ error instead of rewriting it, which is the safe direction: nothing is
 written. This is Ruby's situation rather than Go's, whose source is UTF-8 by
 specification.
 
-**C# is experimental.** The backend rides the same tree-sitter engine as Go
-and Java: it parses with `tree-sitter-c-sharp`, re-emits whitespace-minimally
-over the source bytes, verifies with re-parse plus AST-equivalence, and
-refuses to write anything that fails. What it does *not* have yet is
-`--verify external` — no C# compiler is invoked, and `--verify external`
-behaves as `--verify ast` for `.cs`, which the CLI says on stderr. That single
-gap is the whole difference between this label and "Supported". `.cs` is the
-whole path set: `AssemblyInfo.cs`, a generated `*.Designer.cs` and a `*.g.cs`
+**C# rides the same tree-sitter engine as Go and Java**: it parses with
+`tree-sitter-c-sharp`, re-emits whitespace-minimally over the source bytes,
+verifies with re-parse plus AST-equivalence, and refuses to write anything that
+fails. `--verify external` hands the output to Roslyn's `csc` on top of that,
+which is what the "Supported" label is gated on — by comparing the compiler's
+diagnostics before and after rather than by an exit status, because C# has no
+parse-only compiler mode (see the `--verify external` section above). `.cs` is
+the whole path set: `AssemblyInfo.cs`, a generated `*.Designer.cs` and a
+`*.g.cs`
 are ordinary sources needing no special case, while `.csproj` and `.sln` are
 project metadata rather than source, `.csx` is a scripting dialect this
 backend does not claim, and `.vb`/`.fs` are other languages on the same
@@ -434,11 +455,12 @@ Prerequisites for the consumer:
   `Unable to find libclang`. On Linux `apt install libclang-dev` (plus `gcc` or
   `clang`); on macOS `xcode-select --install`; on Windows install LLVM
   (`choco install llvm`) and set `LIBCLANG_PATH=C:\Program Files\LLVM\bin`.
-  **Neither `ruby` nor the Go toolchain nor a JDK is needed to build** —
-  nothing in the build shells out to any of them. They are needed at *run*
-  time only if you pass `--verify external`, which runs `ruby -c` over Ruby
-  output, `gofmt -e` over Go output and `javac`'s parse gate over Java output
-  (C# has no external checker yet, so it needs nothing at run time either);
+  **Neither `ruby` nor the Go toolchain nor a JDK nor a .NET SDK is needed to
+  build** — nothing in the build shells out to any of them. They are needed at
+  *run* time only if you pass `--verify external`, which runs `ruby -c` over
+  Ruby output, `gofmt -e` over Go output, `javac`'s parse gate over Java output
+  and Roslyn's `csc` over C# output (for C# that means `dotnet` on PATH: the
+  compiler ships inside the SDK, and its version is discovered at run time);
   the hooks do not by default. **Opt out with
   `TOKENPRESS_NO_RUBY=1`, `TOKENPRESS_NO_GO=1`, `TOKENPRESS_NO_JAVA=1` and/or
   `TOKENPRESS_NO_CSHARP=1`**: the hook then builds the CLI without that
@@ -482,11 +504,11 @@ cannot install toolchain prerequisites into the job that uses it, so this
 action does not try to — provide your own step if your runner lacks them (this
 repository's own CI uses a local `.github/actions/libclang` composite action for
 exactly that, and consumers need their own equivalent). None of Ruby, the Go
-toolchain or a JDK is needed to build; they are needed at run time only if
-`extra-args` selects `--verify external`, which runs `ruby -c` over Ruby
-output, `gofmt -e` over Go output and `javac`'s parse gate over Java output
-(GitHub-hosted runners preinstall all three; C# has no external checker yet,
-so it needs nothing at run time either). **Or drop the requirement with
+toolchain, a JDK or a .NET SDK is needed to build; they are needed at run time
+only if `extra-args` selects `--verify external`, which runs `ruby -c` over
+Ruby output, `gofmt -e` over Go output, `javac`'s parse gate over Java output
+and Roslyn's `csc` — reached through `dotnet` — over C# output
+(GitHub-hosted runners preinstall all four). **Or drop the requirement with
 `ruby: 'false'`, `go: 'false'`, `java: 'false'` and/or `csharp: 'false'`**: the
 action then builds the CLI without that backend's default-on cargo feature, so
 it is not in the dependency graph. `ruby: 'false'` alone drops the libclang
@@ -626,9 +648,9 @@ strip_comments = false        # --csharp-strip-comments
 
 That is the complete schema — there are no other keys. `verify = "external"`
 runs the JavaScript/TypeScript toolchain over JS/TS output, `ruby -c` over
-Ruby output, `gofmt -e` over Go output and `javac`'s parse gate over Java
-output (see **Language support**); for `.py`, `.rs` and `.cs` it still behaves
-exactly like `"ast"` and says so on stderr.
+Ruby output, `gofmt -e` over Go output, `javac`'s parse gate over Java output
+and Roslyn's `csc` over C# output (see **Language support**); for `.py` and
+`.rs` it still behaves exactly like `"ast"` and says so on stderr.
 
 A `[ruby]`, `[go]`, `[java]` or `[csharp]` table is a config error naming the
 missing feature in a build that switched that backend off (see **Cargo features**
@@ -728,8 +750,9 @@ Format-time verification cannot detect this **by construction**: the canonical
 forms the re-parse/equivalence check compares are location-independent, which
 is what makes them usable as an equality stand-in at all, so a moved line is
 the same token in the same position before and after. `--verify external` does
-not help either — `tsc`, `ruby -c` and `gofmt -e` are syntax checks and
-nothing runs. The
+not help either — `tsc`, `ruby -c`, `gofmt -e`, `javac`'s parse gate and the
+`csc` diagnostic comparison all stop before anything runs, and none of them
+compares positions. The
 layer that does catch it is running a corpus's own upstream test suite against
 the formatted copy (`benchmarks/verify-upstream.sh`), and it has: on 2026-08-02
 the rack v3.2.6 target came back **DIVERGED** on one test,

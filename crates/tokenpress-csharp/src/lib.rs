@@ -149,14 +149,17 @@
 //!
 //! `Reparse` re-parses the output; `AstEquiv` compares the comparable
 //! artifacts of input and output (which re-parses the output too, so no
-//! separate re-parse is needed). `External` is **folded into the `AstEquiv`
-//! arm** until C5 ships the `csc` gate, which is what the Python, Rust, Go and
-//! Java backends each did before their own external checker existed — so no
-//! level is a promise this crate cannot keep, and no arm is unreachable.
-//! Output that fails is discarded with [`Error::Verification`] and never
-//! returned.
+//! separate re-parse is needed). `External` adds Roslyn's own `csc` on top of
+//! `AstEquiv` — and not the way any earlier backend does it, because C# has no
+//! parse-only compiler mode: the gate compares the **multiset of `error
+//! CS####` codes** the compiler reports for the input and for the output, and
+//! accepts only when they are equal. See [`external`] for what that covers,
+//! why the verdict can never be the exit status, and why the gate self-tests
+//! before it is trusted. Output that fails is discarded with
+//! [`Error::Verification`] and never returned.
 
 pub mod config;
+pub mod external;
 pub mod paths;
 pub mod policy;
 
@@ -278,12 +281,16 @@ impl Formatter for CSharpFormatter {
                 verify::reparse(&config, code.as_bytes())?;
             }
             // `equivalent` re-parses the output itself, so no separate
-            // `reparse` call is needed at either level. `External` is folded
-            // in here until C5 ships `csc`'s diagnostic-multiset gate — the
-            // Python, Rust, Go and Java precedent for a level that has no
-            // external checker yet, and what keeps every arm reachable.
-            VerifyLevel::AstEquiv | VerifyLevel::External => {
+            // `reparse` call is needed at either level.
+            VerifyLevel::AstEquiv => {
                 verify::equivalent(&config, bytes, code.as_bytes())?;
+            }
+            // External tooling runs *in addition to* the built-in check, and
+            // only after it: a candidate the equivalence check already
+            // rejected is not worth four process spawns.
+            VerifyLevel::External => {
+                verify::equivalent(&config, bytes, code.as_bytes())?;
+                external::check(source, &code)?;
             }
         }
         let tokenizer = options.tokenizer.load()?;
@@ -569,20 +576,56 @@ mod tests {
         assert_eq!(r.code, "class A {}\n");
     }
 
-    #[test]
-    fn external_level_currently_behaves_like_ast_equiv() {
-        // C5 replaces this with `csc`'s diagnostic-multiset comparison. Until
-        // it lands the level runs the built-in equivalence check and nothing
-        // else, which is what the Python, Rust, Go and Java backends each did
-        // before their own external gate shipped.
-        let opts = FormatOptions {
+    fn external() -> FormatOptions {
+        FormatOptions {
             verify: VerifyLevel::External,
             ..FormatOptions::default()
-        };
+        }
+    }
+
+    #[test]
+    fn external_level_runs_csc_on_top_of_the_built_in_check() {
+        // Spawns the real compiler and compares the diagnostic multisets, once
+        // the equivalence check has passed. The two sides agreeing here is the
+        // expected result for every output this backend produces; see
+        // [`external`] for what the level covers and why the verdict cannot be
+        // the exit status. The level is an addition to the built-in check, not
+        // a replacement, so the output is the same as at `AstEquiv`.
         let r = CSharpFormatter::default()
-            .format(Path::new("A.cs"), "class  A  {}\n", &opts)
+            .format(Path::new("A.cs"), "class  A  {}\n", &external())
             .unwrap();
         assert_eq!(r.code, "class A {}\n");
+    }
+
+    #[test]
+    fn external_level_does_not_blame_input_csc_already_rejects() {
+        // `99999999999999999999999` is a clean tree-sitter parse and
+        // `error CS1021: Integral constant is too large` to `csc`. The
+        // multiset design makes that a non-event rather than a special case:
+        // the identical complaint appears on both sides and cancels.
+        let r = CSharpFormatter::default()
+            .format(
+                Path::new("Big.cs"),
+                "class Big\n{\n    long  x  =  99999999999999999999999;\n}\n",
+                &external(),
+            )
+            .unwrap();
+        assert_eq!(
+            r.code,
+            "class Big\n{\nlong x = 99999999999999999999999;\n}\n"
+        );
+    }
+
+    #[test]
+    fn external_level_rejects_output_csc_disagrees_with() {
+        // The gate reached through the formatter rather than through
+        // [`external::check`] directly. `format` cannot produce broken output,
+        // so the disagreement is created by handing the checker a candidate
+        // the equivalence check would never have passed — which is what makes
+        // this an assertion about the wiring and not about the emitter.
+        let err = external::check("class A { }\n", "class A { }\nint x = 1;\n").unwrap_err();
+        assert!(matches!(err, Error::Verification(_)), "{err}");
+        assert!(err.to_string().contains("CS8803"), "{err}");
     }
 
     #[test]
