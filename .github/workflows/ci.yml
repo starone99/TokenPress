@@ -81,8 +81,15 @@ jobs:
           # ... while the rest of the build is untouched. `--no-default-features`
           # now drops more than it used to, so this names what has to survive:
           # the three unconditional backends and the tokenizer stack.
+          # `grep -q <<<` and not `printf | grep -q`: `-q` exits at the first
+          # match, and under `set -o pipefail` a `printf` that has not finished
+          # writing takes SIGPIPE and fails the whole pipeline — turning a
+          # found dependency into "dropped". It is a race, so it reports a
+          # different `$kept` on different runs, or passes. The `grep -E`
+          # checks above are safe as pipelines because a non-`-q` grep drains
+          # its input; only the `-q` form short-circuits.
           for kept in tokenpress-python tokenpress-rust tokenpress-js tokenizers; do
-            printf '%s\n' "$tree" | grep -q "$kept" \
+            grep -q "$kept" <<<"$tree" \
               || { echo "::error::--no-default-features dropped $kept"; exit 1; }
           done
       # Each single-feature build must be exactly its own slice of the graph.
@@ -94,28 +101,28 @@ jobs:
         run: |
           set -euo pipefail
           go_only=$(cargo tree -p tokenpress-cli --no-default-features --features go)
-          printf '%s\n' "$go_only" | grep -q tree-sitter-go \
+          grep -q tree-sitter-go <<<"$go_only" \
             || { echo '::error::--features go did not re-add tree-sitter-go'; exit 1; }
           if printf '%s\n' "$go_only" | grep -E 'ruby-prism|tokenpress-java|tree-sitter-java|tokenpress-csharp|tree-sitter-c-sharp'; then
             echo '::error::--features go pulled another backend back in'
             exit 1
           fi
           java_only=$(cargo tree -p tokenpress-cli --no-default-features --features java)
-          printf '%s\n' "$java_only" | grep -q tree-sitter-java \
+          grep -q tree-sitter-java <<<"$java_only" \
             || { echo '::error::--features java did not re-add tree-sitter-java'; exit 1; }
           if printf '%s\n' "$java_only" | grep -E 'ruby-prism|tokenpress-go|tree-sitter-go|tokenpress-csharp|tree-sitter-c-sharp'; then
             echo '::error::--features java pulled another backend back in'
             exit 1
           fi
           csharp_only=$(cargo tree -p tokenpress-cli --no-default-features --features csharp)
-          printf '%s\n' "$csharp_only" | grep -q tree-sitter-c-sharp \
+          grep -q tree-sitter-c-sharp <<<"$csharp_only" \
             || { echo '::error::--features csharp did not re-add tree-sitter-c-sharp'; exit 1; }
           if printf '%s\n' "$csharp_only" | grep -E 'ruby-prism|tokenpress-go|tree-sitter-go|tokenpress-java|tree-sitter-java'; then
             echo '::error::--features csharp pulled another backend back in'
             exit 1
           fi
           ruby_only=$(cargo tree -p tokenpress-cli --no-default-features --features ruby)
-          printf '%s\n' "$ruby_only" | grep -q ruby-prism \
+          grep -q ruby-prism <<<"$ruby_only" \
             || { echo '::error::--features ruby did not re-add ruby-prism'; exit 1; }
           if printf '%s\n' "$ruby_only" | grep -E 'tokenpress-go|tokenpress-java|tokenpress-csharp|tokenpress-treesitter|tree-sitter'; then
             echo '::error::--features ruby pulled a tree-sitter backend back in'
