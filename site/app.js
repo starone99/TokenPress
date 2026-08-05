@@ -7,11 +7,19 @@ import init, {
   formatJs,
   formatGo,
   formatJava,
+  formatCSharp,
 } from "./pkg/tokenpress_wasm.js";
 
 // Indirection so the rendering paths can be exercised without the wasm bundle
 // (see window.tokenpressDemo at the bottom of this file).
-const backend = { formatPython, formatRust, formatJs, formatGo, formatJava };
+const backend = {
+  formatPython,
+  formatRust,
+  formatJs,
+  formatGo,
+  formatJava,
+  formatCSharp,
+};
 
 // The four JavaScript/TypeScript entries are one backend with one dialect
 // each: formatJs has no file to read an extension from, so the dialect is
@@ -151,6 +159,37 @@ public final class WordCounts {
     }
 }
 `,
+  csharp: `using System;
+using System.Collections.Generic;
+
+/// <summary>
+/// Word frequencies for a line of text.
+/// </summary>
+/// <remarks>
+/// C# gives XML documentation, line and block comments one node kind, so the
+/// strip flag deletes this documentation too — at the default settings not one
+/// byte of it is lost.
+/// </remarks>
+public static class WordCounts
+{
+    // Regular comments survive at the defaults as well.
+    public static Dictionary<string, int> Of(string text)
+    {
+        var counts = new Dictionary<string, int>();
+        foreach (var word in text.Split(' '))
+        {
+            counts[word] = counts.GetValueOrDefault(word) + 1; /* inline comments too */
+        }
+
+        return counts;
+    }
+
+    public static void Main()
+    {
+        Console.WriteLine(Of("a b a")["a"]);
+    }
+}
+`,
 };
 
 // Report order. The boundary emits the tokenizer stats as a JSON object,
@@ -172,6 +211,7 @@ const dom = {
   jsOptions: el("js-options"),
   goOptions: el("go-options"),
   javaOptions: el("java-options"),
+  csharpOptions: el("csharp-options"),
   result: el("result"),
   placeholder: el("placeholder"),
   changed: el("changed"),
@@ -195,6 +235,9 @@ function currentOptions(language) {
   }
   if (language === "java") {
     return { strip_comments: el("java-strip-comments").checked };
+  }
+  if (language === "csharp") {
+    return { strip_comments: el("csharp-strip-comments").checked };
   }
   if (language in JS_DIALECTS) {
     return {
@@ -220,6 +263,9 @@ function backendFor(language) {
   if (language === "java") {
     return backend.formatJava;
   }
+  if (language === "csharp") {
+    return backend.formatCSharp;
+  }
   return language in JS_DIALECTS ? backend.formatJs : backend.formatPython;
 }
 
@@ -230,6 +276,7 @@ function syncLanguage() {
   dom.jsOptions.hidden = !(language in JS_DIALECTS);
   dom.goOptions.hidden = language !== "go";
   dom.javaOptions.hidden = language !== "java";
+  dom.csharpOptions.hidden = language !== "csharp";
 }
 
 function percent(ratio) {

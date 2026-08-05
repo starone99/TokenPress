@@ -1,6 +1,6 @@
 [package]
 name = "tokenpress-wasm"
-description = "WebAssembly bindings for TokenPress: the Python, Rust, JavaScript/TypeScript, Go and Java formatters behind a thin wasm-bindgen boundary"
+description = "WebAssembly bindings for TokenPress: the Python, Rust, JavaScript/TypeScript, Go, Java and C# formatters behind a thin wasm-bindgen boundary"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -32,6 +32,13 @@ tokenpress-go = { path = "../tokenpress-go", default-features = false }
 # sets are a general facility for the shared tree-sitter engine's grammars,
 # not a Go workaround. Measured — see the J6(b) entry in ROADMAP.md.
 tokenpress-java = { path = "../tokenpress-java", default-features = false }
+# C# is the first grammar here that compiles a live external scanner
+# (`scanner.c` alongside `parser.c`), and it needs no more than the others: the
+# scanner's libc surface is `iswspace`, which the shim declares `static inline`
+# in its `wctype.h`, so it wants the include path and adds no undefined symbol
+# to the link. The same one export therefore covers it — measured before this
+# dependency was added; see the C6(b) entry in ROADMAP.md.
+tokenpress-csharp = { path = "../tokenpress-csharp", default-features = false }
 wasm-bindgen.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TokenPress — interactive demo</title>
-<meta name="description" content="Paste Python, Rust, JavaScript, TypeScript, Go or Java source and see how many LLM tokens TokenPress saves.">
+<meta name="description" content="Paste Python, Rust, JavaScript, TypeScript, Go, Java or C# source and see how many LLM tokens TokenPress saves.">
 <!-- Inline data URI: the page must not fetch anything at runtime. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231f6feb'/%3E%3Cpath d='M4 5h8M8 5v7' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
@@ -13,8 +13,8 @@
 <header class="site-header">
   <h1>TokenPress</h1>
   <p class="tagline">
-    A token-aware formatter for Python, Rust, JavaScript/TypeScript, Go and
-    Java that minimizes LLM token usage while preserving behavior. Paste code
+    A token-aware formatter for Python, Rust, JavaScript/TypeScript, Go, Java
+    and C# that minimizes LLM token usage while preserving behavior. Paste code
     below, pick the flags, and see what the output costs.
   </p>
   <p class="invariant">
@@ -60,6 +60,10 @@
       <label class="lang-option">
         <input type="radio" name="language" value="java">
         <span>Java</span>
+      </label>
+      <label class="lang-option">
+        <input type="radio" name="language" value="csharp">
+        <span>C#</span>
       </label>
     </fieldset>
 
@@ -201,9 +205,38 @@
       </p>
     </fieldset>
 
+    <fieldset class="options" id="csharp-options" hidden>
+      <legend>C# options</legend>
+      <label><input type="checkbox" id="csharp-strip-comments"> Strip comments <span class="hint">(<code>--csharp-strip-comments</code> — deletes <code>///</code> XML documentation too)</span></label>
+      <p class="note">
+        With that flag off, C# formatting is context-lossless: every comment
+        survives byte for byte — <code>///</code> XML documentation, trailing
+        and inline ones included — and only whitespace is minimized. With it on
+        there is no keep-list, and C# has one more thing to lose than Java:
+        the grammar gives <code>//</code>, block comments and <code>///</code>
+        a <em>single</em> node kind, so an XML documentation comment cannot be
+        told apart from an ordinary one by kind and the API documentation of a
+        stripped file goes with the rest of its comments. At either setting a
+        file where the grammar and a real compiler could disagree about where a
+        comment <em>ends</em> — a comment crossing an
+        <code>#if</code>/<code>#endif</code> pair, one carrying a line
+        terminator the grammar does not honour
+        (<code>U+0085</code>, <code>U+2028</code>, <code>U+2029</code>), or one
+        shielding a preprocessor directive from the start of its line — is left
+        byte for byte identical, so it reports no savings at all.
+      </p>
+      <p class="note">
+        In the browser, verification is internal only (re-parse plus
+        AST equivalence): WebAssembly cannot spawn processes, so the
+        command-line tool's <code>--verify external</code>, which compares the
+        diagnostics Roslyn's <code>csc</code> reports before and after, is not
+        available here.
+      </p>
+    </fieldset>
+
     <label class="source-label" for="source">Source code</label>
     <textarea id="source" spellcheck="false" rows="16"
-      placeholder="Paste Python, Rust, JavaScript, TypeScript, Go or Java source here…"></textarea>
+      placeholder="Paste Python, Rust, JavaScript, TypeScript, Go, Java or C# source here…"></textarea>
 
     <div class="actions">
       <button type="button" id="format" disabled>Loading…</button>

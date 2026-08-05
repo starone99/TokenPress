@@ -337,6 +337,14 @@ bail-out and Java's unicode-escape one, and it is the first documented class
 of files TokenPress reports as a successful run that saved nothing rather than
 as an error. There is therefore no C# caveat warning on stderr, for the same
 reason there is no Ruby, Go or Java one: nothing is dropped behind your back.
+C# **is** in the browser demo, alongside Go and Java and unlike Ruby — and it
+is the first grammar there with a live external `scanner.c`, which needed no
+build-script change of its own either: the scanner's whole libc surface is
+`iswspace`, which the tree-sitter libc shim `site/build.sh` already puts on the
+include path defines `static inline`, so it adds no undefined symbol to the
+link. The demo runs C# at `--verify ast` (in-process re-parse plus AST
+equivalence) and not at `--verify external`, because a WebAssembly module
+cannot spawn a compiler.
 
 ## Usage
 
@@ -805,7 +813,7 @@ Cargo workspace with a single distributed binary:
 | `tokenpress-java` | Java: the same, for the Java grammar |
 | `tokenpress-csharp` | C#: the same, for the C# grammar |
 | `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
-| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python, Rust, JavaScript/TypeScript, Go and Java — not Ruby, per-tokenizer token stats) |
+| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python, Rust, JavaScript/TypeScript, Go, Java and C# — not Ruby, per-tokenizer token stats) |
 
 ## Development
 

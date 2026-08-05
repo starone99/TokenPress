@@ -53,7 +53,7 @@ jobs:
 
       # Always through the script, never a bare `cargo build --target
       # wasm32-unknown-unknown`: the script also exports the CFLAGS that let
-      # the C grammars' sources (Go's and Java's) find the tree-sitter libc
+      # the C grammars' sources (Go's, Java's and C#'s) find the tree-sitter libc
       # shim, without which the build dies on a missing <stdlib.h>. It needs
       # `jq`, which the GitHub-hosted runner images ship.
       - name: Build the wasm bundle

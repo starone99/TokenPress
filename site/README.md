@@ -1,19 +1,19 @@
 # TokenPress demo page
 
 A static, dependency-free page that runs the Python, Rust,
-JavaScript/TypeScript, Go and Java formatters in the browser through
+JavaScript/TypeScript, Go, Java and C# formatters in the browser through
 `crates/tokenpress-wasm`. Paste source in, pick the language and flags, and see
 the formatted output plus the token savings under both embedded tokenizers
 (`o200k_base`, `cl100k_base`).
 
-The language selector has eight entries: Python, Rust, the four
-JavaScript/TypeScript dialects (JavaScript, JSX, TypeScript, TSX), Go and
-Java. The four JS/TS entries all call `formatJs`, which takes the dialect in
+The language selector has nine entries: Python, Rust, the four
+JavaScript/TypeScript dialects (JavaScript, JSX, TypeScript, TSX), Go, Java and
+C#. The four JS/TS entries all call `formatJs`, which takes the dialect in
 its options object — there is no file behind the boundary for the formatter to
 read an extension from. Verification in the browser is internal only (re-parse
 plus equivalence): WebAssembly cannot spawn processes, so the CLI's
 `--verify external` (`tsc --noEmit` / `node --check` for JS/TS, `gofmt -e` for
-Go, `javac` for Java) has no counterpart here.
+Go, `javac` for Java, Roslyn's `csc` for C#) has no counterpart here.
 
 Ruby is deliberately absent, and there is no `formatRuby`: `tokenpress-wasm`
 does not depend on `tokenpress-ruby` at all. The Ruby parser (prism) is a
@@ -26,7 +26,7 @@ export missing. Ruby is CLI-only; see the
 `(b) wasm + demo site` note under `### tokenpress-ruby` in `ROADMAP.md` for the
 full investigation.
 
-Go and Java, by contrast, *are* here. Their grammars are C too, but
+Go, Java and C#, by contrast, *are* here. Their grammars are C too, but
 `tree-sitter-language` already ships a libc shim for `wasm32-unknown-unknown`
 (headers under `wasm/include`, `stdio.c`/`stdlib.c`/`string.c` under
 `wasm/src`) and advertises it as `links` metadata. The `tree-sitter` runtime's
@@ -35,8 +35,12 @@ link; the upstream grammar build scripts do not, so their `src/parser.c`
 cannot find `<stdlib.h>`. `build.sh` closes that gap by exporting
 `CFLAGS_wasm32_unknown_unknown` with the shim's include directory — see the
 comment there, and do not delete it. One export covers every such grammar:
-Java needed no build-script change and no second export, which is what makes
-the difference from Ruby a property of the C library, not of the language.
+Java needed no build-script change and no second export, and neither did C#,
+whose grammar is the first here to compile a live external `scanner.c` — the
+scanner's only libc call is `iswspace`, which the shim's `wctype.h` defines
+`static inline`, so it wants the include path and adds no undefined symbol to
+the link. That is what makes the difference from Ruby a property of the C
+library, not of the language.
 
 No framework, no bundler, no CDN: `index.html`, `style.css` and `app.js` are
 served as-is, and everything else is the wasm-bindgen output. Once built, the

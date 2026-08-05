@@ -80,8 +80,8 @@ fi
 
 rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
 
-# Every tree-sitter grammar in this bundle is C (Go's and Java's today), and
-# wasm32-unknown-unknown ships no libc headers, so a grammar's generated
+# Every tree-sitter grammar in this bundle is C (Go's, Java's and C#'s today),
+# and wasm32-unknown-unknown ships no libc headers, so a grammar's generated
 # `src/parser.c` cannot find <stdlib.h> on its own.
 #
 # The shim already exists: `tree-sitter-language` ships one under wasm/include
@@ -91,11 +91,45 @@ rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
 # metadata, which is why the runtime builds for wasm *and* compiles the shim's
 # .c files into the link. The upstream grammar build scripts do not read it —
 # they just compile src/parser.c with `include("src")` — and that gap is the
-# whole failure. Putting the shim's headers on the C include path is enough:
+# whole failure. Putting the shim's headers on the C include path closes it:
 # cc-rs honours CFLAGS_<target>, parser.c then compiles, and the symbols
 # resolve against the shim objects the runtime already contributes. This is a
 # general facility, not a per-grammar workaround: Java was added with no
-# build-script change and no second export.
+# build-script change and no second export. It is not, however, the *whole*
+# export any more — see the paragraph below.
+#
+# `-DNDEBUG` is the second half of the export, and it is **not** a
+# release-build nicety: without it this bundle does not link at all.
+# `tree-sitter-c-sharp` is the first grammar here with a live external
+# `scanner.c`, i.e. the first **second C translation unit** in the build, and
+# the shim's `assert.h` defines `__assert_fail` — a function with external
+# linkage, not a `static inline` and not a declaration — in the header itself.
+# One TU gets away with that, and the tree-sitter runtime is exactly one: its
+# build script compiles a `lib.c` that `#include`s every other `.c`. A grammar
+# scanner is the second TU to include the header, so both objects define the
+# symbol and `rust-lld` stops with
+#   `error: duplicate symbol: __assert_fail`
+#   `>>> defined in ...tree_sitter_c_sharp...(scanner.o)`
+#   `>>> defined in ...tree_sitter...(lib.o)`
+# The header is written around this switch (`#ifdef NDEBUG` is its own first
+# line), so defining it is using the shim as designed rather than working
+# around it: `assert` becomes a no-op, nothing defines `__assert_fail`, and the
+# duplicate cannot arise however many scanners are added later. What it costs
+# is stated plainly — the assertions in the vendored `array.h` and in the C#
+# scanner stop being checked in the browser bundle. All of them are pure
+# comparisons (`assert(size == length)`, two bounds checks), so no side effect
+# is compiled out, and the runtime's own `ts_assert` keeps evaluating its
+# expression under NDEBUG by design. Native builds are untouched: this export
+# is `wasm32-unknown-unknown` only, and there `__assert_fail` comes from libc,
+# declared and not defined.
+#
+# So the include path is what a *parser* needs and the whole of what the Go and
+# Java grammars ever needed, and a scanner needs one thing more. The scanner's
+# own libc surface is otherwise nil: it includes <wctype.h> for `iswspace`,
+# which the shim defines `static inline`, so it adds no undefined symbol of its
+# own. A future grammar whose scanner reaches for an out-of-line libc function
+# the shim's `.c` files do not define is the remaining new case, and it would
+# show up the same way — at the link, not at the include.
 #
 # Do not delete this: without it the build dies with
 # `src/tree_sitter/parser.h:10:10: fatal error: 'stdlib.h' file not found`.
@@ -120,7 +154,7 @@ if [ ! -d "$ts_wasm_include" ]; then
     exit 1
 fi
 echo "wasm libc shim headers: $ts_wasm_include"
-export CFLAGS_wasm32_unknown_unknown="-I$ts_wasm_include"
+export CFLAGS_wasm32_unknown_unknown="-I$ts_wasm_include -DNDEBUG"
 
 cargo build -p tokenpress-wasm --release --target wasm32-unknown-unknown
 

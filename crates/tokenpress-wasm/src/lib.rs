@@ -1,11 +1,11 @@
 //! WebAssembly bindings for TokenPress.
 //!
-//! The Python, Rust, JavaScript/TypeScript, Go and Java formatters are
+//! The Python, Rust, JavaScript/TypeScript, Go, Java and C# formatters are
 //! exposed. Each `#[wasm_bindgen]` export ([`format_python_json`],
 //! [`format_rust_json`], [`format_js_json`], [`format_go_json`],
-//! [`format_java_json`]) is a JSON-in/JSON-out delegation; every decision
-//! lives in the plain functions below, so the whole crate is exercised — and
-//! covered — by ordinary host tests.
+//! [`format_java_json`], [`format_csharp_json`]) is a JSON-in/JSON-out
+//! delegation; every decision lives in the plain functions below, so the whole
+//! crate is exercised — and covered — by ordinary host tests.
 //!
 //! The core invariant is preserved across the boundary: when a formatter
 //! refuses output (parse failure, or output that fails verification) the
@@ -49,6 +49,22 @@
 //! lexing (JLS 3.3) and tree-sitter-java does not, so a file where that
 //! asymmetry could bite is left byte for byte identical at both settings and
 //! reports no savings at all.
+//!
+//! C#'s caveat set is Java's shape with **one more thing to lose**. The
+//! defaults are context-lossless in the same way — with
+//! [`WasmCSharpOptions::strip_comments`] off, every comment survives byte for
+//! byte and only whitespace is minimized — and the flag is the lossy opt-in,
+//! with no keep-list, because the compiler reads nothing out of a comment
+//! under the invocation the CLI's external level uses. What it deletes
+//! includes **XML documentation comments**: C# has a single comment node kind,
+//! so a documentation comment written with three leading slashes is
+//! indistinguishable by kind from an ordinary line comment and goes with the
+//! rest. The unconditional rule, the analogue of Go's cgo bail-out and Java's
+//! escape bail-out, is about where a comment *ends*: a comment crossing a
+//! conditional-compilation boundary, one carrying a line terminator the
+//! grammar does not honour (U+0085, U+2028, U+2029), or one shielding a
+//! preprocessor directive from the start of its line leaves the file byte for
+//! byte identical at both settings, with no savings at all.
 
 use std::path::Path;
 
@@ -56,6 +72,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tokenpress_core::{Error, FormatOptions, FormatResult, Formatter, TokenizerKind, VerifyLevel};
+use tokenpress_csharp::{CSharpFormatter, CSharpOptions};
 use tokenpress_go::{GoFormatter, GoOptions};
 use tokenpress_java::{JavaFormatter, JavaOptions};
 use tokenpress_js::{JsFormatter, JsOptions};
@@ -76,8 +93,9 @@ const REPORTED_TOKENIZERS: [(&str, TokenizerKind); 2] = [
 /// It must never become [`VerifyLevel::External`]: that level runs the
 /// language's own toolchain in a child process (`tsc --noEmit`, falling back
 /// to `node --check`, for JavaScript/TypeScript; `gofmt -e` for Go; `javac`
-/// stopped after its parse phase for Java), and a wasm module cannot spawn
-/// processes — every call would fail.
+/// stopped after its parse phase for Java; Roslyn's `csc`, reached through
+/// `dotnet`, for C#), and a wasm module cannot spawn processes — every call
+/// would fail.
 /// [`VerifyLevel::AstEquiv`] is the strongest level that is purely
 /// in-process: the output is re-parsed and compared with the input for
 /// equivalence.
@@ -267,6 +285,31 @@ impl Default for WasmJavaOptions {
 
 impl From<&WasmJavaOptions> for JavaOptions {
     fn from(options: &WasmJavaOptions) -> Self {
+        Self {
+            strip_comments: options.strip_comments,
+        }
+    }
+}
+
+/// C# formatting flags accepted at the boundary.
+///
+/// Deserialized like [`WasmPythonOptions`]: every field optional, unknown
+/// fields rejected.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WasmCSharpOptions {
+    pub strip_comments: bool,
+}
+
+impl Default for WasmCSharpOptions {
+    fn default() -> Self {
+        let CSharpOptions { strip_comments } = CSharpOptions::default();
+        Self { strip_comments }
+    }
+}
+
+impl From<&WasmCSharpOptions> for CSharpOptions {
+    fn from(options: &WasmCSharpOptions) -> Self {
         Self {
             strip_comments: options.strip_comments,
         }
@@ -471,6 +514,18 @@ pub fn format_java(source: &str, options: &WasmJavaOptions) -> Result<WasmFormat
     )
 }
 
+/// Formats C# source with the given flags.
+pub fn format_csharp(
+    source: &str,
+    options: &WasmCSharpOptions,
+) -> Result<WasmFormatOutput, WasmError> {
+    run(
+        &CSharpFormatter::new(options.into()),
+        Path::new("Input.cs"),
+        source,
+    )
+}
+
 /// Renders either outcome as the JSON the JavaScript side sees.
 fn to_json_result(outcome: Result<WasmFormatOutput, WasmError>) -> Result<String, String> {
     match outcome {
@@ -586,6 +641,42 @@ pub fn format_java_json(source: &str, options_json: &str) -> Result<String, Stri
     to_json_result(parse_options(options_json).and_then(|options| format_java(source, &options)))
 }
 
+/// Formats C# source.
+///
+/// `options_json` is a JSON object with the optional boolean flag
+/// `strip_comments`; pass `"{}"` for the defaults. Resolves and rejects
+/// exactly like [`format_python_json`].
+///
+/// Verification is **internal only** — re-parse plus AST equivalence. A wasm
+/// module cannot spawn processes, so the external level (Roslyn's own
+/// compiler, reached through the dotnet driver, which the CLI offers as
+/// `--verify external`) is not available here and is never used; see
+/// [`VERIFY`].
+///
+/// Comments: at the defaults the output is comment-preserving — every comment
+/// survives byte for byte, trailing and inline ones included, and only
+/// whitespace is minimized. `strip_comments` is the lossy opt-in, and like
+/// Java's it keeps nothing back — with one thing more to lose. C# has a
+/// **single** comment node kind, so an XML documentation comment, written with
+/// three leading slashes, is indistinguishable by kind from an ordinary line
+/// comment and is deleted with the rest: the API documentation of a stripped
+/// file goes with its comments. Whichever setting is chosen, a file where the
+/// grammar and a real compiler could disagree about where a comment ends — a
+/// comment crossing a conditional-compilation boundary, one carrying a line
+/// terminator the grammar does not honour, or one shielding a directive from
+/// the start of its line — is left byte for byte identical and reports no
+/// savings at all.
+///
+/// The doc comment marker and the block comment markers are spelled out in
+/// words rather than shown, on purpose: `wasm-bindgen` copies this text into a
+/// JSDoc block in the generated glue, and a literal comment terminator inside
+/// it would close that block early and emit unparsable JavaScript. See the
+/// guard test.
+#[wasm_bindgen(js_name = formatCSharp)]
+pub fn format_csharp_json(source: &str, options_json: &str) -> Result<String, String> {
+    to_json_result(parse_options(options_json).and_then(|options| format_csharp(source, &options)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,6 +700,10 @@ mod tests {
 
     fn format_java_ok(source: &str, options: WasmJavaOptions) -> WasmFormatOutput {
         format_java(source, &options).expect("formatting succeeds")
+    }
+
+    fn format_csharp_ok(source: &str, options: WasmCSharpOptions) -> WasmFormatOutput {
+        format_csharp(source, &options).expect("formatting succeeds")
     }
 
     fn js_dialect(dialect: WasmJsDialect) -> WasmJsOptions {
@@ -782,6 +877,11 @@ mod tests {
                 "{}",
             )
             .expect("formatting succeeds"),
+            format_csharp_json(
+                "class A\n{\n    int F()\n    {\n        return 1;\n    }\n}\n",
+                "{}",
+            )
+            .expect("formatting succeeds"),
         ] {
             let value = parsed(&json);
             for name in ["o200k_base", "cl100k_base"] {
@@ -834,6 +934,9 @@ mod tests {
         let java_options = WasmJavaOptions::default();
         assert!(format!("{:?}", java_options.clone()).contains("strip_comments"));
         assert!(!java_options.strip_comments);
+        let csharp_options = WasmCSharpOptions::default();
+        assert!(format!("{:?}", csharp_options.clone()).contains("strip_comments"));
+        assert!(!csharp_options.strip_comments);
         let output = WasmFormatOutput {
             code: "x=1".into(),
             changed: true,
@@ -962,6 +1065,10 @@ mod tests {
                 "class A {\n    void f() {\n        g(a, b);\n    }\n}\n",
                 WasmJavaOptions::default(),
             ),
+            format_csharp_ok(
+                "class A\n{\n    void F()\n    {\n        G(a, b);\n    }\n}\n",
+                WasmCSharpOptions::default(),
+            ),
         ] {
             let names: Vec<_> = out.tokens.iter().map(|stats| stats.tokenizer).collect();
             assert_eq!(names, ["o200k_base", "cl100k_base"]);
@@ -977,12 +1084,18 @@ mod tests {
             "package main\n\nfunc add(a int, b int) int {\n    sum := a + b\n    return sum\n}\n";
         let java =
             "class A {\n    int add(int a, int b) {\n        int sum = a + b;\n        return sum;\n    }\n}\n";
+        let csharp =
+            "class A\n{\n    int Add(int a, int b)\n    {\n        int sum = a + b;\n        return sum;\n    }\n}\n";
         for (source, out) in [
             (python, format(python, WasmPythonOptions::default())),
             (rust, format_rs(rust, WasmRustOptions::default())),
             (js, format_js_ok(js, WasmJsOptions::default())),
             (go, format_go_ok(go, WasmGoOptions::default())),
             (java, format_java_ok(java, WasmJavaOptions::default())),
+            (
+                csharp,
+                format_csharp_ok(csharp, WasmCSharpOptions::default()),
+            ),
         ] {
             for (name, kind) in [
                 ("o200k_base", TokenizerKind::O200kBase),
@@ -1008,6 +1121,7 @@ mod tests {
             format_js_ok("", WasmJsOptions::default()),
             format_go_ok("", WasmGoOptions::default()),
             format_java_ok("", WasmJavaOptions::default()),
+            format_csharp_ok("", WasmCSharpOptions::default()),
         ] {
             assert_eq!(out.code, "");
             assert!(!out.changed);
@@ -1562,6 +1676,158 @@ mod tests {
         for options in ["", "{\"nope\":true}", "{\"strip_comments\":\"yes\"}"] {
             let err =
                 format_java_json("class A {}\n", options).expect_err("bad options are refused");
+            assert!(
+                err.starts_with("{\"kind\":\"options\",\"message\":\""),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn csharp_default_options_minimize_whitespace_and_keep_every_comment() {
+        let out = format_csharp_ok(
+            "class A\n{\n    // leading\n    int x = 1; // trailing\n\n    /* inline */ int y = 2;\n}\n",
+            WasmCSharpOptions::default(),
+        );
+        // Like Go and Java and unlike Rust and JS/TS, nothing is dropped at the
+        // defaults: the trailing and inline comments survive with the leading
+        // one, and only whitespace is minimized.
+        assert_eq!(
+            out.code,
+            "class A\n{\n// leading\nint x = 1; // trailing\n/* inline */ int y = 2;\n}\n"
+        );
+        assert!(out.changed);
+    }
+
+    #[test]
+    fn csharp_already_minimal_source_is_reported_as_unchanged() {
+        let out = format_csharp_ok("class A\n{\nint x = 1;\n}\n", WasmCSharpOptions::default());
+        assert_eq!(out.code, "class A\n{\nint x = 1;\n}\n");
+        assert!(!out.changed);
+    }
+
+    #[test]
+    fn csharp_strip_comments_toggles_comment_removal() {
+        let source = "class A\n{\n    // note\n    int x = 1;\n}\n";
+        assert_eq!(
+            format_csharp_ok(source, WasmCSharpOptions::default()).code,
+            "class A\n{\n// note\nint x = 1;\n}\n"
+        );
+        assert_eq!(
+            format_csharp_ok(
+                source,
+                WasmCSharpOptions {
+                    strip_comments: true
+                }
+            )
+            .code,
+            "class A\n{\nint x = 1;\n}\n"
+        );
+    }
+
+    #[test]
+    fn csharp_strip_comments_deletes_xml_documentation_with_every_other_comment() {
+        // C# has a single comment node kind, so an XML documentation comment is
+        // indistinguishable from an ordinary line comment by kind and goes with
+        // the rest. Pinned at the boundary because it is the one consequence of
+        // the flag a demo user meets.
+        let source = "/// <summary>The class.</summary>\npublic class A\n{\n    /// <summary>The method.</summary>\n    public void M() {}\n}\n";
+        assert_eq!(
+            format_csharp_ok(source, WasmCSharpOptions::default()).code,
+            "/// <summary>The class.</summary>\npublic class A\n{\n/// <summary>The method.</summary>\npublic void M() {}\n}\n"
+        );
+        assert_eq!(
+            format_csharp_ok(
+                source,
+                WasmCSharpOptions {
+                    strip_comments: true
+                }
+            )
+            .code,
+            "public class A\n{\npublic void M() {}\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_csharp_comment_boundary_hazard_file_is_untouched_and_reports_no_savings() {
+        // C#'s unconditional rule, the analogue of Go's cgo bail-out and Java's
+        // escape bail-out: where the grammar and a real compiler can disagree
+        // about where a comment ends, the file is left byte for byte identical
+        // at both settings. Here both conditional sections are skipped text to
+        // the compiler, while the grammar lexes one comment through them.
+        let source = "class A {\n#if FALSE\n/*\n#endif\nint x = 1;\n#if FALSE\n*/\n#endif\n}\n";
+        for options in [
+            WasmCSharpOptions::default(),
+            WasmCSharpOptions {
+                strip_comments: true,
+            },
+        ] {
+            let out = format_csharp_ok(source, options);
+            assert_eq!(out.code, source);
+            assert!(!out.changed);
+            for stats in &out.tokens {
+                assert_eq!(stats.saved, 0);
+                assert_eq!(stats.saving_ratio, 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_csharp_returns_a_structured_error_and_no_output() {
+        let err = format_csharp("class A {\n    void M() {\n", &WasmCSharpOptions::default())
+            .expect_err("invalid C# cannot be formatted");
+        assert_eq!(err.kind, "parse");
+        assert!(!err.message.is_empty());
+        // As for the other languages: a refusal carries no code at all.
+        assert_eq!(
+            err.to_json(),
+            format!(
+                "{{\"kind\":\"parse\",\"message\":{}}}",
+                serde_json::Value::from(err.message.clone())
+            )
+        );
+    }
+
+    #[test]
+    fn json_boundary_formats_csharp() {
+        let json = format_csharp_json("class  A\n{\n    int x = 1;\n}\n", "{}")
+            .expect("formatting succeeds");
+        let value = parsed(&json);
+        assert_eq!(value["changed"], serde_json::json!(true));
+        assert_eq!(
+            value["code"],
+            serde_json::json!("class A\n{\nint x = 1;\n}\n")
+        );
+    }
+
+    #[test]
+    fn json_boundary_reads_csharp_option_flags() {
+        let json = format_csharp_json(
+            "class A\n{\n    // note\n    int x = 1;\n}\n",
+            "{\"strip_comments\":true}",
+        )
+        .expect("formatting succeeds");
+        assert_eq!(
+            parsed(&json)["code"],
+            serde_json::json!("class A\n{\nint x = 1;\n}\n")
+        );
+    }
+
+    #[test]
+    fn json_boundary_reports_csharp_failures_as_structured_json() {
+        let err = format_csharp_json("class A {\n    void M() {\n", "{}")
+            .expect_err("invalid C# is refused");
+        assert!(
+            err.starts_with("{\"kind\":\"parse\",\"message\":\""),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn json_boundary_rejects_malformed_csharp_option_objects() {
+        for options in ["", "{\"nope\":true}", "{\"strip_comments\":\"yes\"}"] {
+            let err =
+                format_csharp_json("class A {}\n", options).expect_err("bad options are refused");
             assert!(
                 err.starts_with("{\"kind\":\"options\",\"message\":\""),
                 "{err}"
