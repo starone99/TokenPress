@@ -1277,7 +1277,7 @@ stopped growing after csvhelper.
 | ripgrep | 99 | -20.9% | -39.6% | 494,063 | 298,643 |
 | langchain | 2,531 | -12.7% | -37.1% | 3,575,462 | 2,248,729 |
 | fastapi | 1,140 | -23.9% | -37.0% | 917,394 | 578,406 |
-| csvhelper | 459 / 458 | -12.4% | -36.2% | 456,124 / 455,994 | 291,052 |
+| csvhelper | 459 | -12.4% | -36.2% | 456,124 | 291,054 |
 | requests | 36 | -7.3% | -31.9% | 105,590 | 71,871 |
 | transformers | 4,700 | -7.0% | -30.3% | 21,303,227 | 14,852,082 |
 | express | 142 | -21.7% | -29.6% | 168,589 | 118,742 |
@@ -1296,10 +1296,16 @@ most: re-measuring ripgrep's whole row at 99 files gives -37.4% / -37.6% /
 -37.6% / -37.3%. Only Qwen3.6 moves, by 0.1pp, so the table above is left
 as measured and this is recorded rather than propagated.
 
-csvhelper is the one corpus whose file count differs between the two settings
-(459 default, 458 aggressive), for the comment-only-file reason documented in
-its own section. **0 verification refusals** at either setting on every other
-corpus, matching what the other five tokenizers report.
+**0 verification refusals** at either setting on every corpus, matching what
+the other five tokenizers report. csvhelper was the one corpus that used to
+differ between the settings — 459 files at default against 458 under
+`--csharp-strip-comments`, the comment-only file being refused once emptied —
+and it no longer does: the Gemma column was first taken against a binary that
+still refused it, and was re-measured against the fixed one, which moves the
+aggressive file count 458 → 459 and its after-count by two tokens
+(291,052 → 291,054), leaving -36.2% unchanged. The `o200k_base` control was
+re-run at the same time and reproduces the fixed row exactly
+(376,214 → 231,961).
 
 **Two corpora clear the ≥40% bar on Gemma 4 — tokio and commons-lang — which
 is the same pair `o200k_base` gives and three fewer than Qwen3.6.** Gemma is
