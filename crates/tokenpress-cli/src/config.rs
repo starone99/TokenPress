@@ -38,6 +38,13 @@ pub struct FileConfig {
     /// so its table gets the same treatment — see `NoJavaSupport`.
     #[cfg(not(feature = "java"))]
     pub java: Option<NoJavaSupport>,
+    #[cfg(feature = "csharp")]
+    pub csharp: Option<CSharpConfig>,
+    /// The `csharp` cargo feature is switchable exactly as `ruby`, `go` and
+    /// `java` are, so its table gets the same treatment — see
+    /// `NoCSharpSupport`.
+    #[cfg(not(feature = "csharp"))]
+    pub csharp: Option<NoCSharpSupport>,
 }
 
 /// `[python]` table.
@@ -153,6 +160,35 @@ impl<'de> Deserialize<'de> for NoJavaSupport {
     }
 }
 
+/// `[csharp]` table. Named after `CSharpFormatter::language()`, which is
+/// `"csharp"` and not `"c#"` — the language key stays in the character set a
+/// TOML bare key and a command-line flag can both spell. It covers the one
+/// extension that backend claims: `.cs`.
+#[cfg(feature = "csharp")]
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CSharpConfig {
+    pub strip_comments: Option<bool>,
+}
+
+/// Stand-in for the `[csharp]` table in a build without the `csharp` cargo
+/// feature, for the same reason `NoRubySupport`, `NoGoSupport` and
+/// `NoJavaSupport` are ones: naming the missing feature beats blaming the
+/// user's spelling or silently ignoring the option.
+#[cfg(not(feature = "csharp"))]
+#[derive(Debug, PartialEq)]
+pub struct NoCSharpSupport;
+
+#[cfg(not(feature = "csharp"))]
+impl<'de> Deserialize<'de> for NoCSharpSupport {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "this tokenpress was built without the `csharp` feature, so the \
+             [csharp] table has nothing to configure",
+        ))
+    }
+}
+
 /// Verification level as spelled in the config file. The variants carry the
 /// same lowercase names as the `--verify` values accepted on the command line.
 #[derive(Debug, Deserialize, PartialEq)]
@@ -247,6 +283,7 @@ mod tests {
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
         assert_eq!(cfg.java, None);
+        assert_eq!(cfg.csharp, None);
     }
 
     /// The `[ruby]` table as a build with the `ruby` feature spells it, and as
@@ -269,7 +306,13 @@ mod tests {
     #[cfg(not(feature = "java"))]
     const JAVA_TABLE: &str = "";
 
-    /// The same three tables with no keys in them.
+    /// ... and for the `[csharp]` table and the `csharp` feature.
+    #[cfg(feature = "csharp")]
+    const CSHARP_TABLE: &str = "[csharp]\nstrip_comments = true\n";
+    #[cfg(not(feature = "csharp"))]
+    const CSHARP_TABLE: &str = "";
+
+    /// The same four tables with no keys in them.
     #[cfg(feature = "ruby")]
     const EMPTY_RUBY_TABLE: &str = "[ruby]\n";
     #[cfg(not(feature = "ruby"))]
@@ -282,6 +325,10 @@ mod tests {
     const EMPTY_JAVA_TABLE: &str = "[java]\n";
     #[cfg(not(feature = "java"))]
     const EMPTY_JAVA_TABLE: &str = "";
+    #[cfg(feature = "csharp")]
+    const EMPTY_CSHARP_TABLE: &str = "[csharp]\n";
+    #[cfg(not(feature = "csharp"))]
+    const EMPTY_CSHARP_TABLE: &str = "";
 
     #[test]
     fn full_config_parses_every_field() {
@@ -297,7 +344,7 @@ mod tests {
              strip_doc_comments = true\n\
              [javascript]\n\
              strip_comments = true\n\
-             {RUBY_TABLE}{GO_TABLE}{JAVA_TABLE}"
+             {RUBY_TABLE}{GO_TABLE}{JAVA_TABLE}{CSHARP_TABLE}"
         ));
         assert_eq!(cfg.tokenizer.as_deref(), Some("cl100k_base"));
         assert_eq!(cfg.verify, Some(ConfigVerify::Reparse));
@@ -343,6 +390,13 @@ mod tests {
                 strip_comments: Some(true)
             })
         );
+        #[cfg(feature = "csharp")]
+        assert_eq!(
+            cfg.csharp,
+            Some(CSharpConfig {
+                strip_comments: Some(true)
+            })
+        );
     }
 
     #[test]
@@ -355,6 +409,7 @@ mod tests {
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
         assert_eq!(cfg.java, None);
+        assert_eq!(cfg.csharp, None);
         let python = cfg.python.unwrap();
         assert_eq!(python.strip_comments, Some(true));
         assert_eq!(python.strip_docstrings, None);
@@ -370,6 +425,7 @@ mod tests {
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
         assert_eq!(cfg.java, None);
+        assert_eq!(cfg.csharp, None);
         let python = cfg.python.unwrap();
         assert_eq!(python.strip_annotations, Some(true));
         assert_eq!(python.merge_imports, Some(true));
@@ -383,6 +439,7 @@ mod tests {
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
         assert_eq!(cfg.java, None);
+        assert_eq!(cfg.csharp, None);
         assert_eq!(
             cfg.rust,
             Some(RustConfig {
@@ -399,6 +456,7 @@ mod tests {
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
         assert_eq!(cfg.java, None);
+        assert_eq!(cfg.csharp, None);
         assert_eq!(
             cfg.javascript,
             Some(JavaScriptConfig {
@@ -416,6 +474,7 @@ mod tests {
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.go, None);
         assert_eq!(cfg.java, None);
+        assert_eq!(cfg.csharp, None);
         assert_eq!(
             cfg.ruby,
             Some(RubyConfig {
@@ -433,6 +492,7 @@ mod tests {
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.java, None);
+        assert_eq!(cfg.csharp, None);
         assert_eq!(
             cfg.go,
             Some(GoConfig {
@@ -450,6 +510,7 @@ mod tests {
         assert_eq!(cfg.javascript, None);
         assert_eq!(cfg.ruby, None);
         assert_eq!(cfg.go, None);
+        assert_eq!(cfg.csharp, None);
         assert_eq!(
             cfg.java,
             Some(JavaConfig {
@@ -458,10 +519,29 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn csharp_table_alone_parses() {
+        let cfg = parse("[csharp]\nstrip_comments = true\n");
+        assert_eq!(cfg.python, None);
+        assert_eq!(cfg.rust, None);
+        assert_eq!(cfg.javascript, None);
+        assert_eq!(cfg.ruby, None);
+        assert_eq!(cfg.go, None);
+        assert_eq!(cfg.java, None);
+        assert_eq!(
+            cfg.csharp,
+            Some(CSharpConfig {
+                strip_comments: Some(true)
+            })
+        );
+    }
+
     #[test]
     fn empty_tables_are_valid_and_leave_their_keys_unset() {
         let cfg = parse(&format!(
-            "[python]\n[rust]\n[javascript]\n{EMPTY_RUBY_TABLE}{EMPTY_GO_TABLE}{EMPTY_JAVA_TABLE}"
+            "[python]\n[rust]\n[javascript]\n\
+             {EMPTY_RUBY_TABLE}{EMPTY_GO_TABLE}{EMPTY_JAVA_TABLE}{EMPTY_CSHARP_TABLE}"
         ));
         assert_eq!(
             cfg.python,
@@ -502,6 +582,13 @@ mod tests {
         assert_eq!(
             cfg.java,
             Some(JavaConfig {
+                strip_comments: None
+            })
+        );
+        #[cfg(feature = "csharp")]
+        assert_eq!(
+            cfg.csharp,
+            Some(CSharpConfig {
                 strip_comments: None
             })
         );
@@ -573,6 +660,27 @@ mod tests {
         assert!(msg.contains("strip_javadoc"), "{msg}");
     }
 
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn unknown_csharp_key_is_an_error() {
+        let msg = parse_err("[csharp]\nstrip_xml_doc = true\n");
+        assert!(msg.contains("strip_xml_doc"), "{msg}");
+    }
+
+    #[cfg(not(feature = "csharp"))]
+    #[test]
+    fn a_csharp_table_names_the_missing_feature_rather_than_being_ignored() {
+        // Same reasoning as the `[ruby]`, `[go]` and `[java]` cases.
+        for text in [
+            "[csharp]\n",
+            "[csharp]\nstrip_comments = true\n",
+            "[csharp]\nstrip_xml_doc = true\n",
+        ] {
+            let msg = parse_err(text);
+            assert!(msg.contains("built without the `csharp` feature"), "{msg}");
+        }
+    }
+
     #[cfg(not(feature = "java"))]
     #[test]
     fn a_java_table_names_the_missing_feature_rather_than_being_ignored() {
@@ -614,6 +722,16 @@ mod tests {
             let msg = parse_err(text);
             assert!(msg.contains("built without the `ruby` feature"), "{msg}");
         }
+    }
+
+    #[test]
+    fn the_csharp_table_is_not_spelled_c_sharp() {
+        // The table name follows `CSharpFormatter::language()`, which is
+        // `"csharp"`. `c#` is not even a bare TOML key -- `#` starts a comment
+        // -- so `[c#]` is a syntax error rather than an unknown table, and
+        // the quoted `["c#"]` spelling has to fail as an unknown one.
+        let msg = parse_err("[\"c#\"]\nstrip_comments = true\n");
+        assert!(msg.contains("c#"), "{msg}");
     }
 
     #[test]

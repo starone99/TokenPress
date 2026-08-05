@@ -1,7 +1,7 @@
 # TokenPress
 
-> A token-aware formatter for Python, Rust, JavaScript/TypeScript, Ruby, Go
-> and Java that minimizes LLM token usage while preserving behavior.
+> A token-aware formatter for Python, Rust, JavaScript/TypeScript, Ruby, Go,
+> Java and C# that minimizes LLM token usage while preserving behavior.
 
 TokenPress is a token-aware source code formatter for LLMs. Unlike a minifier that
 shrinks characters, TokenPress optimizes against an actual LLM tokenizer —
@@ -83,10 +83,16 @@ not a character minifier.
 | Ruby | `.rb` `.rake` `.gemspec` `.ru`, plus the exact file names `Gemfile` and `Rakefile` | Supported (context-lossless at default settings; see below) |
 | Go | `.go` | Supported (context-lossless at default settings; see below) |
 | Java | `.java` | Supported (context-lossless at default settings; see below) |
+| C# | `.cs` | **Experimental** (context-lossless at default settings; no external verification yet — see below) |
 
 **`--verify external` is real for JavaScript/TypeScript, Ruby, Go and Java**,
 which is what "Supported" is gated on here: the output is handed to the
-language's own toolchain, on top of the built-in AST-equivalence check.
+language's own toolchain, on top of the built-in AST-equivalence check. C# is
+labelled **experimental** for exactly that reason and no other: everything
+else a supported backend has, it has — the parse gate, the re-emit, the
+built-in re-parse-plus-AST-equivalence check and the refusal to write anything
+that fails it. What is missing is the compiler-side check, and the label comes
+off when it lands.
 
 For JavaScript/TypeScript it runs
 `tsc --noEmit --noCheck --skipLibCheck --allowJs --jsx preserve` over the
@@ -137,9 +143,9 @@ extension for JS/TS, always `.rb` for Ruby, which is what makes the
 extensionless `Gemfile` and `Rakefile` checkable at all, always `.go` for Go,
 always `.java` for Java (safe because Java's public-class/filename rule is a
 semantic check the parse gate stops before reaching); nothing is written to
-your file until every check has passed. Python and Rust do not implement the
-level yet and still treat it as `--verify ast`; the CLI says so on stderr when
-a `.py` or `.rs` path is in the run.
+your file until every check has passed. Python, Rust and C# do not implement
+the level yet and still treat it as `--verify ast`; the CLI says so on stderr
+when a `.py`, `.rs` or `.cs` path is in the run.
 
 If your *input* does not pass the external checker (a file the toolchain
 already rejects — ESM syntax in a `.cjs`, a syntax newer than your `tsc`, a
@@ -279,6 +285,38 @@ error instead of rewriting it, which is the safe direction: nothing is
 written. This is Ruby's situation rather than Go's, whose source is UTF-8 by
 specification.
 
+**C# is experimental.** The backend rides the same tree-sitter engine as Go
+and Java: it parses with `tree-sitter-c-sharp`, re-emits whitespace-minimally
+over the source bytes, verifies with re-parse plus AST-equivalence, and
+refuses to write anything that fails. What it does *not* have yet is
+`--verify external` — no C# compiler is invoked, and `--verify external`
+behaves as `--verify ast` for `.cs`, which the CLI says on stderr. That single
+gap is the whole difference between this label and "Supported". `.cs` is the
+whole path set: `AssemblyInfo.cs`, a generated `*.Designer.cs` and a `*.g.cs`
+are ordinary sources needing no special case, while `.csproj` and `.sln` are
+project metadata rather than source, `.csx` is a scripting dialect this
+backend does not claim, and `.vb`/`.fs` are other languages on the same
+runtime. Measured over JamesNK/Newtonsoft.Json at `4f73e74` (945 `.cs` files,
+5.2 MB in, 879 written) the savings are **-8.7%** at default settings and
+**-33.6%** with `--csharp-strip-comments`, on `o200k_base`.
+
+**C#, like Ruby, Go and Java, is context-lossless at default settings.** Every
+comment survives byte for byte unless `--csharp-strip-comments` is passed —
+and **that flag deletes XML documentation**, because a `///` block is an
+ordinary comment to this grammar with no second kind to spare it, so a
+stripped file loses its API documentation. That is where most of the 33% comes
+from; it is asked for explicitly, and at the default settings not one byte of
+documentation is dropped. Two rules apply at **both** settings. A preprocessor
+directive (`#if`, `#region`, `#nullable`) must begin its line, so the emitter
+never joins lines or invents one. And where the grammar and a real C# compiler
+could disagree about *where a comment ends* — a comment spanning an
+`#if`/`#endif` pair is the standard case — the file is returned **byte for
+byte unchanged and reports no savings**. That is C#'s analogue of Go's cgo
+bail-out and Java's unicode-escape one, and it is the first documented class
+of files TokenPress reports as a successful run that saved nothing rather than
+as an error. There is therefore no C# caveat warning on stderr, for the same
+reason there is no Ruby, Go or Java one: nothing is dropped behind your back.
+
 ## Usage
 
 ```bash
@@ -304,6 +342,7 @@ tokenpress format . --js-strip-comments      # drop the JS/TS comments that surv
 tokenpress format . --ruby-strip-comments    # drop Ruby comments/embdocs (shebang + magic comments kept)
 tokenpress format . --go-strip-comments      # drop Go comments (//go: directives, build constraints and cgo preambles kept)
 tokenpress format . --java-strip-comments    # drop Java comments -- Javadoc included!
+tokenpress format . --csharp-strip-comments  # drop C# comments -- /// XML documentation included!
 ```
 
 Exit codes: `0` ok · `1` check found changes · `2` error (parse/verification
@@ -357,16 +396,20 @@ verification failure, or an unsupported path) fails the hook too, and nothing
 that fails verification is ever written.
 
 Both hooks declare
-`files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru|go|java)$|(^|/)(Gemfile|Rakefile)$)`
-alongside `types_or: [python, rust, javascript, jsx, ts, tsx, ruby, go, java]`,
+`files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru|go|java|cs)$|(^|/)(Gemfile|Rakefile)$)`
+alongside
+`types_or: [python, rust, javascript, jsx, ts, tsx, ruby, go, java, "c#"]`,
 so only files the CLI accepts ever reach it. pre-commit ANDs the two: a path has to
 match the regex *and* carry one of the tags. The regex is the authority;
 `types_or` is a coarse pre-filter, so a tag an older `identify` release does not
 emit only means a skipped file, never a wrong rewrite. The second regex branch
-is what picks up Ruby's extensionless `Gemfile`/`Rakefile`; `.go` and `.java`
-need no such branch (`identify` tags them `go` and `java`, and the build
-descriptors beside them — `go.mod`/`go.sum`, `pom.xml`/`build.gradle` — are
-not source of either language).
+is what picks up Ruby's extensionless `Gemfile`/`Rakefile`; `.go`, `.java` and
+`.cs` need no such branch (`identify` tags them `go`, `java` and `c#` — that
+last tag keeps the language's real name even though the CLI's language key,
+cargo feature and config table are all spelled `csharp`, and it is quoted in
+the YAML because a bare `c#` would start a comment — and the build descriptors
+beside them, `go.mod`/`go.sum`, `pom.xml`/`build.gradle`, `.csproj`/`.sln`,
+are not source of any of the three).
 Extension-less scripts with a Python shebang are excluded on purpose: an
 explicitly named unsupported path makes the CLI exit 2. Both are
 `require_serial: true` — every invocation runs a `cargo build` first, and
@@ -381,24 +424,27 @@ Prerequisites for the consumer:
   so `rust-toolchain.toml` pins the compiler (rustup then installs it on first
   use). The first hook run therefore pays one release build; later runs reuse
   that clone's `target/`.
-- **libclang and a C compiler** — the CLI now builds three native backends.
+- **libclang and a C compiler** — the CLI now builds four native backends.
   The Ruby one's `ruby-prism-sys` dependency compiles vendored prism C sources
   and generates its bindings with bindgen (libclang *and* a C compiler); the
-  Go and Java ones compile the tree-sitter runtime and their own grammar with
-  `cc` (a C compiler, no bindgen). Without libclang the build fails with
+  Go, Java and C# ones compile the tree-sitter runtime and their own grammar
+  with `cc` (a C compiler, no bindgen — the C# grammar is the one that
+  compiles a second C file, its external scanner, which changes nothing about
+  the prerequisite). Without libclang the build fails with
   `Unable to find libclang`. On Linux `apt install libclang-dev` (plus `gcc` or
   `clang`); on macOS `xcode-select --install`; on Windows install LLVM
   (`choco install llvm`) and set `LIBCLANG_PATH=C:\Program Files\LLVM\bin`.
   **Neither `ruby` nor the Go toolchain nor a JDK is needed to build** —
   nothing in the build shells out to any of them. They are needed at *run*
   time only if you pass `--verify external`, which runs `ruby -c` over Ruby
-  output, `gofmt -e` over Go output and `javac`'s parse gate over Java output;
+  output, `gofmt -e` over Go output and `javac`'s parse gate over Java output
+  (C# has no external checker yet, so it needs nothing at run time either);
   the hooks do not by default. **Opt out with
-  `TOKENPRESS_NO_RUBY=1`, `TOKENPRESS_NO_GO=1` and/or
-  `TOKENPRESS_NO_JAVA=1`**: the hook then builds the CLI without that
+  `TOKENPRESS_NO_RUBY=1`, `TOKENPRESS_NO_GO=1`, `TOKENPRESS_NO_JAVA=1` and/or
+  `TOKENPRESS_NO_CSHARP=1`**: the hook then builds the CLI without that
   backend's default-on cargo feature, dropping it from the dependency graph.
   Setting just `TOKENPRESS_NO_RUBY=1` removes the libclang requirement;
-  setting all three removes the C compiler too. The dropped backend's paths
+  setting all four removes the C compiler too. The dropped backend's paths
   become unsupported paths — the hooks' file filter still offers them, so
   exclude them from `files:` if your repository has any.
 - **On Windows, `sh` on `PATH`** — the entry point is a `#!/usr/bin/env sh`
@@ -427,8 +473,8 @@ installed first:
 ```
 
 **The runner needs libclang and a C compiler.** The action builds the CLI from
-its own checkout, and that build now includes all three native backends: the
-Ruby one (`ruby-prism-sys`: vendored C + bindgen) and the Go and Java ones
+its own checkout, and that build now includes all four native backends: the
+Ruby one (`ruby-prism-sys`: vendored C + bindgen) and the Go, Java and C# ones
 (the tree-sitter runtime and their grammars: C via `cc`). GitHub-hosted Ubuntu
 runners generally ship both; Windows runners may need LLVM installed
 (`choco install llvm`, with `LIBCLANG_PATH` pointing at it). A composite action
@@ -439,11 +485,13 @@ exactly that, and consumers need their own equivalent). None of Ruby, the Go
 toolchain or a JDK is needed to build; they are needed at run time only if
 `extra-args` selects `--verify external`, which runs `ruby -c` over Ruby
 output, `gofmt -e` over Go output and `javac`'s parse gate over Java output
-(GitHub-hosted runners preinstall all three). **Or drop the requirement with
-`ruby: 'false'`, `go: 'false'` and/or `java: 'false'`**: the action then builds
-the CLI without that backend's default-on cargo feature, so it is not in the
-dependency graph. `ruby: 'false'` alone drops the libclang requirement; all
-three together drop the C compiler as well, leaving a pure-Rust build. The
+(GitHub-hosted runners preinstall all three; C# has no external checker yet,
+so it needs nothing at run time either). **Or drop the requirement with
+`ruby: 'false'`, `go: 'false'`, `java: 'false'` and/or `csharp: 'false'`**: the
+action then builds the CLI without that backend's default-on cargo feature, so
+it is not in the dependency graph. `ruby: 'false'` alone drops the libclang
+requirement; all four together drop the C compiler as well, leaving a
+pure-Rust build. The
 dropped backend's paths are unsupported paths in that build — skipped by the
 directory walk, an error (exit 2) when named explicitly.
 
@@ -500,10 +548,11 @@ Inputs:
 |---|---|---|
 | `mode` | `check` | `check` reports and fails, writing nothing. `format` rewrites in place and then fails if it had something to rewrite. Any other value fails the step with exit 2. |
 | `paths` | `.` | Whitespace-separated files and/or directories, relative to the workspace. Subject to the shell's word splitting and globbing, so `src/*.py` works. |
-| `extra-args` | *(empty)* | Extra `tokenpress` flags, passed through verbatim (whitespace-separated), e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments --ruby-strip-comments --go-strip-comments --java-strip-comments`. |
+| `extra-args` | *(empty)* | Extra `tokenpress` flags, passed through verbatim (whitespace-separated), e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments --ruby-strip-comments --go-strip-comments --java-strip-comments --csharp-strip-comments`. |
 | `ruby` | `true` | `false` builds the CLI without its default-on `ruby` cargo feature, dropping the Ruby backend and with it the libclang build prerequisite. Ruby paths are then unsupported paths. Any other value fails the step with exit 2. |
 | `go` | `true` | `false` builds the CLI without its default-on `go` cargo feature, dropping the Go backend (tree-sitter runtime + grammar, both compiled with `cc`). `.go` paths are then unsupported paths. Any other value fails the step with exit 2. |
-| `java` | `true` | `false` builds the CLI without its default-on `java` cargo feature, dropping the Java backend (the `tree-sitter-java` grammar, compiled with `cc`). `.java` paths are then unsupported paths. Independent of `ruby` and `go`: only with all three `false` does the build need no C toolchain at all. Any other value fails the step with exit 2. |
+| `java` | `true` | `false` builds the CLI without its default-on `java` cargo feature, dropping the Java backend (the `tree-sitter-java` grammar, compiled with `cc`). `.java` paths are then unsupported paths. Independent of `ruby`, `go` and `csharp`: only with all four `false` does the build need no C toolchain at all. Any other value fails the step with exit 2. |
+| `csharp` | `true` | `false` builds the CLI without its default-on `csharp` cargo feature, dropping the C# backend (the `tree-sitter-c-sharp` grammar, whose `parser.c` and external `scanner.c` are compiled with `cc`). `.cs` paths are then unsupported paths. Independent of `ruby`, `go` and `java`: only with all four `false` does the build need no C toolchain at all. Any other value fails the step with exit 2. |
 
 Output:
 
@@ -514,8 +563,8 @@ Output:
 **Directories and explicitly named files are treated differently.** A directory
 is handed to the CLI as-is: its walk is `.gitignore`-aware and picks up only
 the supported paths (`.py`, `.rs`, `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
-`.mts`, `.cts`, `.tsx`, `.rb`, `.rake`, `.gemspec`, `.ru`, `.go`, `.java`, and
-files named `Gemfile` or `Rakefile`), so pointing `paths` at a mixed tree is
+`.mts`, `.cts`, `.tsx`, `.rb`, `.rake`, `.gemspec`, `.ru`, `.go`, `.java`,
+`.cs`, and files named `Gemfile` or `Rakefile`), so pointing `paths` at a mixed tree is
 safe. An
 explicitly named file
 is *not* filtered by the CLI — an unsupported one is an error (exit 2) — so the
@@ -567,16 +616,22 @@ strip_comments = false        # --go-strip-comments
 # [javascript] above: the names are close, the backends share nothing.
 [java]
 strip_comments = false        # --java-strip-comments
+
+# Covers .cs, which is the C# backend's whole path set. The table is spelled
+# `csharp`, not `c#`: the language key has to be a bare TOML key and a
+# command-line flag, and `#` starts a TOML comment.
+[csharp]
+strip_comments = false        # --csharp-strip-comments
 ```
 
 That is the complete schema — there are no other keys. `verify = "external"`
 runs the JavaScript/TypeScript toolchain over JS/TS output, `ruby -c` over
 Ruby output, `gofmt -e` over Go output and `javac`'s parse gate over Java
-output (see **Language support**); for `.py` and `.rs` it still behaves
+output (see **Language support**); for `.py`, `.rs` and `.cs` it still behaves
 exactly like `"ast"` and says so on stderr.
 
-A `[ruby]`, `[go]` or `[java]` table is a config error naming the missing
-feature in a build that switched that backend off (see **Cargo features**
+A `[ruby]`, `[go]`, `[java]` or `[csharp]` table is a config error naming the
+missing feature in a build that switched that backend off (see **Cargo features**
 below), rather than being silently ignored.
 
 **Discovery.** Without `--config`, the nearest `tokenpress.toml` found walking
@@ -594,8 +649,9 @@ cannot cancel a `--py-strip-comments` passed on the command line (nor can the
 command line re-enable import merging that `merge_imports = false` turned off).
 The same holds for `[javascript] strip_comments`/`--js-strip-comments`,
 `[ruby] strip_comments`/`--ruby-strip-comments`,
-`[go] strip_comments`/`--go-strip-comments` and
-`[java] strip_comments`/`--java-strip-comments`.
+`[go] strip_comments`/`--go-strip-comments`,
+`[java] strip_comments`/`--java-strip-comments` and
+`[csharp] strip_comments`/`--csharp-strip-comments`.
 
 **Config problems fail loudly**, like every other linter-style tool: an unknown
 key, a wrong value type, malformed TOML, or an unknown `tokenizer`/`verify`
@@ -605,40 +661,42 @@ as hard as an explicit one.
 
 ### Cargo features
 
-Three of the six backends are native and carry a build prerequisite the others
-do not, so each is a default-on cargo feature of `tokenpress-cli` that can be
-switched off on its own:
+Four of the seven backends are native and carry a build prerequisite the
+others do not, so each is a default-on cargo feature of `tokenpress-cli` that
+can be switched off on its own:
 
 | Feature | Default | Drops | Prerequisite removed |
 |---|---|---|---|
 | `ruby` | on | `tokenpress-ruby` → `ruby-prism-sys` (vendored prism C + bindgen) | libclang (and its C compiler) |
 | `go` | on | `tokenpress-go` → `tokenpress-treesitter` + `tree-sitter-go` (C via `cc`) | the C compiler for the Go grammar |
 | `java` | on | `tokenpress-java` → `tokenpress-treesitter` + `tree-sitter-java` (C via `cc`) | the C compiler for the Java grammar |
+| `csharp` | on | `tokenpress-csharp` → `tokenpress-treesitter` + `tree-sitter-c-sharp` (C via `cc`: `parser.c` **and** an external `scanner.c`) | the C compiler for the C# grammar |
 
-`go` and `java` share the `tokenpress-treesitter` engine but neither implies
-the other, so a build with only one of them compiles only that grammar — and
-the C compiler prerequisite goes only once *both* are off.
+`go`, `java` and `csharp` share the `tokenpress-treesitter` engine but none
+implies another, so a build with only one of them compiles only that grammar —
+and the C compiler prerequisite goes only once *all three* are off.
 
 ```bash
-cargo build -p tokenpress-cli                                             # all three (default)
-cargo build -p tokenpress-cli --no-default-features --features go,java    # no Ruby
-cargo build -p tokenpress-cli --no-default-features --features ruby       # neither tree-sitter backend
-cargo build -p tokenpress-cli --no-default-features                       # none: pure Rust
+cargo build -p tokenpress-cli                                                    # all four (default)
+cargo build -p tokenpress-cli --no-default-features --features go,java,csharp    # no Ruby
+cargo build -p tokenpress-cli --no-default-features --features ruby              # no tree-sitter backend
+cargo build -p tokenpress-cli --no-default-features                              # none: pure Rust
 ```
 
-Because the three features are independent, `--no-default-features` is the
+Because the four features are independent, `--no-default-features` is the
 *all-off* build, not the Ruby opt-out — whichever backends you want to keep
 have to be named. Dropping a backend removes it completely: its paths become
 unsupported paths (skipped by the directory walk, exit 2 when named
 explicitly), its `--ruby-strip-comments`/`--go-strip-comments`/
-`--java-strip-comments` flag stops existing, and its `[ruby]`/`[go]`/`[java]`
-config table becomes an error naming the missing feature rather than a
-silently ignored setting.
+`--java-strip-comments`/`--csharp-strip-comments` flag stops existing, and its
+`[ruby]`/`[go]`/`[java]`/`[csharp]` config table becomes an error naming the
+missing feature rather than a silently ignored setting.
 
 The consumer-facing equivalents are `TOKENPRESS_NO_RUBY=1` /
-`TOKENPRESS_NO_GO=1` / `TOKENPRESS_NO_JAVA=1` for the pre-commit hook and
-`ruby: 'false'` / `go: 'false'` / `java: 'false'` for the Action, both
-described above; each maps onto exactly the cargo invocation in the table.
+`TOKENPRESS_NO_GO=1` / `TOKENPRESS_NO_JAVA=1` / `TOKENPRESS_NO_CSHARP=1` for
+the pre-commit hook and `ruby: 'false'` / `go: 'false'` / `java: 'false'` /
+`csharp: 'false'` for the Action, both described above; each maps onto exactly
+the cargo invocation in the table.
 
 ## What it never touches
 
@@ -656,14 +714,15 @@ behavior" claim at the top of this page.
 
 **Line numbers are never preserved, by any backend, at any settings.** Deleting
 blank lines and re-flowing whitespace is the core of what TokenPress does, so
-every line below a removal moves — in Python, Ruby, Go and Java exactly as in
-Rust and JS/TS. No flag turns this off. Code whose behavior depends on physical line
+every line below a removal moves — in Python, Ruby, Go, Java and C# exactly as
+in Rust and JS/TS. No flag turns this off. Code whose behavior depends on physical line
 numbers can therefore change behavior after formatting: Ruby `__LINE__` and
 `caller`, Rust `line!()` and `std::panic::Location`, Python `inspect` and
 traceback line numbers, JavaScript `Error.stack`, Go `runtime.Caller` (a
 `//line` directive is the one case that is protected, because it is a comment
-the toolchain reads), Java stack-trace line numbers, and any test that asserts
-on a traceback or a stack trace.
+the toolchain reads), Java stack-trace line numbers, C# stack-trace line
+numbers and `CallerLineNumberAttribute`, and any test that asserts on a
+traceback or a stack trace.
 
 Format-time verification cannot detect this **by construction**: the canonical
 forms the re-parse/equivalence check compares are location-independent, which
@@ -721,6 +780,7 @@ Cargo workspace with a single distributed binary:
 | `tokenpress-treesitter` | The grammar-agnostic tree-sitter engine: parse gate, equivalence artifact, protected spans, whitespace rewriter |
 | `tokenpress-go` | Go: the grammar configuration, path set and comment policy the engine is driven with |
 | `tokenpress-java` | Java: the same, for the Java grammar |
+| `tokenpress-csharp` | C#: the same, for the C# grammar |
 | `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
 | `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python, Rust, JavaScript/TypeScript, Go and Java — not Ruby, per-tokenizer token stats) |
 

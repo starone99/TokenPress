@@ -14,14 +14,15 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 target_dir="$repo_dir/target"
 
-# `TOKENPRESS_NO_RUBY=1`, `TOKENPRESS_NO_GO=1` and `TOKENPRESS_NO_JAVA=1`
-# build without the default-on `ruby` / `go` / `java` cargo features. Dropping
-# `ruby` drops the libclang + C compiler prerequisite that `ruby-prism-sys`
-# imposes; `go` and `java` each need a C compiler for the tree-sitter runtime
-# and their own grammar, so the C compiler goes only once **all three** are
-# off. Files of a dropped backend are then unsupported paths like any other.
+# `TOKENPRESS_NO_RUBY=1`, `TOKENPRESS_NO_GO=1`, `TOKENPRESS_NO_JAVA=1` and
+# `TOKENPRESS_NO_CSHARP=1` build without the default-on `ruby` / `go` / `java`
+# / `csharp` cargo features. Dropping `ruby` drops the libclang + C compiler
+# prerequisite that `ruby-prism-sys` imposes; `go`, `java` and `csharp` each
+# need a C compiler for the tree-sitter runtime and their own grammar, so the
+# C compiler goes only once **all four** are off. Files of a dropped backend
+# are then unsupported paths like any other.
 #
-# The three are independent, so no single variable can mean
+# The four are independent, so no single variable can mean
 # `--no-default-features`: that is the all-off build. What is left on has to
 # be named explicitly, which is what the feature list below does. The list is
 # built in the manifest's own order, so the all-on case is one literal.
@@ -35,8 +36,11 @@ fi
 if [ "${TOKENPRESS_NO_JAVA:-}" != 1 ]; then
     features="${features:+$features,}java"
 fi
+if [ "${TOKENPRESS_NO_CSHARP:-}" != 1 ]; then
+    features="${features:+$features,}csharp"
+fi
 case "$features" in
-    'ruby,go,java') build_flags='' ;;
+    'ruby,go,java,csharp') build_flags='' ;;
     '') build_flags='--no-default-features' ;;
     *) build_flags="--no-default-features --features $features" ;;
 esac

@@ -19,10 +19,11 @@
 # also claims extensionless names, so the regex is an alternation of an
 # extension branch and an exact-basename branch for `Gemfile`/`Rakefile`
 # (`(^|/)` because pre-commit matches the repository-relative path, not the
-# file name). Go and Java need nothing of the sort: `.go` and `.java` are
-# their whole path sets, and the build descriptors that sit beside them --
-# `go.mod`/`go.sum`, `pom.xml`/`build.gradle` -- are not source of either
-# language (the extension branch does not match them either).
+# file name). Go, Java and C# need nothing of the sort: `.go`, `.java` and
+# `.cs` are their whole path sets, and the build descriptors that sit beside
+# them -- `go.mod`/`go.sum`, `pom.xml`/`build.gradle`, `.csproj`/`.sln` -- are
+# not source of any of the three (the extension branch does not match them
+# either).
 #
 # `files` and `types_or` are ANDed by pre-commit: a path has to match the
 # regex *and* carry one of the tags. The `files` regex is the authority;
@@ -45,23 +46,31 @@
 #     files a Java build puts next to them are tagged by what they actually
 #     are -- `pom.xml` is `pom`/`xml`, `build.gradle` is `groovy` -- so they
 #     are filtered out by the tag as well as by the regex.
+#   * `c#` is the tag identify emits for `.cs` (verified against identify
+#     2.6.19) -- the tag keeps the language's real name even though the CLI's
+#     language key, cargo feature and config table are all spelled `csharp`.
+#     It is quoted in the list below because a bare `c#` in YAML would start a
+#     comment. A C# project's descriptors are tagged by what they are --
+#     `.csproj` and `.sln` are not `c#` -- so they are filtered out by the tag
+#     as well as by the regex.
 #
-# `TOKENPRESS_NO_RUBY=1` / `TOKENPRESS_NO_GO=1` / `TOKENPRESS_NO_JAVA=1` in
-# the environment make the entry script build the CLI without its default-on
-# `ruby` / `go` / `java` cargo feature (dropping libclang with the first, and
-# the C compiler once none of the other two is left on). The filters below are
-# static, so a repository that has files of a dropped backend *and* sets the
-# variable must exclude them itself with `exclude:` in its own config.
+# `TOKENPRESS_NO_RUBY=1` / `TOKENPRESS_NO_GO=1` / `TOKENPRESS_NO_JAVA=1` /
+# `TOKENPRESS_NO_CSHARP=1` in the environment make the entry script build the
+# CLI without its default-on `ruby` / `go` / `java` / `csharp` cargo feature
+# (dropping libclang with the first, and the C compiler once none of the other
+# three is left on). The filters below are static, so a repository that has
+# files of a dropped backend *and* sets the variable must exclude them itself
+# with `exclude:` in its own config.
 
 - id: tokenpress-check
   name: tokenpress check
   description: >-
-    Fail if any Python, Rust, JavaScript/TypeScript, Ruby, Go or Java file is
-    not in TokenPress-normalized form. Writes nothing.
+    Fail if any Python, Rust, JavaScript/TypeScript, Ruby, Go, Java or C#
+    file is not in TokenPress-normalized form. Writes nothing.
   entry: scripts/pre-commit-hook.sh check
   language: script
-  files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru|go|java)$|(^|/)(Gemfile|Rakefile)$)
-  types_or: [python, rust, javascript, jsx, ts, tsx, ruby, go, java]
+  files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru|go|java|cs)$|(^|/)(Gemfile|Rakefile)$)
+  types_or: [python, rust, javascript, jsx, ts, tsx, ruby, go, java, "c#"]
   # One process at a time: every invocation runs `cargo build` first, and
   # parallel builds would only contend for the same cargo lock.
   require_serial: true
@@ -70,12 +79,12 @@
 - id: tokenpress-format
   name: tokenpress format
   description: >-
-    Rewrite Python, Rust, JavaScript/TypeScript, Ruby, Go and Java files in
-    place with token-minimized formatting. Modifies files, so pre-commit
+    Rewrite Python, Rust, JavaScript/TypeScript, Ruby, Go, Java and C# files
+    in place with token-minimized formatting. Modifies files, so pre-commit
     reports the run as failed whenever it had something to rewrite.
   entry: scripts/pre-commit-hook.sh format
   language: script
-  files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru|go|java)$|(^|/)(Gemfile|Rakefile)$)
-  types_or: [python, rust, javascript, jsx, ts, tsx, ruby, go, java]
+  files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru|go|java|cs)$|(^|/)(Gemfile|Rakefile)$)
+  types_or: [python, rust, javascript, jsx, ts, tsx, ruby, go, java, "c#"]
   require_serial: true
   minimum_pre_commit_version: '2.9.0'

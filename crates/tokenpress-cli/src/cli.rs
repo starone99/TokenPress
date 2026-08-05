@@ -13,6 +13,8 @@ use config::{ConfigError, ConfigVerify, FileConfig};
 use tokenpress_core::{
     Error, FormatOptions, FormatResult, Formatter, Result, TokenizerKind, VerifyLevel,
 };
+#[cfg(feature = "csharp")]
+use tokenpress_csharp::{CSharpFormatter, CSharpOptions};
 #[cfg(feature = "go")]
 use tokenpress_go::{GoFormatter, GoOptions};
 #[cfg(feature = "java")]
@@ -31,15 +33,15 @@ struct Cli {
 }
 
 /// The languages this build actually has a backend for, in dispatch order.
-/// The `ruby`, `go` and `java` cargo features are default-on but independent,
-/// and a build without one has no such backend at all, so nothing may
-/// advertise one. A `Vec` and not an array: the length is a property of the
+/// The `ruby`, `go`, `java` and `csharp` cargo features are default-on but
+/// independent, and a build without one has no such backend at all, so nothing
+/// may advertise one. A `Vec` and not an array: the length is a property of the
 /// feature set.
 fn languages() -> Vec<&'static str> {
     // The first three backends are unconditional, so the list never has fewer
     // than three entries.
     #[cfg_attr(
-        not(any(feature = "ruby", feature = "go", feature = "java")),
+        not(any(feature = "ruby", feature = "go", feature = "java", feature = "csharp")),
         allow(unused_mut)
     )]
     let mut languages = vec!["Python", "Rust", "JavaScript/TypeScript"];
@@ -49,12 +51,14 @@ fn languages() -> Vec<&'static str> {
     languages.push("Go");
     #[cfg(feature = "java")]
     languages.push("Java");
+    #[cfg(feature = "csharp")]
+    languages.push("C#");
     languages
 }
 
 /// The `--help` one-liner. Assembled from [`languages`] rather than written
-/// out per feature combination: three independent features would otherwise
-/// need eight spellings of one sentence, and the conjunction moves with the
+/// out per feature combination: four independent features would otherwise
+/// need sixteen spellings of one sentence, and the conjunction moves with the
 /// list.
 fn about() -> String {
     let languages = languages();
@@ -81,8 +85,8 @@ struct CommonOpts {
     /// `.cts` `.tsx`.
     // Written as `doc` attributes rather than `///` so each optional backend's
     // half can be switched off with the backend itself; they concatenate in
-    // source order. One self-contained sentence per backend, so the `ruby` and
-    // `go` features stay independent instead of needing a spelling per
+    // source order. One self-contained sentence per backend, so the four
+    // optional features stay independent instead of needing a spelling per
     // combination.
     #[cfg_attr(
         feature = "ruby",
@@ -94,6 +98,7 @@ struct CommonOpts {
     )]
     #[cfg_attr(feature = "go", doc = " Also `.go`.")]
     #[cfg_attr(feature = "java", doc = " Also `.java`.")]
+    #[cfg_attr(feature = "csharp", doc = " Also `.cs`.")]
     #[arg(required = true)]
     paths: Vec<PathBuf>,
     /// Config file to read. Without it the nearest `tokenpress.toml` found
@@ -157,6 +162,16 @@ struct CommonOpts {
     #[cfg(feature = "java")]
     #[arg(long)]
     java_strip_comments: bool,
+    /// CSO1: strip C# comments (kept by default — and, unlike Rust and JS/TS,
+    /// nothing is dropped without this flag). XML documentation (`///`) is an
+    /// ordinary comment to the grammar and goes with the rest, so a stripped
+    /// file loses its API documentation.
+    // Deliberately no mention of the Ruby, Go or Java flags it mirrors: the
+    // four features are independent, and a build with `csharp` but not the
+    // others must not advertise a backend it does not have.
+    #[cfg(feature = "csharp")]
+    #[arg(long)]
+    csharp_strip_comments: bool,
 }
 
 #[derive(Subcommand)]
@@ -262,6 +277,10 @@ fn apply_config(common: &mut CommonOpts, cfg: FileConfig) {
     if let Some(java) = cfg.java {
         common.java_strip_comments |= java.strip_comments.unwrap_or(false);
     }
+    #[cfg(feature = "csharp")]
+    if let Some(csharp) = cfg.csharp {
+        common.csharp_strip_comments |= csharp.strip_comments.unwrap_or(false);
+    }
 }
 
 /// Runs the CLI and returns the process exit code.
@@ -325,10 +344,10 @@ struct FileOutcome {
 
 fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
     // The list has a conditional tail, so it is built and then extended; the
-    // `mut` is only needed when at least one of the three optional backends is
+    // `mut` is only needed when at least one of the four optional backends is
     // compiled in.
     #[cfg_attr(
-        not(any(feature = "ruby", feature = "go", feature = "java")),
+        not(any(feature = "ruby", feature = "go", feature = "java", feature = "csharp")),
         allow(unused_mut)
     )]
     let mut formatters: Vec<Box<dyn Formatter>> = vec![
@@ -356,6 +375,10 @@ fn formatters(common: &CommonOpts) -> Vec<Box<dyn Formatter>> {
     #[cfg(feature = "java")]
     formatters.push(Box::new(JavaFormatter::new(JavaOptions {
         strip_comments: common.java_strip_comments,
+    })));
+    #[cfg(feature = "csharp")]
+    formatters.push(Box::new(CSharpFormatter::new(CSharpOptions {
+        strip_comments: common.csharp_strip_comments,
     })));
     formatters
 }
@@ -454,7 +477,8 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
     }
 }
 
-// There is deliberately no `GO_CAVEAT_WARNING` and no `JAVA_CAVEAT_WARNING`,
+// There is deliberately no `GO_CAVEAT_WARNING`, no `JAVA_CAVEAT_WARNING` and
+// no `CSHARP_CAVEAT_WARNING`,
 // for the reason there is no Ruby one: a caveat warning exists where a backend drops something the user
 // did not ask it to drop and verification cannot see the loss — Rust's `//`
 // comments, JS/TS's trailing and expression-position comments. The Go emitter
@@ -470,24 +494,39 @@ fn warn_js_caveats(files: &[PathBuf], action: Action, err: &mut dyn Write) {
 // which leaves a file byte for byte identical rather than dropping anything.
 // `--java-strip-comments` does delete Javadoc along with every other comment,
 // but that is an opt-in flag documenting itself, not a loss behind the
-// caller's back.
+// caller's back. C# is the same story once more, and its two unconditional
+// rules are both preserving rather than lossy: a preprocessor directive keeps
+// the newline that makes it one, and a file whose comments the grammar and a
+// real compiler could disagree about is returned byte for byte unchanged --
+// the first documented class of files this CLI reports as a successful run
+// with zero savings rather than as an error. `--csharp-strip-comments` deletes
+// XML documentation along with every other comment, an opt-in exactly as
+// Java's flag is.
 
 // `--verify external` is real for JavaScript/TypeScript, for Ruby, for Go and
-// for Java, but still equals `--verify ast` for Python and Rust, so a run
-// containing files of those two languages must not read the level as a
+// for Java, but still equals `--verify ast` for Python, Rust and C#, so a run
+// containing files of those three languages must not read the level as a
 // stronger guarantee than it is.
 //
-// The tail — which backends do *not* have it — is therefore a single fixed
-// string: the only two left are Python and Rust, both unconditional backends,
-// so nothing about it varies with the build. The head — which backends *do*
-// have it — names only backends this binary was actually built with:
+// The tail — which backends do *not* have it — used to be a single fixed
+// string, when the only two left were Python and Rust, both unconditional
+// backends. C# joins them without an external checker of its own (C5 is what
+// wires `csc` up), and `csharp` *is* a cargo feature, so the tail now varies:
+// two variants, on `csharp` alone, and `NO_EXTERNAL_VERIFY_EXTENSIONS` with
+// them. A build without the feature has no `.cs` path to reach at all, so
+// naming C# there would describe a backend that does not exist in it.
+// The head — which backends *do* have it — names only backends this binary
+// was actually built with:
 // promising Ruby's, Go's or Java's checker in a build that refuses `.rb`,
 // `.go` or `.java` outright would be a lie about this binary. JS/TS is
 // unconditional and always leads; the other three are cargo features, which is
 // why the head is a 2×2×2 cross-product of `ruby`/`go`/`java` and why the
 // grammar of the closing clause ("it"/"both"/"each") differs per variant with
-// the number of checkers named. Head and tail are written out as one block by
-// `warn_external_verify`.
+// the number of checkers named. `csharp` does *not* multiply the head — a
+// backend with no external checker cannot appear on the implemented side — so
+// the head stays at 8 variants and the cross-product is head × tail = 16
+// rendered messages from 10 constants. Head and tail are written out as one
+// block by `warn_external_verify`.
 #[cfg(all(feature = "ruby", feature = "go", feature = "java"))]
 const EXTERNAL_VERIFY_WARNING_HEAD: &str = "\
 warning: external-tooling verification is implemented for JavaScript/TypeScript,
@@ -545,16 +584,27 @@ warning: external-tooling verification is implemented for JavaScript/TypeScript,
   `node --check`); it fails if the tool it needs is not on PATH.";
 
 // The tail — which backends the level does *not* reach. Python and Rust are
-// unconditional backends, so this no longer varies with any feature: `ruby`,
-// `go` and `java` cannot appear here at all, because all three of those
-// checkers are real.
+// unconditional backends and are always here; `ruby`, `go` and `java` cannot
+// appear at all, because all three of those checkers are real. C# is the one
+// that varies: it has no external checker yet, so it belongs here, but only in
+// a build that has the backend in the first place.
+#[cfg(feature = "csharp")]
+const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python, Rust and C#: neither
+  `py_compile` nor `rustc --emit=metadata` nor a C# compiler is invoked, so for
+  `.py`, `.rs` and `.cs` this level behaves exactly like `--verify ast`, i.e.
+  the output is re-parsed and compared for AST / token-stream equivalence.";
+
+#[cfg(not(feature = "csharp"))]
 const EXTERNAL_VERIFY_WARNING_TAIL: &str = " It is not implemented for Python and Rust: neither
   `py_compile` nor `rustc --emit=metadata` is invoked, so for `.py` and `.rs`
   this level behaves exactly like `--verify ast`, i.e. the output is re-parsed
   and compared for AST / token-stream equivalence.";
 
 /// Extensions the warning above is about: the backends the external level does
-/// not reach yet. Unconditional, for the reason the tail is.
+/// not reach yet. Varies with `csharp` alone, for the reason the tail does.
+#[cfg(feature = "csharp")]
+const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 3] = ["py", "rs", "cs"];
+#[cfg(not(feature = "csharp"))]
 const NO_EXTERNAL_VERIFY_EXTENSIONS: [&str; 2] = ["py", "rs"];
 
 /// True when `path` belongs to a backend the external level does not reach.
@@ -859,6 +909,18 @@ mod tests {
         // backend, and "Java" is a prefix of "JavaScript".
         #[cfg(not(feature = "java"))]
         for absent in [".java", "--java-strip-comments"] {
+            assert!(!text.contains(absent), "{absent} in help:\n{text}");
+        }
+        #[cfg(feature = "csharp")]
+        {
+            assert!(text.contains(".cs"), "'.cs' missing from help:\n{text}");
+            assert!(text.contains("--csharp-strip-comments"), "{text}");
+        }
+        // ... and the same again for the `csharp` feature. `.cs` can be
+        // asserted directly, unlike Java's `.java`: the unconditional JS/TS
+        // blurb names `.cjs` and `.cts`, and neither has `.cs` as a substring.
+        #[cfg(not(feature = "csharp"))]
+        for absent in [".cs", "--csharp-strip-comments"] {
             assert!(!text.contains(absent), "{absent} in help:\n{text}");
         }
     }
@@ -1756,6 +1818,253 @@ mod tests {
             std::fs::read_to_string(&java).unwrap(),
             "class Big {\nlong x = 99999999999;\n}\n"
         );
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn format_rewrites_csharp_files() {
+        let dir = Scratch::new();
+        let cs = dir.file(
+            "A.cs",
+            "public class A\n{\n\n    void F()\n    {\n        int x = 1;\n    }\n}\n",
+        );
+        let (code, text) = run_cli(&["format", cs.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&cs).unwrap(),
+            "public class A\n{\nvoid F()\n{\nint x = 1;\n}\n}\n"
+        );
+        assert!(text.contains("tokens"));
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn csharp_files_are_discovered_by_the_walk() {
+        // `.cs` is the whole path set. A C# project's build descriptors sit
+        // next to the sources and are not C# source: `.csproj` and `.sln` must
+        // be walked past, not rewritten.
+        let dir = Scratch::new();
+        dir.file("A.cs", "public  class  A  {}\n");
+        let csproj = dir.file("App.csproj", "<Project>  </Project>\n");
+        let sln = dir.file("App.sln", "Microsoft Visual Studio Solution  File\n");
+        let (code, text) = run_cli(&["format", dir.0.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(text.contains("A.cs"), "{text}");
+        assert!(!text.contains("App.csproj"), "{text}");
+        assert!(!text.contains("App.sln"), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(dir.0.join("A.cs")).unwrap(),
+            "public class A {}\n"
+        );
+        // Untouched byte for byte, not merely unreported.
+        assert_eq!(
+            std::fs::read_to_string(&csproj).unwrap(),
+            "<Project>  </Project>\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&sln).unwrap(),
+            "Microsoft Visual Studio Solution  File\n"
+        );
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn csharp_runs_emit_no_caveat_warning() {
+        // Like Ruby, Go and Java, and unlike Rust and JS/TS, there is
+        // deliberately no C# caveat warning: every comment survives byte for
+        // byte at the default settings — XML documentation included — and what
+        // the backend does unconditionally only ever preserves meaning, so
+        // there is nothing to warn about.
+        let dir = Scratch::new();
+        let cs = dir.file(
+            "A.cs",
+            "/// <summary>Doc.</summary>\npublic class A\n{\n\n    // note\n    void F() {}\n}\n",
+        );
+        let path = cs.to_str().unwrap();
+        for args in [
+            vec!["format", path],
+            vec!["check", path],
+            vec!["diff", path],
+            vec!["stats", path],
+        ] {
+            let (_, _, err) = run_cli_err(&args);
+            assert_eq!(err, "", "{args:?}");
+        }
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn csharp_strip_comments_flag_is_forwarded() {
+        let dir = Scratch::new();
+        let cs = dir.file(
+            "A.cs",
+            "public class A\n{\n\n    // note\n    void F() {}\n}\n",
+        );
+        let (code, _) = run_cli(&["format", "--csharp-strip-comments", cs.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&cs).unwrap(),
+            "public class A\n{\nvoid F() {}\n}\n"
+        );
+        // Without the flag every comment survives, byte for byte — XML
+        // documentation included, which is what the flag's opt-in status is
+        // about.
+        let kept = dir.file(
+            "B.cs",
+            "/// <summary>Doc.</summary>\npublic class B\n{\n\n    // note\n    void F() {}\n}\n",
+        );
+        let (code, _) = run_cli(&["format", kept.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&kept).unwrap(),
+            "/// <summary>Doc.</summary>\npublic class B\n{\n// note\nvoid F() {}\n}\n"
+        );
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn a_csharp_file_the_boundary_bail_out_claims_is_a_success_with_zero_savings() {
+        // C# is the first backend with a documented class of files returned
+        // unchanged: a comment whose end the grammar and a real compiler could
+        // disagree about makes the whole file byte-identical. Through the CLI
+        // that has to be an ordinary successful run reporting no savings, not
+        // an error and not a skipped file — `check` agrees there is nothing to
+        // reformat, and `format` leaves the bytes alone.
+        let dir = Scratch::new();
+        let source = "class A\n{\n    /* spans\n#if DEBUG\n    */\n    int  x  =  1;\n}\n";
+        let cs = dir.file("A.cs", source);
+        let path = cs.to_str().unwrap();
+        let (code, text) = run_cli(&["stats", path]);
+        assert_eq!(code, 0);
+        assert!(text.contains("(-0.0%)"), "{text}");
+        let (code, text) = run_cli(&["check", path]);
+        assert_eq!(code, 0);
+        assert!(text.contains("0 of 1 files would change"), "{text}");
+        let (code, _) = run_cli(&["format", path]);
+        assert_eq!(code, 0);
+        assert_eq!(std::fs::read_to_string(&cs).unwrap(), source);
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn the_external_verify_warning_names_csharp_among_the_backends_without_it() {
+        // C# has no external checker yet (C5 is what wires one up), so the
+        // level is a no-op for `.cs` and the warning has to say so — on the
+        // *unimplemented* side, beside Python and Rust.
+        let dir = Scratch::new();
+        let cs = dir.file("A.cs", "public  class  A  {}\n");
+        let (code, out, err) =
+            run_cli_err(&["format", "--verify", "external", cs.to_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("`.cs`"), "{err}");
+        assert!(err.contains("--verify ast"), "{err}");
+        assert_eq!(std::fs::read_to_string(&cs).unwrap(), "public class A {}\n");
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn config_file_supplies_csharp_settings() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[csharp]\nstrip_comments = true\n");
+        let cs = dir.file(
+            "A.cs",
+            "public class A\n{\n\n    // note\n    void F() {}\n}\n",
+        );
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            cs.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&cs).unwrap(),
+            "public class A\n{\nvoid F() {}\n}\n"
+        );
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn the_csharp_strip_flag_ors_with_the_config_file() {
+        let dir = Scratch::new();
+        // Presence-only flags: `false` in the config cannot cancel the flag,
+        // and the flag cannot cancel a `true` in the config.
+        let off = dir.file("off.toml", "[csharp]\nstrip_comments = false\n");
+        let a = dir.file(
+            "A.cs",
+            "public class A\n{\n\n    // note\n    void F() {}\n}\n",
+        );
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            off.to_str().unwrap(),
+            "--csharp-strip-comments",
+            a.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "public class A\n{\nvoid F() {}\n}\n"
+        );
+
+        let on = dir.file("on.toml", "[csharp]\nstrip_comments = true\n");
+        let b = dir.file(
+            "B.cs",
+            "public class B\n{\n\n    // note\n    void F() {}\n}\n",
+        );
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            on.to_str().unwrap(),
+            "--csharp-strip-comments",
+            b.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&b).unwrap(),
+            "public class B\n{\nvoid F() {}\n}\n"
+        );
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn a_csharp_config_table_without_keys_keeps_the_built_in_defaults() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[csharp]\n");
+        let cs = dir.file(
+            "A.cs",
+            "public class A\n{\n\n    // note\n    void F() {}\n}\n",
+        );
+        let (code, _) = run_cli(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            cs.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        assert_eq!(
+            std::fs::read_to_string(&cs).unwrap(),
+            "public class A\n{\n// note\nvoid F() {}\n}\n"
+        );
+    }
+
+    #[cfg(feature = "csharp")]
+    #[test]
+    fn unknown_csharp_config_key_is_an_error() {
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[csharp]\nstrip_xml_doc = true\n");
+        let cs = dir.file("A.cs", "public class A {}\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            cs.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("invalid config file"), "{err}");
+        assert!(err.contains("strip_xml_doc"), "{err}");
+        assert_eq!(std::fs::read_to_string(&cs).unwrap(), "public class A {}\n");
     }
 
     #[test]
@@ -2659,6 +2968,77 @@ mod tests {
         assert_eq!(err.matches("warning:").count(), 1);
         assert!(err.contains("py_compile"), "{err}");
         assert!(!err.contains("javac"), "{err}");
+    }
+
+    // The same four surfaces for a build without the `csharp` cargo feature.
+
+    #[cfg(not(feature = "csharp"))]
+    #[test]
+    fn csharp_paths_are_unsupported_without_the_csharp_feature() {
+        let dir = Scratch::new();
+        let cs = dir.file("A.cs", "public  class  A  {}\n");
+        let (code, text) = run_cli(&["format", cs.to_str().unwrap()]);
+        assert_eq!(code, 2);
+        assert!(text.contains("unsupported language"), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(&cs).unwrap(),
+            "public  class  A  {}\n"
+        );
+
+        let py = dir.file("keep.py", "x = 1\n");
+        let (code, text) = run_cli(&["stats", dir.0.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(text.contains("keep.py"), "{text}");
+        assert!(!text.contains("A.cs"), "{text}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "csharp"))]
+    #[test]
+    fn the_csharp_strip_flag_does_not_exist_without_the_csharp_feature() {
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, text) = run_cli(&["format", "--csharp-strip-comments", py.to_str().unwrap()]);
+        assert_eq!(code, 2);
+        assert!(text.contains("--csharp-strip-comments"), "{text}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "csharp"))]
+    #[test]
+    fn a_csharp_config_table_names_the_missing_feature_without_the_csharp_feature() {
+        // A configured C# option must not be silently ignored: the run stops
+        // with a message about the build, before any file is touched.
+        let dir = Scratch::new();
+        let cfg = dir.file("tokenpress.toml", "[csharp]\nstrip_comments = true\n");
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&[
+            "format",
+            "--config",
+            cfg.to_str().unwrap(),
+            py.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 2);
+        assert!(err.contains("invalid config file"), "{err}");
+        assert!(err.contains("built without the `csharp` feature"), "{err}");
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    }
+
+    #[cfg(not(feature = "csharp"))]
+    #[test]
+    fn the_external_verify_warning_does_not_mention_csharp_without_the_feature() {
+        // C# sits on the *unimplemented* side of the warning, so a build
+        // without the backend must leave it out for the mirror image of the
+        // reason a build without `java` leaves Java off the implemented side:
+        // there is no `.cs` path for this binary to reach either way.
+        let dir = Scratch::new();
+        let py = dir.file("a.py", "x = 1\n");
+        let (code, _, err) = run_cli_err(&["format", "--verify", "external", py.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert_eq!(err.matches("warning:").count(), 1);
+        assert!(err.contains("py_compile"), "{err}");
+        assert!(!err.contains("`.cs`"), "{err}");
+        assert!(!err.contains("C#"), "{err}");
     }
 
     #[test]

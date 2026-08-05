@@ -1,6 +1,6 @@
 [package]
 name = "tokenpress-cli"
-description = "The tokenpress binary: token-aware formatting for Python, Rust, JavaScript/TypeScript, Ruby, Go and Java"
+description = "The tokenpress binary: token-aware formatting for Python, Rust, JavaScript/TypeScript, Ruby, Go, Java and C#"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,8 +15,8 @@ name = "tokenpress_cli"
 path = "src/cli.rs"
 
 [features]
-default = ["ruby", "go", "java"]
-# The three native backends, all on by default, and independent of each other:
+default = ["ruby", "go", "java", "csharp"]
+# The four native backends, all on by default, and independent of each other:
 # each one carries a build prerequisite the pure-Rust backends do not have, so
 # each one has to be switchable on its own.
 #
@@ -35,13 +35,21 @@ default = ["ruby", "go", "java"]
 #     re-impose a C compiler on `--no-default-features`, which is pure Rust.
 #     `go` and `java` share the engine but neither implies the other, so a
 #     build with only one of them compiles only that grammar.
+#   * `csharp` pulls in `tokenpress-csharp` -> the same engine plus
+#     `tree-sitter-c-sharp`. It is the first grammar here with a live external
+#     scanner, so `cc` compiles `parser.c` **and** `scanner.c` (both C11) --
+#     still no C++, no bindgen and no libclang. Same reason for being a
+#     feature of its own as `go` and `java`: registering it would re-impose a
+#     C compiler on `--no-default-features`, which is pure Rust. It shares the
+#     engine with those two and implies neither, so a build with only one of
+#     the three compiles only that grammar.
 #
 # `--no-default-features` therefore does not mean "without Ruby" or "without
 # the tree-sitter backends": it is the all-off build, the only one that needs
 # no C toolchain at all. Keeping a subset means naming it:
 #
-#   cargo build -p tokenpress-cli --no-default-features --features go,java # no ruby
-#   cargo build -p tokenpress-cli --no-default-features --features ruby    # ruby only
+#   cargo build -p tokenpress-cli --no-default-features --features go,java,csharp # no ruby
+#   cargo build -p tokenpress-cli --no-default-features --features ruby           # ruby only
 #
 # Whatever is dropped, its paths become unsupported paths, its flag stops
 # existing and its `tokenpress.toml` table becomes a config error naming the
@@ -49,6 +57,7 @@ default = ["ruby", "go", "java"]
 ruby = ["dep:tokenpress-ruby"]
 go = ["dep:tokenpress-go"]
 java = ["dep:tokenpress-java"]
+csharp = ["dep:tokenpress-csharp"]
 
 [dependencies]
 tokenpress-core.workspace = true
@@ -58,6 +67,7 @@ tokenpress-js.workspace = true
 tokenpress-ruby = { workspace = true, optional = true }
 tokenpress-go = { workspace = true, optional = true }
 tokenpress-java = { workspace = true, optional = true }
+tokenpress-csharp = { workspace = true, optional = true }
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
 # Config file parsing only: the writer (`display`) half stays out of the build.

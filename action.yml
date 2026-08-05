@@ -15,9 +15,9 @@
 # *there* and not in the consumer's workspace.
 name: TokenPress
 description: >-
-  Fail CI when Python, Rust, JavaScript/TypeScript, Ruby, Go or Java sources
-  are not in TokenPress-normalized, token-minimized form (or rewrite them in
-  place).
+  Fail CI when Python, Rust, JavaScript/TypeScript, Ruby, Go, Java or C#
+  sources are not in TokenPress-normalized, token-minimized form (or rewrite
+  them in place).
 author: TokenPress contributors
 
 branding:
@@ -42,8 +42,8 @@ inputs:
       itself: the walk is `.gitignore`-aware and only picks up `.py`, `.rs`,
       the JavaScript/TypeScript set (`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`,
       `.mts`, `.cts`, `.tsx`), the Ruby set (`.rb`, `.rake`, `.gemspec`, `.ru`,
-      plus files named `Gemfile` or `Rakefile`), `.go` and `.java`, so pointing
-      this at a mixed tree is safe. Subject to the shell's word splitting and
+      plus files named `Gemfile` or `Rakefile`), `.go`, `.java` and `.cs`, so
+      pointing this at a mixed tree is safe. Subject to the shell's word splitting and
       globbing, so `src/*.py` works.
     required: false
     default: .
@@ -51,7 +51,8 @@ inputs:
     description: >-
       Extra `tokenpress` flags, passed through verbatim (whitespace-separated),
       e.g. `--rs-strip-doc-comments --py-strip-comments --js-strip-comments
-      --ruby-strip-comments --go-strip-comments --java-strip-comments`.
+      --ruby-strip-comments --go-strip-comments --java-strip-comments
+      --csharp-strip-comments`.
     required: false
     default: ''
   ruby:
@@ -73,9 +74,9 @@ inputs:
       `tree-sitter-go` grammar, both of which compile C with `cc`) from the
       dependency graph entirely. `.go` paths become unsupported paths in that
       build -- skipped by the directory walk, and an error (exit 2) when named
-      explicitly. Independent of the `ruby` and `java` inputs; the C compiler
-      goes only once `java` is `false` too, since both grammars need it. Any
-      other value fails the step with exit 2.
+      explicitly. Independent of the `ruby`, `java` and `csharp` inputs; the
+      C compiler goes only once `java` and `csharp` are `false` too, since all
+      three grammars need it. Any other value fails the step with exit 2.
     required: false
     default: 'true'
   java:
@@ -86,9 +87,22 @@ inputs:
       generated `parser.c` is compiled with `cc`) from the dependency graph
       entirely. `.java` paths become unsupported paths in that build --
       skipped by the directory walk, and an error (exit 2) when named
-      explicitly. Independent of the `ruby` and `go` inputs: only with *all
-      three* set to `false` does the build need no C toolchain at all.
-      Any other value fails the step with exit 2.
+      explicitly. Independent of the `ruby`, `go` and `csharp` inputs: only
+      with *all four* set to `false` does the build need no C toolchain at
+      all. Any other value fails the step with exit 2.
+    required: false
+    default: 'true'
+  csharp:
+    description: >-
+      `true` (default) builds the CLI with its default-on `csharp` cargo
+      feature. Set it to `false` on a runner without a C compiler: the build
+      then drops `tokenpress-csharp` (and the `tree-sitter-c-sharp` grammar,
+      whose generated `parser.c` *and* external `scanner.c` are compiled with
+      `cc`) from the dependency graph entirely. `.cs` paths become unsupported
+      paths in that build -- skipped by the directory walk, and an error (exit
+      2) when named explicitly. Independent of the `ruby`, `go` and `java`
+      inputs: only with *all four* set to `false` does the build need no C
+      toolchain at all. Any other value fails the step with exit 2.
     required: false
     default: 'true'
 
@@ -112,13 +126,14 @@ runs:
         RUBY: ${{ inputs.ruby }}
         GO: ${{ inputs.go }}
         JAVA: ${{ inputs.java }}
+        CSHARP: ${{ inputs.csharp }}
       run: |
         set -euo pipefail
 
-        # The `ruby`, `go` and `java` inputs decide which cargo features the
-        # build gets, so they are resolved here -- before the cache is
-        # restored, because a binary built with a different feature set must
-        # not be reused under the same key. The three features are
+        # The `ruby`, `go`, `java` and `csharp` inputs decide which cargo
+        # features the build gets, so they are resolved here -- before the
+        # cache is restored, because a binary built with a different feature
+        # set must not be reused under the same key. The four features are
         # independent, so no single input means `--no-default-features`: that
         # is the all-off build, and anything left on has to be named
         # explicitly. The list is built in the manifest's own order, so the
@@ -148,8 +163,16 @@ runs:
             exit 2
             ;;
         esac
+        case "$CSHARP" in
+          true) features="${features:+$features,}csharp"; csharp_tag='csharp' ;;
+          false) csharp_tag='nocsharp' ;;
+          *)
+            echo "::error::tokenpress: unknown csharp input '$CSHARP' (expected 'true' or 'false')"
+            exit 2
+            ;;
+        esac
         case "$features" in
-          'ruby,go,java') build_flags='' ;;
+          'ruby,go,java,csharp') build_flags='' ;;
           '') build_flags='--no-default-features' ;;
           *) build_flags="--no-default-features --features $features" ;;
         esac
@@ -176,8 +199,8 @@ runs:
           echo "action-path=$action_path"
           echo "bin=$action_path/target/release/tokenpress$ext"
           echo "build-flags=$build_flags"
-          echo "cache-key=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-$java_tag-$ref-$lock_hash"
-          echo "cache-prefix=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-$java_tag-"
+          echo "cache-key=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-$java_tag-$csharp_tag-$ref-$lock_hash"
+          echo "cache-prefix=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-$java_tag-$csharp_tag-"
         } >>"$GITHUB_OUTPUT"
 
     - name: Restore the CLI build cache
@@ -209,9 +232,10 @@ runs:
         # manifest is a virtual workspace manifest, which `cargo install`
         # refuses.
         # `$BUILD_FLAGS` is deliberately unquoted: it is empty unless the
-        # `ruby`/`go`/`java` inputs switched a backend off, an empty quoted
-        # argument would be passed to cargo as one, and when it is not empty
-        # its two or three words have to reach cargo as separate arguments.
+        # `ruby`/`go`/`java`/`csharp` inputs switched a backend off, an empty
+        # quoted argument would be passed to cargo as one, and when it is not
+        # empty its two or three words have to reach cargo as separate
+        # arguments.
         cd "$ACTION_PATH"
         cargo build --release --locked --quiet $BUILD_FLAGS \
           -p tokenpress-cli --target-dir "$ACTION_PATH/target"
@@ -257,12 +281,12 @@ runs:
             # claims two extensionless names, and a glob cannot express "this
             # basename": `*Gemfile` would match `myGemfile` too, so the file
             # name is taken off the path first and compared exactly (the CLI
-            # matches `Gemfile`/`Rakefile` case-sensitively). `*.go` and
-            # `*.java` are just extensions -- `go.mod`, `go.sum`, `pom.xml`
-            # and `build.gradle` are not source of either language and do not
-            # match them.
+            # matches `Gemfile`/`Rakefile` case-sensitively). `*.go`,
+            # `*.java` and `*.cs` are just extensions -- `go.mod`, `go.sum`,
+            # `pom.xml`, `build.gradle`, `*.csproj` and `*.sln` are not source
+            # of any of those languages and do not match them.
             case "$path" in
-              *.py | *.rs | *.js | *.mjs | *.cjs | *.jsx | *.ts | *.mts | *.cts | *.tsx | *.rb | *.rake | *.gemspec | *.ru | *.go | *.java)
+              *.py | *.rs | *.js | *.mjs | *.cjs | *.jsx | *.ts | *.mts | *.cts | *.tsx | *.rb | *.rake | *.gemspec | *.ru | *.go | *.java | *.cs)
                 set -- "$@" "$path"
                 ;;
               *)

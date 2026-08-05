@@ -333,7 +333,11 @@ mod tests {
         // The decision itself lives in `paths`, which owns its own table of
         // cases; this only pins that the formatter delegates to it.
         let f = CSharpFormatter::default();
-        for name in ["A.cs", "src/Newtonsoft.Json/Linq/JToken.cs", "A.Designer.cs"] {
+        for name in [
+            "A.cs",
+            "src/Newtonsoft.Json/Linq/JToken.cs",
+            "A.Designer.cs",
+        ] {
             assert!(f.supports(Path::new(name)), "{name} should be supported");
         }
         for name in ["a.go", "A.java", "A.CS", "A.csx", "A.csproj", "cs"] {
@@ -423,7 +427,10 @@ mod tests {
         // which the second half asserts. `policy` records why a carve-out
         // would have to be a text-prefix test, and that the decision is open.
         let source = "/// <summary>The class.</summary>\npublic class A\n{\n    /// <summary>The method.</summary>\n    public void M() {}\n}\n";
-        assert_eq!(stripped(source), "public class A\n{\npublic void M() {}\n}\n");
+        assert_eq!(
+            stripped(source),
+            "public class A\n{\npublic void M() {}\n}\n"
+        );
         assert_eq!(
             fmt(source),
             "/// <summary>The class.</summary>\npublic class A\n{\n/// <summary>The method.</summary>\npublic void M() {}\n}\n"
@@ -438,7 +445,8 @@ mod tests {
         // is about the `#` of a directive and not about a comment, so an
         // indented comment simply loses its indentation like anything else,
         // and both settings run the one path.
-        let source = "class A\n{\n    void M()\n    {\n        // note\n        int x = 1;\n    }\n}\n";
+        let source =
+            "class A\n{\n    void M()\n    {\n        // note\n        int x = 1;\n    }\n}\n";
         assert_eq!(
             fmt(source),
             "class A\n{\nvoid M()\n{\n// note\nint x = 1;\n}\n}\n"
@@ -455,7 +463,8 @@ mod tests {
         // `newline_sensitive = true` (the run before the `#` held a newline,
         // so it still emits one) and not by pinning anything, and deleting the
         // comment above a directive cannot pull it up.
-        let source = "class A\n{\n    // note\n    #region helpers\n    int x = 1;\n    #endregion\n}\n";
+        let source =
+            "class A\n{\n    // note\n    #region helpers\n    int x = 1;\n    #endregion\n}\n";
         assert_eq!(
             fmt(source),
             "class A\n{\n// note\n#region helpers\nint x = 1;\n#endregion\n}\n"
@@ -471,7 +480,8 @@ mod tests {
         // `comment_policy(true)` is assembled from the same three callbacks
         // as `policy::comment_policy`, so the two are one policy written
         // twice; this pins that they cannot drift apart.
-        let source = b"/// <summary>Doc.</summary>\nclass A {\n// note\nint x = 1; /* trailing */\n}\n";
+        let source =
+            b"/// <summary>Doc.</summary>\nclass A {\n// note\nint x = 1; /* trailing */\n}\n";
         let config = config::csharp_config();
         let theirs =
             emit::strip_comments_source(&config, source, &policy::comment_policy()).unwrap();
