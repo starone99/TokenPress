@@ -60,6 +60,10 @@ The toolchain is pinned by `rust-toolchain.toml` (rustc **1.95.0**, with the
 `llvm-tools-preview`, `clippy` and `rustfmt` components); rustup installs it
 automatically. The 1.95 floor comes from `ruff_python_parser` 0.0.6.
 
+On Windows, use an **MSVC host** rather than the gnu one — `rustup override
+set 1.95.0-x86_64-pc-windows-msvc` in your clone. A gnu host needs `dlltool`,
+which the native backends' C dependencies do not get along with here.
+
 CI runs the build and test suite on both `ubuntu-latest` and `windows-latest`,
 so keep changes platform-neutral — in particular path handling and any
 path-string assertions in tests.

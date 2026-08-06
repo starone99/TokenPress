@@ -1,6 +1,6 @@
 /target
 **/*.rs.bk
-/docs/
+/notes/
 /LOOPLOG.md
 /benchmarks/corpus/
 /benchmarks/tokenizers/

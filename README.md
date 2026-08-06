@@ -12,6 +12,16 @@
   <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage">
 </p>
 
+<p align="center">
+  <b>English</b> ·
+  <a href="README_ko.md">한국어</a> ·
+  <a href="README_ja.md">日本語</a> ·
+  <a href="README_zh.md">中文</a> ·
+  <a href="README_es.md">Español</a> ·
+  <a href="README_fr.md">Français</a> ·
+  <a href="README_pt.md">Português</a>
+</p>
+
 ---
 
 If you are doing agentic coding, why are you still running a formatter built
@@ -178,7 +188,7 @@ strip_doc_comments = true
 `check` is the default in both integrations, and it writes nothing. Reach for
 `format` only on the "nobody reads this code" side of the question above.
 Options, the full flag/config mapping and the cargo features are in
-[INTEGRATIONS.md](INTEGRATIONS.md).
+[INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
 ## Or run it yourself
 
@@ -286,14 +296,14 @@ rather than buried: **the two primary languages are the two without external
 verification.** Closing that is the first item on the [roadmap](ROADMAP.md).
 
 Per-language detail — what each backend keeps, what it cannot, and how each
-external checker is invoked — is in [LANGUAGES.md](LANGUAGES.md).
+external checker is invoked — is in [LANGUAGES.md](docs/LANGUAGES.md).
 
 ## Documentation
 
 | | |
 |---|---|
-| [LANGUAGES.md](LANGUAGES.md) | Per-language support, caveats and external checkers |
-| [INTEGRATIONS.md](INTEGRATIONS.md) | pre-commit, GitHub Action, config file, cargo features |
+| [LANGUAGES.md](docs/LANGUAGES.md) | Per-language support, caveats and external checkers |
+| [INTEGRATIONS.md](docs/INTEGRATIONS.md) | pre-commit, GitHub Action, config file, cargo features |
 | [CHANGELOG.md](CHANGELOG.md) | What changed, with the output-affecting entries marked |
 | [benchmarks/RESULTS.md](benchmarks/RESULTS.md) | Full methodology, thirteen corpora, six tokenizers |
 | [benchmarks/SHOWCASE.md](benchmarks/SHOWCASE.md) | The summary, and the ≥40% candidates per tokenizer |

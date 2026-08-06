@@ -5,7 +5,7 @@ GitHub Action, the config file, and the cargo features that decide which
 backends get built.
 
 **Before wiring any of these into CI, read the gate in the
-[README](README.md#does-a-human-read-this-code) first.** `format` mode
+[README](../README.md#does-a-human-read-this-code) first.** `format` mode
 rewrites your source, and there is no un-format.
 
 

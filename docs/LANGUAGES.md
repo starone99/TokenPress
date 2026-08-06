@@ -3,7 +3,7 @@
 Per-language detail for TokenPress: what each backend does, what it keeps,
 and what it cannot. The short version — which languages are supported and
 whether the default setting keeps your comments — is the table in the
-[README](README.md).
+[README](../README.md).
 
 **Python and Rust are the primary targets.** They are what the project was
 built for, what the benchmarks cover most deeply — six of the eight corpora in
@@ -27,7 +27,7 @@ output to the language's own toolchain, on top of the built-in AST-equivalence
 check — and **the two primary languages are the two that do not do it yet.**
 Python and Rust have the internal check and nothing else. That is the weakest
 spot in the project, it is stated here rather than buried, and closing it is
-the first item on the [roadmap](ROADMAP.md).
+the first item on the [roadmap](../ROADMAP.md).
 
 ## How each external checker is invoked, and why that one
 
@@ -150,8 +150,8 @@ claims file names without an extension: `Gemfile` and `Rakefile` are matched
 exactly and **case-sensitively** (`gemfile` is not Ruby, and `Gemfile.lock` is
 not Ruby at all). Measured savings are published for one Ruby corpus,
 rack v3.2.6: -9.2% at default settings and -20.8% with `--ruby-strip-comments`,
-both on `o200k_base` — see the [README](README.md#how-much-it-saves) and
-[benchmarks/RESULTS.md](benchmarks/RESULTS.md), which also reports
+both on `o200k_base` — see the [README](../README.md#how-much-it-saves) and
+[benchmarks/RESULTS.md](../benchmarks/RESULTS.md), which also reports
 `cl100k_base` (-8.9% / -20.5%). All five tokenizers are measured — the
 open-model three land at -8.2% / -8.9% / -8.9% at default settings — but one
 corpus is not a language-wide claim. That run has one verification refusal,
@@ -335,7 +335,7 @@ blank line above the code in `test/builder/line.ru`, so `__LINE__` reads `2`
 where the test asserts `3`. Reproduced byte-identically on repeat runs — not a
 flake. That rewrite saved **zero tokens** (35 before, 35 after at
 `o200k_base`: a blank line and a plain newline each cost one token). Full triage in
-[benchmarks/RESULTS.md](benchmarks/RESULTS.md). The limitation is documented
+[benchmarks/RESULTS.md](../benchmarks/RESULTS.md). The limitation is documented
 rather than mitigated: if your code, your tests or your tooling depend on line
 numbers, TokenPress output is not a drop-in replacement for the original —
 keep it.
