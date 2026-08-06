@@ -2,7 +2,7 @@
 //! minimum whitespace that still lexes identically (RS01, RS02), and handles
 //! doc-comment attributes (RSO1).
 
-use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Literal, Spacing, TokenStream, TokenTree};
 use quote::ToTokens;
 
 /// Character pairs that would lex as (the start of) one operator if glued.
@@ -102,25 +102,54 @@ fn match_doc_attr(trees: &[TokenTree]) -> Option<(String, bool, usize)> {
     }
 }
 
-/// A line qualifies for the `///` form only when it round-trips exactly: a
-/// plain `"..."` literal with no escapes and no interior quote handling.
+/// A line qualifies for the `///` / `//!` form only when that line lexes back
+/// to the *identical* attribute. A line comment carries its text verbatim —
+/// it has no escape sequences — so the literal's **value** is what the marker
+/// is prefixed to, and quotes and backslashes are no obstacle. Three things
+/// are:
+///
+///   * a value that is not a single line (`\n`) or holds any other control
+///     character, which no line comment can carry;
+///   * a value starting with `/` under `///`, because `////…` lexes as an
+///     ordinary comment and the documentation would be lost (`//!/…` is still
+///     an inner doc comment, so the inner form has no such restriction);
+///   * a literal that re-encodes differently from the input (`"\u{20}x"`,
+///     `r"x"`), which would leave the output token stream unequal to the
+///     input's and fail verification.
+///
 /// Qualifying is per line, but the choice is made per block (`doc_block`).
 fn doc_comment_line(lit: &str, inner: bool) -> Option<String> {
-    let body = lit.strip_prefix('"')?.strip_suffix('"')?;
-    if body.contains('\\') || body.contains('"') {
+    let value = syn::parse_str::<syn::LitStr>(lit).ok()?.value();
+    if value.chars().any(char::is_control) {
+        return None;
+    }
+    if !inner && value.starts_with('/') {
+        return None;
+    }
+    if Literal::string(&value).to_string() != lit {
         return None;
     }
     let marker = if inner { "//!" } else { "///" };
-    Some(format!("{marker}{body}\n"))
+    Some(format!("{marker}{value}\n"))
 }
 
 /// The contiguous run of doc attributes of the same kind (all outer or all
 /// inner — an inner/outer boundary ends the run) starting at `trees[0]`:
 /// returns (trees consumed, sugared lines). The lines are `Some` only when
 /// *every* line of the block qualifies for the `///` / `//!` form; one raw
-/// line forces the whole block raw, because rustdoc strips the conventional
-/// leading space from sugared fragments but keeps it on raw ones, so a mixed
-/// block would misindent the doc example it reconstructs.
+/// line forces the whole block raw.
+///
+/// The reason is rustdoc's unindentation, measured against rustdoc 1.95.0: it
+/// takes the minimum indentation over an item's doc fragments and strips it
+/// from each, but a fragment that came from a raw `#[doc = …]` attribute is
+/// stripped *one column less* whenever the item also holds a sugared
+/// fragment. A raw line next to sugared ones therefore keeps the conventional
+/// leading space the sugared ones lose, which misindents any doc example the
+/// block reconstructs — invisible to token equivalence, visible to the doc
+/// test. Normalizing that space away in the emitted literal is not open to us
+/// either: it would change the literal, and `verify::equivalent` compares
+/// literals verbatim, so the output could never be written. Hence one form
+/// per block; `doc_comment_line` is what keeps that fallback rare.
 fn doc_block(trees: &[TokenTree]) -> Option<(usize, Option<Vec<String>>)> {
     let (lit, inner, consumed) = match_doc_attr(trees)?;
     let mut used = consumed;
@@ -354,23 +383,27 @@ mod tests {
     }
 
     #[test]
-    fn escaped_doc_content_falls_back_to_attribute_form() {
-        let out = render_src("#[doc = \"say \\\"hi\\\"\"]\nfn f() {}");
-        assert!(out.starts_with("#[doc="));
+    fn quoted_doc_content_is_resugared_because_a_line_comment_has_no_escapes() {
+        // `#[doc = " say \"hi\""]` is what the lexer makes of `/// say "hi"`,
+        // and the line comment carries the quotes verbatim, so the sugared
+        // form lexes back to the identical attribute.
+        assert_eq!(
+            render_src("#[doc = \" say \\\"hi\\\"\"]\nfn f() {}"),
+            "/// say \"hi\"\nfn f(){}"
+        );
     }
 
     #[test]
-    fn a_doc_block_with_one_escaped_line_is_emitted_entirely_raw() {
-        // rustdoc unindents sugared and raw fragments differently, so the
-        // whole contiguous block has to agree on one form.
-        let out = render_src(
-            "/// Read patterns.\n/// ```\n#[doc = \" let s = \\\"a\\\\nb\\\";\"]\n/// ```\nfn f() {}",
+    fn a_doc_block_with_quotes_and_backslashes_stays_sugared_line_by_line() {
+        // The ripgrep shape: a fenced example whose middle line holds a Rust
+        // string literal. Every line is a `///` line in the source and comes
+        // back as the same `///` line, so rustdoc sees the fragment kinds and
+        // the indentation it saw before.
+        let src = "/// Read patterns.\n/// ```\n/// let s = \"a\\nb\";\n/// ```\nfn f() {}";
+        assert_eq!(
+            render_src(src),
+            "/// Read patterns.\n/// ```\n/// let s = \"a\\nb\";\n/// ```\nfn f(){}"
         );
-        assert!(
-            !out.contains("///"),
-            "sugared line inside a raw block: {out}"
-        );
-        assert_eq!(out.matches("#[doc=").count(), 4, "{out}");
     }
 
     #[test]
@@ -382,8 +415,62 @@ mod tests {
     }
 
     #[test]
-    fn an_inner_doc_block_with_one_escaped_line_is_emitted_entirely_raw() {
-        let out = render_src("//! Module.\n#![doc = \"a \\\"b\\\"\"]\nfn f() {}");
+    fn an_inner_doc_line_with_quotes_stays_sugared() {
+        assert_eq!(
+            render_src("//! Module.\n//! a \"b\"\nfn f() {}"),
+            "//! Module.\n//! a \"b\"\nfn f(){}"
+        );
+    }
+
+    #[test]
+    fn a_multi_line_doc_literal_cannot_be_a_line_comment() {
+        // Unlike the doc comments above, this is a string literal, so `\n` is
+        // an escape and the value spans two lines: no `///` line can carry it.
+        let out = render_src("#[doc = \"a\\nb\"]\nfn f() {}");
+        assert_eq!(out, "#[doc=\"a\\nb\"]fn f(){}");
+    }
+
+    #[test]
+    fn a_doc_line_starting_with_a_slash_cannot_use_the_outer_form() {
+        // `////x` is an ordinary comment, so the documentation would be lost.
+        let out = render_src("#[doc = \"/x\"]\nfn f() {}");
+        assert_eq!(out, "#[doc=\"/x\"]fn f(){}");
+        // `//!/x` is still an inner doc comment, so the inner form is fine.
+        assert_eq!(render_src("#![doc = \"/x\"]\nfn f() {}"), "//!/x\nfn f(){}");
+    }
+
+    #[test]
+    fn a_literal_that_does_not_re_encode_identically_stays_raw() {
+        // The value is " x", but sugaring would re-lex to `" x"`, not to the
+        // `"\u{20}x"` the input carried, and verification compares literals.
+        let out = render_src("#[doc = \"\\u{20}x\"]\nfn f() {}");
+        assert_eq!(out, "#[doc=\"\\u{20}x\"]fn f(){}");
+        // Same for a raw string literal, and for a control character.
+        assert_eq!(
+            render_src("#[doc = r\"x\"]\nfn f() {}"),
+            "#[doc=r\"x\"]fn f(){}"
+        );
+        assert_eq!(
+            render_src("#[doc = \"a\\tb\"]\nfn f() {}"),
+            "#[doc=\"a\\tb\"]fn f(){}"
+        );
+    }
+
+    #[test]
+    fn a_doc_block_with_one_unsugarable_line_is_emitted_entirely_raw() {
+        // rustdoc unindents sugared and raw fragments differently, so the
+        // whole contiguous block has to agree on one form.
+        let out = render_src("/// Plain.\n#[doc = \"a\\nb\"]\n/// Also plain.\nfn f() {}");
+        assert!(
+            !out.contains("///"),
+            "sugared line inside a raw block: {out}"
+        );
+        assert_eq!(out.matches("#[doc=").count(), 3, "{out}");
+    }
+
+    #[test]
+    fn an_inner_doc_block_with_one_unsugarable_line_is_emitted_entirely_raw() {
+        let out = render_src("//! Module.\n#![doc = \"a\\nb\"]\nfn f() {}");
         assert!(
             !out.contains("//!"),
             "sugared line inside a raw block: {out}"
@@ -395,7 +482,7 @@ mod tests {
     fn inner_and_outer_doc_runs_are_separate_blocks() {
         // The kind change ends the block: the plain inner line stays sugared
         // even though the outer run that follows it has to go raw.
-        let out = render_src("//! Module.\n#[doc = \"a \\\"b\\\"\"]\n/// Plain.\nfn f() {}");
+        let out = render_src("//! Module.\n#[doc = \"a\\nb\"]\n/// Plain.\nfn f() {}");
         assert!(out.starts_with("//! Module.\n"), "{out}");
         assert!(
             !out.contains("///"),
@@ -406,7 +493,7 @@ mod tests {
 
     #[test]
     fn doc_blocks_inside_groups_are_grouped_too() {
-        let out = render_src("mod m {\n/// Plain.\n#[doc = \"a \\\"b\\\"\"]\nfn f() {}\n}");
+        let out = render_src("mod m {\n/// Plain.\n#[doc = \"a\\nb\"]\nfn f() {}\n}");
         assert!(
             !out.contains("///"),
             "sugared line inside a raw block: {out}"

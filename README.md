@@ -34,7 +34,7 @@ and all tokenizers.
 |---|---|---|---|---|---|---|
 | requests v2.32.3 | default | -9.0% | -9.8% | -9.0% | -8.7% | -16.4%⁷ |
 | requests | aggressive¹ | -20.6% | -21.0% | -20.7% | -20.2% | -25.7%⁷ |
-| ripgrep 14.1.1 | default | -17.9%⁸ | **-23.2%**⁸ | -18.3%⁸ | -18.2%⁸ | -28.0%⁷ |
+| ripgrep 14.1.1 | default | -19.2%⁸ | **-23.2%**⁸ | -18.3%⁸ | -18.2%⁸ | -28.0%⁷⁸ |
 | ripgrep | aggressive² | -38.2% | **-42.7%** | -38.1% | -37.9% | -45.1%⁷ |
 | express v5.2.1 | default | -17.3% | -25.0% | -17.6% | -17.4% | -21.7% |
 | express | aggressive³ | -25.4% | **-33.3%** | -25.9% | -25.5% | -29.6% |
@@ -60,23 +60,29 @@ runs read -7.3% / -25.7% / -20.9% / **-39.6%**. In particular **ripgrep's
 bar, and `benchmarks/SHOWCASE.md`'s per-tokenizer lists are LF throughout.
 The other rows in this table are LF and need no such adjustment.
 
-⁸ **This row mixes two emitter revisions and only the first cell has been
-corrected.** The four flagged cells were measured 2026-07-31, before the
-doc-block fix that stopped `tokenpress-rust` emitting a *mixed* doc block
-when one line needs the `#[doc = …]` escape fallback. That form costs more
-tokens than `///`, so the corrected output is legitimately the larger one:
-`o200k_base` is **-17.9%**, re-measured 2026-08-06, not the -18.9%
-published. The Qwen3.6, GLM-5.2 and Kimi K3 cells are still pre-fix and are
-left as measured rather than adjusted — no tokenizer's saving is ever
-estimated from another's here, and those three cannot be re-run without the
-open-model tokenizers. Expect each to move by roughly the same direction and
-scale when it is. The Gemma cell was measured 2026-08-06 and is already
-post-fix, as is the whole aggressive row below, which the fix does not touch
-(`--rs-strip-doc-comments` deletes the attributes before emission). Full
-account, including the single-file mechanism and the tokio row it also
-affects, in
+⁸ **This row mixes three emitter revisions and only the first cell is
+current.** How `tokenpress-rust` re-emits doc comments changed twice on
+2026-08-06, in opposite directions. First a correctness fix: a doc block in
+which one line needed the raw `#[doc = …]` fallback was being emitted
+*mixed*, which misindents a doc example, so the whole block was forced to the
+raw form — and that form costs more tokens than `///`, taking this cell from
+the published -18.9% to -17.9%. Then the fallback itself was narrowed: a line
+comment carries no escape sequences, so a doc line holding quotes or
+backslashes can be sugared back to `///` after all, and only values no line
+comment can carry (a `/*! … */` module doc, say) still fall back. Blocks are
+still emitted in one form, so the misindent cannot return. `o200k_base` is
+**-19.2%** on that build, re-measured 2026-08-06 — past the -18.9% originally
+published rather than back to it. The Qwen3.6, GLM-5.2 and Kimi K3 cells date
+from 2026-07-31 and the Gemma cell from the intermediate build; all four are
+left exactly as measured rather than adjusted — no tokenizer's saving is ever
+estimated from another's here, and none of the four can be re-run without the
+open-model tokenizer files. Expect each to move in the same direction and by
+a similar scale when they are. The aggressive row below is unaffected by
+either change (`--rs-strip-doc-comments` deletes the attributes before
+emission). Full account, including the single-file mechanism, the rustdoc
+behaviour that was measured and the tokio row both changes also affect, in
 [benchmarks/RESULTS.md](benchmarks/RESULTS.md) under "Correction
-(2026-08-06)".
+(2026-08-06)" and "Update (2026-08-06)".
 
 Every corpus in this table is measured on every tokenizer listed; nothing
 here is estimated from one tokenizer's number. `cl100k_base` (GPT-4 /

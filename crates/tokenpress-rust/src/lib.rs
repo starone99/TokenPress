@@ -103,6 +103,19 @@ mod tests {
     }
 
     #[test]
+    fn a_doc_example_holding_a_string_literal_survives_verification() {
+        // The quotes and the backslash reach the emitter escaped, inside the
+        // `#[doc = …]` literal the lexer built; the line comment carries them
+        // verbatim, so the sugared output has to re-lex to the same literal —
+        // which is exactly what token equivalence checks before writing.
+        let src = "/// ```\n/// let s = \"a\\nb\";\n/// ```\npub fn f() {}\n";
+        assert_eq!(
+            fmt(src),
+            "/// ```\n/// let s = \"a\\nb\";\n/// ```\npub fn f(){}"
+        );
+    }
+
+    #[test]
     fn rso1_strips_doc_comments_on_request() {
         let formatter = RustFormatter::new(RustOptions {
             strip_doc_comments: true,

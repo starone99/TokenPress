@@ -10,7 +10,11 @@ corpus 2026-08-05, both on the two embedded tokenizers only, so they are the
 two corpora here still missing their three open-model columns; the
 default-settings Rust rows corrected 2026-08-06 — see the correction
 subsection in "Default settings" — because they were measured before the
-doc-block fix `b1572d3` and the "Binary" line below did not hold for them)
+doc-block fix `b1572d3` and the "Binary" line below did not hold for them,
+then re-measured again later on 2026-08-06 when doc lines holding quotes and
+backslashes became safe to sugar; both re-runs cover the two embedded
+tokenizers only and were made on Linux against CRLF clones that reproduce the
+Windows before-counts exactly, see the "Update" subsection)
 Binary: `cargo build --release -p tokenpress-cli` at the commit containing this file
 Command: `tokenpress stats <corpus> --tokenizer <name> [options]`
 Platform: Windows 11, rustc 1.95.0
@@ -140,20 +144,25 @@ directly; see the behavioral-verification section.
 | requests | Qwen3.6 | 94,786 | 85,548 | **-9.7%** |
 | requests | GLM-5.2 | 86,791 | 78,984 | **-9.0%** |
 | requests | Kimi K3 | 87,235 | 79,645 | **-8.7%** |
-| ripgrep | o200k_base | 420,944 | 345,528 | **-17.9%** ‡ |
-| ripgrep | cl100k_base | 419,272 | 346,161 | **-17.4%** ‡ |
+| ripgrep | o200k_base | 420,944 | 340,296 | **-19.2%** ‡ |
+| ripgrep | cl100k_base | 419,272 | 341,756 | **-18.5%** ‡ |
 | ripgrep | Qwen3.6 | 458,041 | 351,962 | **-23.2%** † |
 | ripgrep | GLM-5.2 | 419,526 | 342,819 | **-18.3%** † |
 | ripgrep | Kimi K3 | 420,393 | 343,904 | **-18.2%** † |
 
-‡ **Corrected 2026-08-06** from the originally published 341,242 / -18.9%
-and 342,663 / -18.3%. † **Stale**: not re-measurable in this environment
-(huggingface.co unreachable), and almost certainly pre-fix as well — GLM-5.2
-and Kimi K3 track `cl100k_base` to within 0.1pp on this corpus, and they sit
-on its *pre-fix* -18.3% rather than its corrected -17.4%. That is an
-inference, not a measurement, which is why the cells are flagged instead of
-being replaced or extrapolated. See "Correction (2026-08-06) — the
-default-settings Rust rows predate the doc-block fix" immediately below.
+‡ **Re-measured 2026-08-06**, twice in one day and on two different emitter
+revisions: first corrected from the originally published 341,242 / -18.9% and
+342,663 / -18.3% to 345,528 / -17.9% and 346,161 / -17.4% (the doc-block fix
+`b1572d3`, subsection immediately below), then re-measured again to the
+figures in the table once doc lines holding quotes and backslashes could be
+sugared safely (subsection "Update (2026-08-06)" after it). † **Stale**: not
+re-measurable in this environment (huggingface.co unreachable), and pre-fix —
+those three cells date from 2026-07-31 and no later run could touch them.
+GLM-5.2 and Kimi K3 track `cl100k_base` to within 0.1pp on this corpus and sit
+on its 2026-07-31 value of -18.3%; that they now happen to sit near the
+current -18.5% as well is a coincidence of the emitter having overtaken its
+old output, not a re-measurement. Which is exactly why the cells are flagged
+rather than replaced or extrapolated.
 
 ### Correction (2026-08-06) — the default-settings Rust rows predate the doc-block fix `b1572d3`
 
@@ -182,7 +191,7 @@ caught in `grep_cli`'s `patterns_from_reader` doc test.
 sugaring in `emit.rs` and changing nothing else reproduces the published
 numbers exactly, on two corpora and two tokenizers:
 
-| Corpus / tokenizer | Published | Pre-`b1572d3` build | Committed build (correct) |
+| Corpus / tokenizer | Published | Pre-`b1572d3` build | All-or-nothing build |
 |---|---|---|---|
 | ripgrep o200k_base | 341,242 (-18.9%) | **341,242 (-18.9%)** | 345,528 (-17.9%) |
 | ripgrep cl100k_base | 342,663 (-18.3%) | **342,663 (-18.3%)** | 346,161 (-17.4%) |
@@ -204,8 +213,14 @@ statement of the trade: the correct output is the larger one.
 
 **tokio is affected far more than ripgrep** — 7.4pp against 1.0pp — because
 tokio's doc examples are dense in `"` and `\`, so nearly every block is
-forced raw. Its corrected absolute saving at o200k is 184k tokens per
-full-repo prompt, not the 290k recorded below.
+forced raw. Its absolute saving at o200k fell to 184k tokens per full-repo
+prompt from the 290k recorded below.
+
+*(The third column above is the state this subsection was written against —
+the all-or-nothing doc block. It is no longer what the tables report: the
+"Update" subsection below re-measured the same corpora on a later emitter,
+and the table cells now carry that later run's figures. The three columns
+here are kept as the historical evidence they were.)*
 
 **What is not affected.** Every aggressive Rust row in this file
 (`--rs-strip-doc-comments`), and every Python, JavaScript/TypeScript, Ruby,
@@ -222,31 +237,121 @@ cannot be compared directly — its published row is 718 files from the
 pre-JS-backend CLI, where the same corpus now reads 719 files — so its
 o200k figure is flagged without a replacement value.
 
+### Update (2026-08-06) — per-line sugaring is back, and ahead of where it was
+
+The subsection above records a correctness fix that cost tokens: one doc line
+needing the raw `#[doc = …]` fallback forced its whole block raw. That cost is
+now gone, and the ‡ cells in both tables of this section carry the new
+figures. **The fix is not the leading-space normalization that was proposed**
+— that one was ruled out, see below — but a wider sugaring rule.
+
+**Why the fallback was so common, and why it did not have to be.** The old
+rule refused any doc literal containing `"` or `\`, because it pasted the
+*escaped literal body* after the `///` marker. But a line comment has no
+escape sequences: what belongs after the marker is the literal's **value**, so
+`#[doc = " let s = \"a\\nb\";"]` is simply `/// let s = "a\nb";` again. Doc
+lines are now sugared whenever the resulting line lexes back to the identical
+attribute, which covers every quote and backslash. Three cases still cannot,
+and their blocks still go raw as a whole: a value holding a control character
+(no line comment can carry `\n`, which is what a `/*! … */` module doc
+desugars to), a value starting with `/` under `///` (`////…` is an ordinary
+comment, so the documentation would be lost), and a literal that does not
+re-encode identically (`"\u{20}x"`, `r"x"`), which would fail verification.
+Because the choice is still made per block, **no mixed block is produced at
+all** — which is what the `b1572d3` fix was protecting.
+
+**Measured 2026-08-06, Linux, rustc 1.95.0, on the same CRLF clones and the
+two embedded tokenizers, 98 `.rs` for ripgrep and 790 for tokio.** The
+all-or-nothing column is the build the subsection above describes, reproduced
+here to the token:
+
+| Corpus / tokenizer | Before | All-or-nothing build | This build |
+|---|---|---|---|
+| ripgrep o200k_base | 420,944 | 345,528 (-17.9%) | **340,296 (-19.2%)** |
+| ripgrep cl100k_base | 419,272 | 346,161 (-17.4%) | **341,756 (-18.5%)** |
+| tokio o200k_base | 1,418,905 | 1,234,549 (-13.0%) | **1,119,659 (-21.1%)** |
+| tokio cl100k_base | 1,413,320 | 1,226,489 (-13.2%) | **1,128,046 (-20.2%)** |
+
+These are past the pre-`b1572d3` figures (341,242 and 1,128,988 at o200k), not
+merely back to them, because escaped lines are now sugared as well instead of
+being left raw. tokio's absolute o200k saving is **299k** tokens per full-repo
+prompt, against the 184k the correction recorded and the 290k published before
+it. `crates/cli/src/escape.rs` — the single file the correction used to show
+the mechanism — is 1,256 tokens in, was 1,285 out (above its own input) and is
+**1,103** now. Raw `#[doc = …]` attributes surviving in the formatted corpora:
+ripgrep 1,762 → **34**, every one of them a multi-line `/*! … */` module doc;
+tokio 35,384 → **0**. No file is refused by verification in either corpus.
+
+**Behaviour is checked, not assumed.** `benchmarks/verify-upstream.sh ripgrep`
+reports **IDENTICAL** on this build — 1,106 ok / 3 ignored on both copies, 0
+refused — so `grep_cli`'s `patterns_from_reader` doc test, the 1-in-1109
+divergence that caught the earlier attempt at per-line sugaring, passes. That
+is the check that matters here: for a doc line whose origin is `///`, the
+emitted line is byte-identical to the source line and rustdoc sees the same
+fragment kinds and the same indentation it saw before.
+
+**One ambiguity is decided rather than dodged.** The token stream cannot tell
+a source `/// x` from an attribute someone wrote out as `#[doc = " x"]` —
+both arrive as the same literal — so sugaring is a choice about which origin
+to optimize for, and TokenPress chooses `///`. For that origin the output is
+exact. For a hand-written raw attribute the fragment kind changes, which
+rustdoc renders one leading space differently when the same item also holds
+sugared lines. That is not a new trade: the rule before this change already
+sugared every escape-free literal the same way. What changed is only that
+quotes and backslashes no longer exempt a line from it.
+
+**Why the proposed leading-space normalization was not used.** Two reasons,
+both measured. First, rustdoc's rule was established empirically against
+rustdoc 1.95.0 (render a source file and its formatted counterpart with
+`rustdoc --edition 2021 -o <dir>`, diff the item's `docblock` HTML;
+`--output-format json` needs nightly): rustdoc strips the minimum indentation
+over an *item's* doc fragments from each fragment, except that a fragment from
+a raw attribute is stripped one column less whenever the item also holds a
+sugared fragment. Emitting the raw literal one space short does cancel that
+out — but only while every non-blank doc line of the item has a leading space.
+One `///no-space` line puts the minimum at zero, the "one column less"
+saturates there, and the normalized line renders one space short; the same
+holds when the offending line sits in another doc block of the same item,
+split off by a non-doc attribute, where a per-block emitter cannot see it.
+Second, and decisively: normalizing changes the literal, `verify::equivalent`
+compares literals verbatim, and output that is not token-equivalent to its
+input is never written. The normalization would have had to weaken the
+verification gate to be usable at all.
+
+**Unaffected**, again: every aggressive Rust row (`--rs-strip-doc-comments`
+deletes the attributes before emission), and every non-Rust row at any
+setting.
+
 ### Well-known projects (default settings, savings %)
 
 | Project | o200k_base | cl100k_base | Qwen3.6 | GLM-5.2 | Kimi K3 |
 |---|---|---|---|---|---|
 | Django (4.22M tok) | -10.3% | -10.6% | **-12.1%** | -10.6% | -10.3% |
 | FastAPI (738k tok) | -22.2% | -22.7% | **-26.7%** | -22.6% | -22.6% |
-| tokio (1.42M tok) | -13.0% ‡ | -13.2% ‡ | **-23.1%** † | -19.6% † | -19.5% † |
+| tokio (1.42M tok) | -21.1% ‡ | -20.2% ‡ | **-23.1%** † | -19.6% † | -19.5% † |
 | LangChain (2.96M tok) | -12.5% | -12.9% | **-15.6%** | -12.9% | -12.2% |
 | transformers (17.0M tok) | -8.6% | -8.9% | **-10.3%** | -8.9% | -8.5% |
 | uv (4.81M tok) | -13.3% † | -13.5% † | **-16.9%** † | -13.3% † | -13.5% † |
 
-‡ **Corrected 2026-08-06** from the originally published -20.4% / -19.6%.
-† **Stale**: not re-measurable here (open-model tokenizers need
-huggingface.co; uv's published row is a 718-file, pre-JS-backend run and is
-not directly comparable to the 719 files the same pin now reports). tokio's
-GLM-5.2 cell sitting exactly on `cl100k_base`'s pre-fix -19.6% is the same
-inference recorded above. Both markers point at the correction subsection
-above. The Python-only rows — Django, FastAPI, LangChain, transformers — are
-unaffected.
+‡ **Re-measured 2026-08-06**, twice: the originally published -20.4% / -19.6%
+was first corrected to -13.0% / -13.2% by the doc-block fix `b1572d3`, then
+re-measured to the figures in the table on the wider sugaring rule — 1,418,905
+→ 1,119,659 and 1,413,320 → 1,128,046. See the "Correction" and "Update"
+subsections above. † **Stale**: not re-measurable here (open-model tokenizers
+need huggingface.co; uv's published row is a 718-file, pre-JS-backend run and
+is not directly comparable to the 719 files the same pin now reports). uv is
+doubly stale, being a mixed tree whose Rust half both later runs would have
+moved. tokio's GLM-5.2 cell sitting exactly on `cl100k_base`'s 2026-07-31
+-19.6% is the same inference recorded above. All three markers point at the
+subsections above. The Python-only rows — Django, FastAPI, LangChain,
+transformers — are unaffected.
 
 Token totals in parentheses are the o200k before-counts. Absolute savings at
-o200k: Django 435k, FastAPI 163k, tokio **184k** (corrected 2026-08-06 from
-290k), LangChain 370k, transformers 1.46M, uv 641k tokens per full-repo
-prompt. Qwen3.6 consistently benefits the most (its tokenizer prices
-whitespace runs highest).
+o200k: Django 435k, FastAPI 163k, tokio **299k** (re-measured 2026-08-06; it
+read 290k when published and 184k under the all-or-nothing doc block),
+LangChain 370k, transformers 1.46M, uv 641k tokens per full-repo prompt.
+Qwen3.6 consistently benefits the most (its tokenizer prices whitespace runs
+highest).
 
 ### JavaScript/TypeScript — expressjs/express (default settings, added 2026-08-02)
 
@@ -501,7 +606,7 @@ language here:
   21,590 line breaks is still in the output. Rust, whose newlines carry no
   syntax, deletes them outright — and additionally loses every `//` and
   `/* */` comment through the `syn` token stream. Those two together are why
-  ripgrep's default run reads -17.9% where gin's reads -6.4% (across the
+  ripgrep's default run reads -19.2% where gin's reads -6.4% (across the
   CRLF/LF platform boundary described below, which is worth well under a
   point and does not change the comparison).
 * **Comments are all kept at this setting**, unlike Rust and JS/TS.
@@ -1375,6 +1480,16 @@ stopped growing after csvhelper.
 | gin | 95 | -6.8% | -18.8% | 216,156 | 175,474 |
 | rack | 104 | -7.6% | -18.2% | 224,100 | 183,226 |
 
+**The two Rust `default` cells here predate the 2026-08-06 doc-sugaring
+change** (tokio -17.4%, ripgrep -20.9%, and uv's -15.3% for its Rust half).
+They were taken on the all-or-nothing build described in "Correction
+(2026-08-06)" and would move on the current one, exactly as the embedded
+tokenizers' cells did. They are left as measured: Gemma 4 needs a tokenizer
+file this environment cannot download, and no figure here is ever estimated
+from another tokenizer's. The `aggressive` column is unaffected —
+`--rs-strip-doc-comments` deletes the doc attributes before emission — and so
+is every non-Rust row at either setting.
+
 **ripgrep reads 99 files here, not the 98 of the table above.** The extra file
 is `pkg/brew/ripgrep-bin.rb`, a Ruby file inside the Rust corpus that the
 `tokenpress-ruby` backend now covers; it accounts for exactly the 268-token
@@ -1593,9 +1708,10 @@ Two caveats on this list:
   o200k's 421k on the same corpus), so whitespace removal pays off more.
   This is the strongest evidence for the premise that TokenPress optimizes
   tokens, not characters. **Both halves of this pair are pre-`b1572d3`
-  figures** (see the correction subsection above): o200k's default row is now
-  -17.9%, Qwen3.6's has not been re-measured, and the +4.3pp gap must not be
-  recomputed by mixing the corrected o200k figure with the stale Qwen one.
+  figures** (see the correction and update subsections above): o200k's
+  default row is now -19.2%, Qwen3.6's has not been re-measured, and the
+  +4.3pp gap must not be recomputed by mixing the re-measured o200k figure
+  with the stale Qwen one.
   The same point is made without this caveat by the aggressive rows, which
   the fix does not touch: -42.7% against -38.2%, +4.5pp.
 * JavaScript lands between the two: express saves -17.3% at default settings
@@ -2094,10 +2210,20 @@ forcing a whole block raw enlarges default-settings Rust output: ripgrep CRLF
 o200k moves 341,242 → 345,528 (-18.9% → -17.9%) and tokio CRLF o200k
 1,128,988 → 1,234,549 (-20.4% → -13.0%). Aggressive Rust rows do not move at
 all, because `--rs-strip-doc-comments` removes the attributes before
-emission. See "Correction (2026-08-06)" in the default-settings section. The
-cheaper alternative the original task considered — normalizing the leading
-space on the raw fallback so per-line sugaring stays safe — was not taken and
-remains open; it would recover ~4.3k tokens on ripgrep and ~106k on tokio.
+emission. See "Correction (2026-08-06)" in the default-settings section.
+
+**That cost was recovered later the same day, and the suite was re-run.** The
+cheaper alternative the original task named — normalizing the leading space on
+the raw fallback — turned out to be unusable (it changes the literal, and
+verification compares literals verbatim, so the output could never be
+written). What replaced it is a wider sugaring rule: a line comment carries no
+escapes, so the literal's *value* goes after the `///` marker and quotes and
+backslashes stop forcing the fallback at all. Blocks are still emitted in one
+form, so the mixed-block defect this section is about cannot return. ripgrep
+CRLF o200k is 340,296 (-19.2%) on that build and tokio 1,119,659 (-21.1%),
+both past the pre-`b1572d3` figures; `verify-upstream.sh ripgrep` was re-run
+and reports IDENTICAL, `patterns_from_reader` included. Full figures in
+"Update (2026-08-06)" in the default-settings section.
 
 ### express v5.2.1 — IDENTICAL
 
