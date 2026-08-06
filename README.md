@@ -101,12 +101,57 @@ formatted code and answer about it, but a diff against the formatted copy will
 not apply to an unformatted original. **A file a model is going to edit should
 be given to it unformatted.**
 
-## Installation
+## Use it in your project
 
-**Install script** — downloads the release for your host, verifies it against
-the release's `SHA256SUMS`, and refuses to install if that check fails.
+Like any other formatter, the version belongs to the project rather than to
+your machine — otherwise two people on different versions reformat each
+other's files forever. Pin it in a hook or an Action and nobody has to install
+anything.
+
+**pre-commit** — the framework fetches and builds the pinned revision itself:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/starone99/TokenPress
+    rev: v0.1.0                  # the pin is the point — bump it deliberately
+    hooks:
+      - id: tokenpress-check     # writes nothing; fails if anything would change
+    # - id: tokenpress-format    # rewrites in place. Read the gate above first.
+```
+
+**GitHub Action** — one step in an existing workflow:
+
+```yaml
+- uses: starone99/TokenPress@v0.1.0
+  with:
+    paths: src tests
+    mode: check                  # `format` rewrites the workspace
+```
+
+**`tokenpress.toml`** — flags per language, picked up from the nearest parent
+directory, so the hook, the Action and your own runs all agree:
+
+```toml
+[python]
+strip_comments = true
+[rust]
+strip_doc_comments = true
+```
+
+`check` is the default in both integrations, and it writes nothing. Reach for
+`format` only on the "nobody reads this code" side of the question above.
+Options, the full flag/config mapping and the cargo features are in
+[INTEGRATIONS.md](INTEGRATIONS.md).
+
+## Or run it yourself
+
+For a one-off — measuring a tree, or generating the copy you are about to hand
+a model — install the CLI.
 
 ```bash
+# install script: downloads the release for your host and verifies it against
+# the release's SHA256SUMS before extracting anything
 curl -fsSL https://raw.githubusercontent.com/starone99/TokenPress/master/install.sh | sh
 ```
 
@@ -114,51 +159,26 @@ curl -fsSL https://raw.githubusercontent.com/starone99/TokenPress/master/install
 irm https://raw.githubusercontent.com/starone99/TokenPress/master/install.ps1 | iex
 ```
 
-`TOKENPRESS_VERSION` pins a tag, `TOKENPRESS_BIN_DIR` changes where it lands
-(default `~/.local/bin`, or `%LOCALAPPDATA%\TokenPress\bin` on Windows).
-
-**Prebuilt binaries** — [the releases page](https://github.com/starone99/TokenPress/releases)
-carries an archive per target plus `SHA256SUMS`:
-
-| Platform | Archive |
-|---|---|
-| Linux x86_64 | `tokenpress-<tag>-x86_64-unknown-linux-gnu.tar.gz` |
-| macOS Apple Silicon | `tokenpress-<tag>-aarch64-apple-darwin.tar.gz` |
-| macOS Intel | `tokenpress-<tag>-x86_64-apple-darwin.tar.gz` |
-| Windows x86_64 | `tokenpress-<tag>-x86_64-pc-windows-msvc.zip` |
-
-**From source** — the only route on any other platform:
-
 ```bash
+# or with a Rust toolchain
 cargo install --git https://github.com/starone99/TokenPress tokenpress-cli
 ```
 
-```bash
-git clone https://github.com/starone99/TokenPress && cd TokenPress
-cargo build --release -p tokenpress-cli     # ./target/release/tokenpress
-```
+Prebuilt archives and `SHA256SUMS` are on
+[the releases page](https://github.com/starone99/TokenPress/releases) for Linux
+x86_64, macOS (Apple Silicon and Intel) and Windows x86_64; any other platform
+builds from source. `TOKENPRESS_VERSION` pins a tag and `TOKENPRESS_BIN_DIR`
+changes where the script installs. Building the Ruby, Go, Java and C# backends
+needs a C compiler, and libclang for Ruby — `--no-default-features` needs
+neither, and `--features go,java` adds back only what you name.
 
-Building the Ruby, Go, Java and C# backends needs a C compiler, and libclang
-for Ruby. A build with none of them needs neither:
-
-```bash
-cargo install --git https://github.com/starone99/TokenPress tokenpress-cli \
-    --no-default-features                       # Python, Rust and JS/TS only
-cargo install --git https://github.com/starone99/TokenPress tokenpress-cli \
-    --no-default-features --features go,java    # ...plus the ones you name
-```
-
-Full prerequisites and the feature matrix are in
-[CONTRIBUTING.md](CONTRIBUTING.md) and
-[INTEGRATIONS.md](INTEGRATIONS.md#cargo-features).
-
-## Quick start
+Then:
 
 ```bash
 tokenpress stats  <PATH>...        # what it would save — writes nothing
 tokenpress diff   <PATH>...        # unified diff — writes nothing
 tokenpress format <PATH>...        # rewrite in place (dirs walk recursively)
-tokenpress check  <PATH>...        # CI gate: exit 1 if anything would change
+tokenpress check  <PATH>...        # exit 1 if anything would change
 ```
 
 Start with `stats`. It touches nothing and tells you whether this is worth it
@@ -231,21 +251,6 @@ verification.** Closing that is the first item on the [roadmap](ROADMAP.md).
 
 Per-language detail — what each backend keeps, what it cannot, and how each
 external checker is invoked — is in [LANGUAGES.md](LANGUAGES.md).
-
-## Integrations
-
-A pre-commit hook, a GitHub Action and a `tokenpress.toml` config file, all
-with a `check` mode that writes nothing. Setup and options in
-[INTEGRATIONS.md](INTEGRATIONS.md).
-
-```yaml
-# .pre-commit-config.yaml
-repos:
-  - repo: https://github.com/starone99/TokenPress
-    rev: v0.1.0
-    hooks:
-      - id: tokenpress-check   # writes nothing; fails if anything would change
-```
 
 ## Documentation
 
