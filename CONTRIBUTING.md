@@ -370,3 +370,21 @@ Unless you explicitly state otherwise, any contribution intentionally
 submitted for inclusion in the work by you, as defined in the Apache-2.0
 license, shall be dual licensed as above, without any additional terms or
 conditions.
+
+## Workspace layout
+
+Cargo workspace with a single distributed binary:
+
+| Crate | Role |
+|---|---|
+| `tokenpress-core` | Formatter/Tokenizer traits, tokenizer backends (tiktoken, HF, Kimi ranks) |
+| `tokenpress-python` | Python: token-stream re-render + transform passes + verification |
+| `tokenpress-rust` | Rust: syn token-stream re-render + verification |
+| `tokenpress-js` | JavaScript/TypeScript: oxc parse + whitespace-minimal re-emit + verification (built-in and `tsc`/`node`) |
+| `tokenpress-ruby` | Ruby: prism parse + whitespace-minimal re-emit over the source bytes + verification |
+| `tokenpress-treesitter` | The grammar-agnostic tree-sitter engine: parse gate, equivalence artifact, protected spans, whitespace rewriter |
+| `tokenpress-go` | Go: the grammar configuration, path set and comment policy the engine is driven with |
+| `tokenpress-java` | Java: the same, for the Java grammar |
+| `tokenpress-csharp` | C#: the same, for the C# grammar |
+| `tokenpress-cli` | The `tokenpress` binary: discovery, language detection, commands |
+| `tokenpress-wasm` | `wasm-bindgen` boundary for the browser demo (Python, Rust, JavaScript/TypeScript, Go, Java and C# — not Ruby, per-tokenizer token stats) |
