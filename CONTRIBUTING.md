@@ -359,16 +359,12 @@ Keep commits focused and describe *why* in the message, not just *what*.
 
 ## Licensing
 
-TokenPress is dual-licensed under either of
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
+TokenPress is licensed under the Apache License, Version 2.0
+([LICENSE-APACHE](LICENSE-APACHE)).
 
 Unless you explicitly state otherwise, any contribution intentionally
 submitted for inclusion in the work by you, as defined in the Apache-2.0
-license, shall be dual licensed as above, without any additional terms or
+license, shall be licensed as above, without any additional terms or
 conditions.
 
 ## Workspace layout
