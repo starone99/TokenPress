@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/starone99/TokenPress/actions"><img src="https://github.com/starone99/TokenPress/workflows/CI/badge.svg" alt="CI"></a>
-  <a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage">
 </p>
 
@@ -228,7 +228,7 @@ tests on Linux and Windows, and the coverage gate. Rules in
 ## License
 
 Licensed under the Apache License, Version 2.0
-([LICENSE-APACHE](LICENSE-APACHE) or
+([LICENSE](LICENSE) or
 <https://www.apache.org/licenses/LICENSE-2.0>).
 
 Unless you explicitly state otherwise, any contribution intentionally submitted

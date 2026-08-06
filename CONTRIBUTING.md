@@ -360,7 +360,7 @@ Keep commits focused and describe *why* in the message, not just *what*.
 ## Licensing
 
 TokenPress is licensed under the Apache License, Version 2.0
-([LICENSE-APACHE](LICENSE-APACHE)).
+([LICENSE](LICENSE)).
 
 Unless you explicitly state otherwise, any contribution intentionally
 submitted for inclusion in the work by you, as defined in the Apache-2.0

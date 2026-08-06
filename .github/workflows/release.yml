@@ -76,7 +76,7 @@ jobs:
           staging="tokenpress-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "dist/${staging}"
           cp "target/${{ matrix.target }}/release/tokenpress" "dist/${staging}/"
-          cp README.md LICENSE-APACHE "dist/${staging}/"
+          cp README.md LICENSE "dist/${staging}/"
           tar -C dist -czf "dist/${staging}.tar.gz" "${staging}"
 
       - name: Package (zip)
@@ -86,7 +86,7 @@ jobs:
           $staging = "tokenpress-$env:GITHUB_REF_NAME-${{ matrix.target }}"
           New-Item -ItemType Directory -Path "dist/$staging" -Force | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/tokenpress.exe" "dist/$staging/"
-          Copy-Item README.md, LICENSE-APACHE "dist/$staging/"
+          Copy-Item README.md, LICENSE "dist/$staging/"
           Compress-Archive -Path "dist/$staging" -DestinationPath "dist/$staging.zip"
 
       - name: Upload archive
