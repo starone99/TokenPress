@@ -1,7 +1,13 @@
 # TokenPress
 
-> A token-aware formatter for Python, Rust, JavaScript/TypeScript, Ruby, Go,
-> Java and C# that minimizes LLM token usage while preserving behavior.
+> A formatter for agentic coding — optimized for the tokenizer, not the reader.
+
+**If you are doing agentic coding, why are you still running a formatter built
+for a human reader?** Every formatter in common use — Black, gofmt, rustfmt,
+Prettier — optimizes for a person's eyes: line width, alignment, blank lines
+between things. When the reader is a model, none of that is value. It is
+billed tokens. That question is where this project started, and it is the
+whole of what it does.
 
 TokenPress is a token-aware source code formatter for LLMs. Unlike a minifier that
 shrinks characters, TokenPress optimizes against an actual LLM tokenizer —
@@ -15,14 +21,47 @@ s.t.      the transformed code parses, compiles, and behaves identically
 Output that fails verification (re-parse + AST/token equivalence) is never
 written — that is the project's core invariant.
 
-**The intended reader of TokenPress output is a model, not a person.** The use
-case is the machine-consumed copy of a codebase: the repo or file you paste
-into a prompt, hand to an agent's context window, or feed into a RAG index. For
-a human reader, formatting and comments are value; in a machine-only copy they
-are billed tokens. Run TokenPress on the copy bound for the model and keep the
-original for humans — and note that TokenPress never renames an identifier
-(variable, function, type) and never edits the contents of a string; only
-whitespace, newlines, comments, docstrings and annotations are ever touched.
+**The intended reader of TokenPress output is a model, not a person.**
+TokenPress never renames an identifier (variable, function, type) and never
+edits the contents of a string; only whitespace, newlines, comments,
+docstrings and annotations are ever touched.
+
+### One question decides how to use this
+
+**Does a human read this code?**
+
+**Yes — then run TokenPress on the copy bound for the model and leave the
+source alone.** Paste the formatted copy into a prompt, hand it to an agent's
+context window, feed it to a RAG index. This holds even at default settings
+and even in the languages where nothing is discarded: the default run still
+removes blank lines and squeezes indentation, and that is a readability cost
+whatever it does to the information. "Context-lossless" in this repository is
+a claim about what a *model* can still recover, never a claim that a person
+will enjoy reading the result.
+
+**No — nobody reads it, the repository is written and maintained by agents —
+then normalizing the source itself is coherent, and the pre-commit hook and
+GitHub Action exist for exactly that.** There is one canonical form, so stack
+traces, `git blame` and line numbers stay self-consistent; there is no second
+copy to drift. Two things to know before you commit to it, neither of which
+is about human readers:
+
+- **Rust joins every line.** At default settings the Rust backend re-emits a
+  whole file as a single line. Line-based tooling degrades accordingly:
+  agent edit tools that address line ranges, `git diff` (one character changes
+  "the" line), merge conflicts (file-wide rather than hunk-sized), and stack
+  traces (every frame reports line 1). The other backends keep newlines and
+  only drop indentation, so they behave normally. The language with the
+  largest headline saving is the one least suited to this mode.
+- **Rust and JavaScript/TypeScript lose comments at default**, as described
+  below, and there is no un-format. Under a hook this is not a one-time
+  conversion: every comment anyone writes afterwards is removed on the next
+  run.
+
+There is no reverse mapping — no source map, no patch-back. A model can read
+formatted code and answer questions about it, but a diff it produces against
+the formatted copy will not apply to an unformatted original. If a model is
+going to *edit* a file, give it that file unformatted.
 
 ## Measured savings
 
