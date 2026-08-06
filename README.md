@@ -69,66 +69,94 @@ Full corpora, every file passing verification. See
 [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for methodology, corpus pins,
 and all tokenizers.
 
-| Corpus | Setting | GPT-4o/o-series (`o200k_base`) | Qwen3.6 | GLM-5.2 | Kimi K3 | Gemma 4 |
+**How much a repository costs a model, at the aggressive settings.** The bar
+is what *every* tokenizer saves; the shaded tail is how much further the most
+favourable one goes. The spread is the point — this is a token-aware
+formatter, so the answer depends on whose vocabulary is counting.
+
+```text
+                     0%        10%       20%       30%       40%     50%
+                     ├─────────┼─────────┼─────────┼─────────┼───────┤
+commons-lang (Java)  █████████████████████░░                   -42.9 … -46.6%
+express (JS)         █████████████░░░░                         -25.4 … -33.3%
+rack (Ruby)          █████████░                                -18.2 … -20.8%
+gin (Go)             █████████░                                -18.7 … -20.0%
+```
+
+Four corpora measured from one LF checkout on all six tokenizers; requests and
+ripgrep are omitted here because their rows were measured on CRLF and mixing
+the two would flatter the range. Full numbers below.
+
+| Corpus | Setting | GLM-5.2 | Kimi K3 | Gemma 4 | Qwen3.6 | GPT-4o (`o200k_base`) |
 |---|---|---|---|---|---|---|
-| requests v2.32.3 | default | -9.0% | -9.8% | -9.0% | -8.7% | -16.4%⁷ |
-| requests | aggressive¹ | -20.6% | -21.0% | -20.7% | -20.2% | -25.7%⁷ |
-| ripgrep 14.1.1 | default | -19.2%⁸ | **-23.2%**⁸ | -18.3%⁸ | -18.2%⁸ | -28.0%⁷⁸ |
-| ripgrep | aggressive² | -38.2% | **-42.7%** | -38.1% | -37.9% | -45.1%⁷ |
-| express v5.2.1 | default | -17.3% | -25.0% | -17.6% | -17.4% | -21.7% |
-| express | aggressive³ | -25.4% | **-33.3%** | -25.9% | -25.5% | -29.6% |
-| rack v3.2.6 | default | -9.2% | -8.2% | -8.9% | -8.9% | -7.6% |
-| rack | aggressive⁴ | -20.8% | -19.8% | -20.5% | -20.5% | -18.2% |
-| gin v1.11.0 | default | -6.4% | -5.6% | -6.2% | -6.4% | -6.8% |
-| gin | aggressive⁵ | -19.4% | -18.7% | -20.0% | -20.0% | -18.8% |
-| commons-lang 3.17.0 | default | -6.1% | -5.6% | -6.2% | -6.0% | -5.0% |
-| commons-lang | aggressive⁶ | **-45.5%** | **-45.3%** | **-46.6%** | **-45.5%** | **-42.9%** |
+| requests v2.32.3 | default | -9.0% | -8.7% | -16.4%⁷ | -9.8% | -9.0% |
+| requests | aggressive¹ | -20.7% | -20.2% | -25.7%⁷ | -21.0% | -20.6% |
+| ripgrep 14.1.1 | default | -18.3%⁸ | -18.2%⁸ | -28.0%⁷⁸ | **-23.2%**⁸ | -19.2%⁸ |
+| ripgrep | aggressive² | -38.1% | -37.9% | -45.1%⁷ | **-42.7%** | -38.2% |
+| express v5.2.1 | default | -17.6% | -17.4% | -21.7% | -25.0% | -17.3% |
+| express | aggressive³ | -25.9% | -25.5% | -29.6% | **-33.3%** | -25.4% |
+| rack v3.2.6 | default | -8.9% | -8.9% | -7.6% | -8.2% | -9.2% |
+| rack | aggressive⁴ | -20.5% | -20.5% | -18.2% | -19.8% | -20.8% |
+| gin v1.11.0 | default | -6.2% | -6.4% | -6.8% | -5.6% | -6.4% |
+| gin | aggressive⁵ | -20.0% | -20.0% | -18.8% | -18.7% | -19.4% |
+| commons-lang 3.17.0 | default | -6.2% | -6.0% | -5.0% | -5.6% | -6.1% |
+| commons-lang | aggressive⁶ | **-46.6%** | **-45.5%** | **-42.9%** | **-45.3%** | **-45.5%** |
 
 ¹ `--py-strip-comments --py-strip-annotations` ² `--rs-strip-doc-comments`
 ³ `--js-strip-comments` ⁴ `--ruby-strip-comments` ⁵ `--go-strip-comments`
 ⁶ `--java-strip-comments`
 
-⁷ **Read these four Gemma cells with the line-ending caveat, not without
-it.** The requests and ripgrep rows are CRLF measurements — that is what
-their other four columns are too, so the rows are internally consistent —
-but Gemma 4 is an order of magnitude more CRLF-sensitive than any other
-tokenizer here (a CRLF checkout inflates its before-count ~11-13%, where
-`o200k_base` moves ~1% and Qwen3.6 not at all). On an LF checkout the same
-runs read -7.3% / -25.7% / -20.9% / **-39.6%**. In particular **ripgrep's
--45.1% is not a ≥40% showcase candidate**: at LF it is -39.6% and misses the
-bar, and `benchmarks/SHOWCASE.md`'s per-tokenizer lists are LF throughout.
-The other rows in this table are LF and need no such adjustment.
+<details>
+<summary>⁷ <b>Four Gemma cells are CRLF measurements — read them with the line-ending caveat</b></summary>
 
-⁸ **This row mixes three emitter revisions and only the first cell is
-current.** How `tokenpress-rust` re-emits doc comments changed twice on
-2026-08-06, in opposite directions. First a correctness fix: a doc block in
-which one line needed the raw `#[doc = …]` fallback was being emitted
-*mixed*, which misindents a doc example, so the whole block was forced to the
-raw form — and that form costs more tokens than `///`, taking this cell from
-the published -18.9% to -17.9%. Then the fallback itself was narrowed: a line
-comment carries no escape sequences, so a doc line holding quotes or
-backslashes can be sugared back to `///` after all, and only values no line
-comment can carry (a `/*! … */` module doc, say) still fall back. Blocks are
-still emitted in one form, so the misindent cannot return. `o200k_base` is
-**-19.2%** on that build, re-measured 2026-08-06 — past the -18.9% originally
-published rather than back to it. The Qwen3.6, GLM-5.2 and Kimi K3 cells date
-from 2026-07-31 and the Gemma cell from the intermediate build; all four are
-left exactly as measured rather than adjusted — no tokenizer's saving is ever
-estimated from another's here, and none of the four can be re-run without the
-open-model tokenizer files. Expect each to move in the same direction and by
-a similar scale when they are. The aggressive row below is unaffected by
-either change (`--rs-strip-doc-comments` deletes the attributes before
-emission). Full account, including the single-file mechanism, the rustdoc
-behaviour that was measured and the tokio row both changes also affect, in
-[benchmarks/RESULTS.md](benchmarks/RESULTS.md) under "Correction
+The requests and ripgrep rows are CRLF measurements — so are their other four
+columns, so the rows are internally consistent — but Gemma 4 is an order of
+magnitude more CRLF-sensitive than any other tokenizer here. A CRLF checkout
+inflates its before-count ~11-13%, where `o200k_base` moves ~1% and Qwen3.6
+not at all.
+
+On an LF checkout the same four runs read -7.3% / -25.7% / -20.9% /
+**-39.6%**. In particular **ripgrep's -45.1% is not a ≥40% showcase
+candidate**: at LF it is -39.6% and misses the bar, and
+[`benchmarks/SHOWCASE.md`](benchmarks/SHOWCASE.md)'s per-tokenizer lists are
+LF throughout. The other rows in this table are LF and need no adjustment.
+
+</details>
+
+<details>
+<summary>⁸ <b>The ripgrep default row mixes three emitter revisions — only the last cell is current</b></summary>
+
+How `tokenpress-rust` re-emits doc comments changed twice on 2026-08-06, in
+opposite directions.
+
+**First, a correctness fix.** A doc block in which one line needed the raw
+`#[doc = …]` fallback was being emitted *mixed*, which misindents a doc
+example, so the whole block was forced to the raw form. That form costs more
+tokens than `///`, taking this cell from the published -18.9% to -17.9%.
+
+**Then the fallback was narrowed.** A line comment carries no escape
+sequences, so a doc line holding quotes or backslashes can be sugared back to
+`///` after all; only values no line comment can carry — a `/*! … */` module
+doc, say — still fall back. Blocks are still emitted in one form, so the
+misindent cannot return. `o200k_base` is **-19.2%** on that build, past the
+-18.9% originally published rather than back to it.
+
+The Qwen3.6, GLM-5.2 and Kimi K3 cells date from 2026-07-31 and the Gemma cell
+from the intermediate build. All four are left exactly as measured rather than
+adjusted — no tokenizer's saving is ever estimated from another's here, and
+none can be re-run without the open-model tokenizer files. Expect each to move
+in the same direction and by a similar scale when they are. The aggressive row
+is unaffected either way: `--rs-strip-doc-comments` deletes the attributes
+before emission. Full account in
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) under "Correction
 (2026-08-06)" and "Update (2026-08-06)".
 
-Every corpus in this table is measured on every tokenizer listed; nothing
-here is estimated from one tokenizer's number. `cl100k_base` (GPT-4 /
-GPT-3.5-turbo) is omitted for width and is in
-[benchmarks/RESULTS.md](benchmarks/RESULTS.md) along with raw token counts,
-seven further corpora, and the line-ending note that explains why two
-platforms' before-counts differ slightly.
+</details>
+
+Every corpus here is measured on every tokenizer listed; nothing is estimated
+from another's number. `cl100k_base` (GPT-4 / GPT-3.5-turbo) is omitted for
+width, and sits in [benchmarks/RESULTS.md](benchmarks/RESULTS.md) with raw
+token counts, seven further corpora, and the line-ending note.
 
 The default setting is context-lossless for Python: comments, docstrings and
 type annotations are all kept; only syntactic noise (whitespace, blank lines,
@@ -155,19 +183,24 @@ not a character minifier.
 
 ## Language support
 
-| Language | Extensions | Status |
-|---|---|---|
-| Python | `.py` | Supported |
-| Rust | `.rs` | Supported (with the comment/macro caveats below) |
-| JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts` `.cts` `.tsx` | Supported (with the comment/JSX caveats below) |
-| Ruby | `.rb` `.rake` `.gemspec` `.ru`, plus the exact file names `Gemfile` and `Rakefile` | Supported (context-lossless at default settings; see below) |
-| Go | `.go` | Supported (context-lossless at default settings; see below) |
-| Java | `.java` | Supported (context-lossless at default settings; see below) |
-| C# | `.cs` | Supported (context-lossless at default settings; see below) |
+| Language | Extensions | Default keeps comments | External check |
+|---|---|---|---|
+| Python | `.py` | ✅ | ❌ built-in check only |
+| Rust | `.rs` | ❌ `//` and `/* */` always dropped | ❌ built-in check only |
+| JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.mts` `.cts` `.tsx` | ⚠️ partial — trailing and expression-position dropped | ✅ `tsc --noEmit` |
+| Ruby | `.rb` `.rake` `.gemspec` `.ru`, plus `Gemfile` and `Rakefile` | ✅ | ✅ `ruby -c` |
+| Go | `.go` | ✅ | ✅ `gofmt -e` |
+| Java | `.java` | ✅ | ✅ `javac`, stopped after parse |
+| C# | `.cs` | ✅ | ✅ Roslyn `csc` |
 
-**`--verify external` is real for every language in the table except Python and
-Rust**, which is what "Supported" is gated on here: the output is handed to the
+"Supported" is gated on that last column: the output is handed to the
 language's own toolchain, on top of the built-in AST-equivalence check.
+**Python and Rust are the two exceptions** — they have the internal check and
+nothing else, which is the weakest spot in the project and the next thing on
+the [roadmap](ROADMAP.md).
+
+<details>
+<summary><b>How each external checker is invoked, and why that one</b></summary>
 
 For JavaScript/TypeScript it runs
 `tsc --noEmit --noCheck --skipLibCheck --allowJs --jsx preserve` over the
@@ -257,6 +290,8 @@ substantially slower than `--verify ast` — it spawns a probe and two checker
 processes per file, three for Java, where the third is the gate's own
 self-test, and four for C#, whose self-test is a before/after pair.
 
+</details>
+
 `.jsx` and `.tsx` are accepted, with one caveat that limits what they can save:
 **JSX text is never compressed.** Whitespace inside element children is
 semantically significant, so it is re-emitted verbatim — a JSX file saves
@@ -276,6 +311,9 @@ construct the strip flag reaches is a comment-only expression container:
 `{/* c */}` becomes `{}` under `--js-strip-comments`, which is valid JSX and
 renders identically. The CLI prints these caveats on stderr once per run that
 touches a JS/TS file.
+
+<details>
+<summary><b>Ruby, Go, Java and C# — per-language detail</b></summary>
 
 **Ruby is supported.** The backend parses with prism, re-emits, verifies, and
 refuses to write anything that fails; `--verify external` hands the output to
@@ -425,6 +463,8 @@ include path defines `static inline`, so it adds no undefined symbol to the
 link. The demo runs C# at `--verify ast` (in-process re-parse plus AST
 equivalence) and not at `--verify external`, because a WebAssembly module
 cannot spawn a compiler.
+
+</details>
 
 ## Usage
 
