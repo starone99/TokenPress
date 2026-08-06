@@ -103,13 +103,54 @@ be given to it unformatted.**
 
 ## Installation
 
+**Install script** — downloads the release for your host, verifies it against
+the release's `SHA256SUMS`, and refuses to install if that check fails.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/starone99/TokenPress/master/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/starone99/TokenPress/master/install.ps1 | iex
+```
+
+`TOKENPRESS_VERSION` pins a tag, `TOKENPRESS_BIN_DIR` changes where it lands
+(default `~/.local/bin`, or `%LOCALAPPDATA%\TokenPress\bin` on Windows).
+
+**Prebuilt binaries** — [the releases page](https://github.com/starone99/TokenPress/releases)
+carries an archive per target plus `SHA256SUMS`:
+
+| Platform | Archive |
+|---|---|
+| Linux x86_64 | `tokenpress-<tag>-x86_64-unknown-linux-gnu.tar.gz` |
+| macOS Apple Silicon | `tokenpress-<tag>-aarch64-apple-darwin.tar.gz` |
+| macOS Intel | `tokenpress-<tag>-x86_64-apple-darwin.tar.gz` |
+| Windows x86_64 | `tokenpress-<tag>-x86_64-pc-windows-msvc.zip` |
+
+**From source** — the only route on any other platform:
+
 ```bash
 cargo install --git https://github.com/starone99/TokenPress tokenpress-cli
 ```
 
+```bash
+git clone https://github.com/starone99/TokenPress && cd TokenPress
+cargo build --release -p tokenpress-cli     # ./target/release/tokenpress
+```
+
 Building the Ruby, Go, Java and C# backends needs a C compiler, and libclang
-for Ruby. Drop them with `--no-default-features` plus the features you want —
-see [INTEGRATIONS.md](INTEGRATIONS.md#cargo-features).
+for Ruby. A build with none of them needs neither:
+
+```bash
+cargo install --git https://github.com/starone99/TokenPress tokenpress-cli \
+    --no-default-features                       # Python, Rust and JS/TS only
+cargo install --git https://github.com/starone99/TokenPress tokenpress-cli \
+    --no-default-features --features go,java    # ...plus the ones you name
+```
+
+Full prerequisites and the feature matrix are in
+[CONTRIBUTING.md](CONTRIBUTING.md) and
+[INTEGRATIONS.md](INTEGRATIONS.md#cargo-features).
 
 ## Quick start
 

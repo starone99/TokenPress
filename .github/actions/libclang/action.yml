@@ -10,7 +10,7 @@
 # only if the check fails. Internal to this repository -- the consumer-facing
 # composite action is the root action.yml.
 name: Ensure libclang
-description: Makes libclang available to bindgen on Linux and Windows runners.
+description: Makes libclang available to bindgen on Linux, macOS and Windows runners.
 
 runs:
   using: composite
@@ -25,6 +25,22 @@ runs:
         else
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libclang-dev
+        fi
+
+    - name: Ensure libclang (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        # The Xcode Command Line Tools ship libclang, and every hosted macOS
+        # image has them, so this checks rather than installs -- and fails
+        # loudly rather than letting bindgen produce a confusing error later.
+        lib="$(xcrun --find clang >/dev/null 2>&1 &&
+               echo "$(xcode-select -p)/usr/lib/libclang.dylib")"
+        if [ -f "$lib" ]; then
+          echo "libclang is already present at $lib"
+        else
+          echo "::error::libclang.dylib not found under $(xcode-select -p)"
+          exit 1
         fi
 
     - name: Ensure libclang (Windows)
