@@ -762,8 +762,8 @@ depending on the run.
 commons-lang's tests are `assumeTrue`-gated on a time-zone parse that
 succeeds or fails depending on JVM state the suite itself perturbs; six
 pristine runs here produced 19, 13, 19, 13, 19 and 13, including two
-unformatted copies run back to back as a control. An earlier ROADMAP note
-recorded 13 for this same pin. Nothing is wrong with any of those figures. It
+unformatted copies run back to back as a control. An earlier note recorded 13
+for this same pin. Nothing is wrong with any of those figures. It
 is the reason the harness compares a baseline run against a formatted run made
 in the same environment and the same invocation rather than against a recorded
 constant — and, for that one test class, folds `pass` and `skip` together so
@@ -1556,9 +1556,8 @@ is worth about 11-13% on its own, before TokenPress runs at all.
 
 #### Showcase candidates (≥40% aggressive reduction)
 
-Recorded for the ROADMAP P3 task ("hunt for well-known projects per
-supported language where the aggressive setting clears ≥40% token
-reduction"). The hunt is defined **per target-model tokenizer** — savings
+A hunt for well-known projects, per supported language, where the aggressive
+setting clears ≥40% token reduction. The hunt is defined **per target-model tokenizer** — savings
 differ enough by tokenizer that a single list would be wrong for most
 models. Embedded-tokenizer columns measured 2026-08-01 (re-measured
 2026-08-02 with the JS-enabled CLI — unchanged except django, see the
@@ -2463,7 +2462,7 @@ the JVM's defaults, and surefire's default `runOrder` is `filesystem`. So:
 * **No verification target may assert an absolute skip count.** This harness
   compares a baseline run against a formatted run made in the same
   environment, in the same script invocation, and asks only whether they
-  agree. An earlier ROADMAP note recorded "13 skipped" for this pin and a
+  agree. An earlier note recorded "13 skipped" for this pin and a
   later measurement recorded 19; both are correct observations of an unstable
   number.
 * **A control run settles what causes it: position, not formatting.** Two

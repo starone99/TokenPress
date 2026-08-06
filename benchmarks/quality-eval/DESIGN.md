@@ -2,8 +2,7 @@
 
 **Status: design only. Nothing in this document has been executed.**
 Running it requires calling paid LLM APIs, which needs explicit maintainer
-approval (ROADMAP P3, "Downstream quality evaluation"; the question is
-recorded in `LOOPLOG.md`). This file is the pre-registration: it is committed
+approval. This file is the pre-registration: it is committed
 *before* any data is collected, and the git SHA of this file is recorded in
 the results so that anyone can check the analysis against the plan that was
 written down first.
@@ -489,7 +488,7 @@ hand-written table of 30 accept/reject cases). Open-form: rubric judge
 
 ### 4.1 The tokenizer/quality distinction — read this before running anything
 
-The project's standing prohibitions (`ROADMAP.md`) include:
+The project's standing constraints ([`ROADMAP.md`](../../ROADMAP.md)) include:
 
 > Do not extrapolate or publish savings numbers for private/closed
 > tokenizers (e.g. Claude).
@@ -507,7 +506,7 @@ number is reproducible by anyone with an API key. So:
 
 Concretely, this experiment's cost model (§7) uses `o200k_base` counts as a
 *billing proxy for internal budgeting only*. Those proxy numbers must never
-appear in `RESULTS.md`, `SHOWCASE.md`, `README.md` or `promo/` as savings
+appear in `RESULTS.md`, `SHOWCASE.md` or `README.md` as savings
 figures for any model measured here, and the results file must carry that
 sentence verbatim. Every published savings number stays sourced from the
 existing embedded public tokenizers.
@@ -1213,8 +1212,8 @@ headline table. Its existing "Scope and caveats" bullet —
 — stays exactly as it is: it is about *behavioral* verification, which this
 experiment does not touch. The new section is additive.
 
-**4. `ROADMAP.md`** P3's "Downstream quality evaluation" item is checked off
-by the orchestrator once the run completes, with the result summarized in the
+**4. `ROADMAP.md`** moves this out of "Deliberately not planned" once the run
+completes, with the result summarized in the
 same honest form as every other completed item — including if the result is
 unfavourable or inconclusive.
 

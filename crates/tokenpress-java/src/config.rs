@@ -181,8 +181,9 @@ mod tests {
     // reproduces faithfully would be reported as broken by `javac`.
     //
     // Which of them `javac` actually refuses was re-measured here against the
-    // container's javac 21.0.10, because the ROADMAP groups all four under
-    // "divergence rows" without saying which side each falls on:
+    // container's javac 21.0.10, rather than assumed — the four are easy to
+    // group together as "divergence rows" without saying which side each
+    // falls on:
     //
     // | source                          | tree-sitter | javac 21.0.10 |
     // | ------------------------------- | ----------- | ------------- |

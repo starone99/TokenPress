@@ -22,9 +22,7 @@ vendored C library whose sources do not build for `wasm32-unknown-unknown`
 The only wasm targets that build script handles are the `wasm32-*wasi*` family,
 and `wasm-bindgen` generates no browser bindings for those: run over a
 `wasm32-wasip1` build it exits 0 but emits glue with every `#[wasm_bindgen]`
-export missing. Ruby is CLI-only; see the
-`(b) wasm + demo site` note under `### tokenpress-ruby` in `ROADMAP.md` for the
-full investigation.
+export missing. Ruby is therefore CLI-only.
 
 Go, Java and C#, by contrast, *are* here. Their grammars are C too, but
 `tree-sitter-language` already ships a libc shim for `wasm32-unknown-unknown`
