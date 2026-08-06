@@ -515,6 +515,29 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_byte_adjacent_to_a_literal_takes_only_itself() {
+        // The engine's merge rule, seen from the backend a user runs. The
+        // comment ends on the byte the literal starts on; while spans that
+        // merely touched were merged, the run was one deletable `Comment` and
+        // the literal went with the comment — a refusal at `--verify ast` and
+        // a written file with a missing string literal at `--verify reparse`.
+        let source =
+            "class A {\n    void M() {\n        System.Console.WriteLine(/*c*/\"lit\");\n    }\n}\n";
+        assert_eq!(
+            stripped(source),
+            "class A {\nvoid M() {\nSystem.Console.WriteLine( \"lit\");\n}\n}\n"
+        );
+        // The mirror image was kept instead of deleted, because the merged run
+        // inherited the literal's kind: a lost saving from the same rule.
+        let after =
+            "class A {\n    void M() {\n        System.Console.WriteLine(\"lit\"/*c*/);\n    }\n}\n";
+        assert_eq!(
+            stripped(after),
+            "class A {\nvoid M() {\nSystem.Console.WriteLine(\"lit\" );\n}\n}\n"
+        );
+    }
+
+    #[test]
     fn a_boundary_hazard_file_is_left_byte_identical_at_both_settings() {
         // C#'s silent-corruption class, reached through the preprocessor
         // rather than through an escape: to the compiler both `#if FALSE`

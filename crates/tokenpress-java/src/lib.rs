@@ -444,6 +444,29 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_byte_adjacent_to_a_literal_takes_only_itself() {
+        // The engine's merge rule, seen from the backend a user runs. The
+        // comment ends on the byte the literal starts on; while spans that
+        // merely touched were merged, the run was one deletable `Comment` and
+        // the literal went with the comment — a refusal at `--verify ast` and
+        // a written file with a missing string literal at `--verify reparse`.
+        let source =
+            "class A {\n    void m() {\n        System.out.println(/*c*/\"lit\");\n    }\n}\n";
+        assert_eq!(
+            stripped(source),
+            "class A {\nvoid m() {\nSystem.out.println( \"lit\");\n}\n}\n"
+        );
+        // The mirror image was kept instead of deleted, because the merged run
+        // inherited the literal's kind: a lost saving from the same rule.
+        let after =
+            "class A {\n    void m() {\n        System.out.println(\"lit\"/*c*/);\n    }\n}\n";
+        assert_eq!(
+            stripped(after),
+            "class A {\nvoid m() {\nSystem.out.println(\"lit\" );\n}\n}\n"
+        );
+    }
+
+    #[test]
     fn an_escape_hazard_file_is_left_byte_identical_at_both_settings() {
         // Java's one silent-corruption class: `javac` decodes `\uXXXX` before
         // lexing and the grammar does not, so `int y = 2;` is inside the

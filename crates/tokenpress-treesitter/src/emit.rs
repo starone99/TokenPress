@@ -25,13 +25,28 @@
 //!   span instead, which is why the classification survives collection rather
 //!   than being flattened away.
 //!
-//! # Why the sort order is `(start, Reverse(end))`
+//! # Merging is for nesting, so it needs a shared byte
 //!
-//! [`collect_spans`] sorts and merges, so overlapping and touching ranges
-//! become one — a comment inside a protected region, a literal inside a
-//! protected prologue. Merging keeps the kind of the span that *starts* the
-//! merged run, so the sort order decides the classification of the result, and
-//! getting it wrong is silent.
+//! [`collect_spans`] sorts and merges, so ranges that **share a byte** become
+//! one — a comment inside a protected region, a literal inside a protected
+//! prologue. Merging keeps the kind of the span that *starts* the merged run,
+//! which is what makes it the right answer for nesting and the wrong one for
+//! anything else: it *reclassifies* the span it absorbs.
+//!
+//! Two spans that merely **touch** — one ending exactly at the byte the next
+//! starts on — therefore stay two spans. They nest in neither direction, so
+//! there is nothing to resolve, and joining them would hand the second one's
+//! bytes to the first one's policy. A block comment ending where a string
+//! literal begins (`x := /*c*/"lit"`) is exactly that shape: as one merged
+//! `Comment` span the literal is deleted along with the comment, which the
+//! equivalence check refuses and `reparse` does not. Nothing downstream can
+//! tell two touching spans from one: the gap between them is empty, so the gap
+//! policy emits nothing for it, and each span is copied — or blanked — over
+//! the same bytes either way. The rule is "share a byte" rather than "share a
+//! byte or a kind" for the same reason: making it conditional on the kind
+//! would buy a consolidation nobody reads, at the price of a case in the rule.
+//!
+//! # Why the sort order is `(start, Reverse(end))`
 //!
 //! Spans that come from a tree are either disjoint or properly nested, so when
 //! two of them share a start byte, one **contains** the other and the
@@ -258,9 +273,10 @@ impl Span {
 /// in its comment list.
 ///
 /// The result is sorted, non-overlapping and within the source — the
-/// precondition [`rewrite`] is documented to need. Ranges that overlap or
-/// touch are merged, keeping the kind of the outermost one; see the module
-/// docs for why that ordering is the load-bearing part.
+/// precondition [`rewrite`] is documented to need. Ranges that share a byte
+/// are merged, keeping the kind of the outermost one; ranges that only touch
+/// stay separate. See the module docs for why both halves of that are
+/// load-bearing.
 pub fn collect_spans(config: &LanguageConfig, tree: &Tree) -> Vec<Span> {
     let mut spans = Vec::new();
     push_spans(config, tree.root_node(), &mut spans);
@@ -446,8 +462,8 @@ pub struct StripPlan {
 /// Classifies `source` for comment stripping under `policy`.
 ///
 /// Every comment span is deleted except the ones the policy keeps and the ones
-/// that touch the prologue region; a policy that bails out yields the plan that
-/// protects the whole file. See the module docs.
+/// that share a byte with the prologue region; a policy that bails out yields
+/// the plan that protects the whole file. See the module docs.
 pub fn strip_comments_plan<Keep, Prologue, BailOut>(
     config: &LanguageConfig,
     tree: &Tree,
@@ -637,16 +653,21 @@ fn overlaps(region: &Range<usize>, span: Span) -> bool {
     region.start < span.end && span.start < region.end
 }
 
-/// Sorts `spans` and merges every pair that overlaps or touches, keeping the
-/// kind of the span that starts the merged run.
+/// Sorts `spans` and merges every pair that **shares a byte**, keeping the
+/// kind of the span that starts the merged run. Two spans that merely touch —
+/// one ending exactly where the next begins — stay two spans.
 ///
-/// See the module docs for why the sort key is `(start, Reverse(end), kind)`.
+/// The strict `<` is the whole rule: merging exists for nesting, and a nested
+/// span shares bytes with the one containing it. A touch shares none, so
+/// joining the two only reclassifies the second under the first's kind, which
+/// is how a block comment ending where a literal begins used to swallow it.
+/// See the module docs.
 fn merge(mut spans: Vec<Span>) -> Vec<Span> {
     spans.sort_by_key(|span| (span.start, Reverse(span.end), span.kind));
     let mut merged: Vec<Span> = Vec::with_capacity(spans.len());
     for span in spans {
         match merged.last_mut() {
-            Some(last) if span.start <= last.end => last.end = last.end.max(span.end),
+            Some(last) if span.start < last.end => last.end = last.end.max(span.end),
             _ => merged.push(span),
         }
     }
@@ -950,7 +971,11 @@ mod tests {
     }
 
     #[test]
-    fn merging_joins_overlapping_and_touching_spans_and_leaves_disjoint_ones_alone() {
+    fn merging_joins_spans_that_share_a_byte_and_leaves_touching_and_disjoint_ones_alone() {
+        // `0..4` and `2..6` share bytes 2 and 3, so they are one run and the
+        // earlier span's kind decides it. `6..8` starts exactly where that run
+        // ends: it shares no byte with it and stays its own span, as does the
+        // disjoint `10..14`.
         let merged = merge(vec![
             Span::new(10, 14, SpanKind::Comment),
             Span::new(0, 4, SpanKind::Protected),
@@ -960,10 +985,103 @@ mod tests {
         assert_eq!(
             merged,
             vec![
-                Span::new(0, 8, SpanKind::Protected),
+                Span::new(0, 6, SpanKind::Protected),
+                Span::new(6, 8, SpanKind::Protected),
                 Span::new(10, 14, SpanKind::Comment),
             ]
         );
+    }
+
+    #[test]
+    fn merging_leaves_two_touching_spans_of_the_same_kind_alone_as_well() {
+        // The rule is "share a byte", not "share a byte or a kind": two
+        // touching comments stay two spans. Nothing downstream can tell the
+        // difference — each is copied or blanked over the same bytes either
+        // way — and making the merge conditional on the kind would buy a
+        // consolidation nobody reads, at the price of a rule with a case in
+        // it. Pinned so that neither `<=` nor a kind-conditional variant can
+        // come back unnoticed.
+        assert_eq!(
+            merge(vec![
+                Span::new(0, 5, SpanKind::Comment),
+                Span::new(5, 9, SpanKind::Comment),
+            ]),
+            vec![
+                Span::new(0, 5, SpanKind::Comment),
+                Span::new(5, 9, SpanKind::Comment),
+            ]
+        );
+        assert_eq!(
+            merge(vec![
+                Span::new(0, 5, SpanKind::Protected),
+                Span::new(5, 9, SpanKind::Protected),
+            ]),
+            vec![
+                Span::new(0, 5, SpanKind::Protected),
+                Span::new(5, 9, SpanKind::Protected),
+            ]
+        );
+    }
+
+    #[test]
+    fn merging_absorbs_an_empty_span_that_falls_inside_another() {
+        // Collection cannot produce an empty span — the parse gate rejects
+        // every tree with a `MISSING` node, and no configured kind is a
+        // zero-width token — and the prologue's own entry point is guarded by
+        // `is_empty`. `merge` is reachable from the tests directly, though, so
+        // what it does with one is pinned rather than assumed: an empty span
+        // strictly inside another shares a byte position with it and is
+        // absorbed, and one at another's end shares nothing and survives as
+        // the zero bytes it is.
+        assert_eq!(
+            merge(vec![
+                Span::new(0, 4, SpanKind::Protected),
+                Span::new(2, 2, SpanKind::Comment),
+            ]),
+            vec![Span::new(0, 4, SpanKind::Protected)]
+        );
+        let boundary = merge(vec![
+            Span::new(0, 4, SpanKind::Protected),
+            Span::new(4, 4, SpanKind::Comment),
+        ]);
+        assert_eq!(
+            boundary,
+            vec![
+                Span::new(0, 4, SpanKind::Protected),
+                Span::new(4, 4, SpanKind::Comment),
+            ]
+        );
+        // Still the precondition `rewrite` documents, and still the identity.
+        assert_sorted_disjoint_in_bounds(&boundary, 4, "empty span at a boundary");
+        assert_eq!(rewrite(b"abcd", &boundary, keep), b"abcd");
+    }
+
+    #[test]
+    fn a_comment_byte_adjacent_to_a_literal_stays_its_own_span() {
+        // The over-refusal class this rule exists for: `/*c*/` ends exactly
+        // where `"lit"` begins. Merging them would hand the literal to the
+        // comment policy — the merged run keeps the *earlier* kind — and
+        // deleting a comment would delete a string literal with it.
+        let config = go_config();
+        let source = b"package main\n\nfunc f() { g(/*c*/\"lit\") }\n";
+        let spans = spans_of(&config, source);
+        assert_eq!(texts(source, &spans), vec![&b"/*c*/"[..], &b"\"lit\""[..]]);
+        assert_eq!(spans[0].kind, SpanKind::Comment);
+        assert_eq!(spans[1].kind, SpanKind::Protected);
+        assert_eq!(spans[0].end, spans[1].start, "the two have to be touching");
+    }
+
+    #[test]
+    fn a_comment_byte_adjacent_after_a_literal_stays_its_own_span_too() {
+        // The mirror image, which merging classified `Protected` and so kept:
+        // a lost saving rather than a lost literal, and gone for the same
+        // reason.
+        let config = go_config();
+        let source = b"package main\n\nfunc f() { g(\"lit\"/*c*/) }\n";
+        let spans = spans_of(&config, source);
+        assert_eq!(texts(source, &spans), vec![&b"\"lit\""[..], &b"/*c*/"[..]]);
+        assert_eq!(spans[0].kind, SpanKind::Protected);
+        assert_eq!(spans[1].kind, SpanKind::Comment);
     }
 
     #[test]
@@ -1653,6 +1771,28 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_that_only_touches_the_prologue_is_outside_it() {
+        // The other side of the same rule, and the one place where dropping
+        // merge-on-touch is visible beyond the literal case: here the comment
+        // ends on the byte the region starts on. It shares no byte with the
+        // region, so it is not merged into it and the region's own overlap
+        // test — which has always been a strict one — answers `false`. A
+        // language whose prologue has to cover a comment says so by returning
+        // a region that covers it; Go's cannot reach this shape at all, since
+        // its region is `0 .. package_clause.start_byte()` and no comment can
+        // end at byte 0 or begin at the `p` of `package`.
+        let config = go_config();
+        let source = b"//a\npackage main\n";
+        let policy: StandInPolicy =
+            CommentPolicy::new(never_keep, prologue_from_byte_three, never_bail);
+        let plan = plan_for(&config, source, &policy);
+        assert_eq!(plan.deleted, [Span::new(0, 3, SpanKind::Comment)]);
+        assert_eq!(plan.protected, [Span::new(3, 4, SpanKind::Protected)]);
+        // The region's own byte — the newline — is still reproduced verbatim.
+        assert_eq!(stripped(&config, source, &policy), b"\npackage main\n");
+    }
+
+    #[test]
     fn an_empty_prologue_region_contributes_no_span() {
         let config = go_config();
         // The package clause is at byte 0, so the stand-in prologue is `0..0`.
@@ -1776,6 +1916,54 @@ mod tests {
         let source = b"package main\n\nfunc f() {\n\tx := 1 /* c */ + 2\n\t_ = x\n}\n";
         let out = stripped(&config, source, &delete_every_comment());
         assert_eq!(out, b"package main\nfunc f() {\nx := 1 + 2\n_ = x\n}\n");
+        assert!(equivalent(&config, source, &out).unwrap());
+    }
+
+    #[test]
+    fn a_comment_byte_adjacent_to_a_literal_is_deleted_and_the_literal_survives() {
+        // The end-to-end shape of the over-refusal: before the merge rule
+        // required a shared byte, `/*c*/"lit"` came out as one deletable
+        // `Comment` span and the literal went with the comment. At
+        // `--verify ast` that was a refusal; at `--verify reparse` it was a
+        // written file with a string literal missing from it.
+        let config = go_config();
+        let source =
+            b"package main\n\nimport \"fmt\"\n\nfunc f() {\n\tfmt.Println(/*c*/\"lit\")\n}\n";
+        let out = stripped(&config, source, &delete_every_comment());
+        assert_eq!(
+            out,
+            b"package main\nimport \"fmt\"\nfunc f() {\nfmt.Println( \"lit\")\n}\n"
+        );
+        assert!(equivalent(&config, source, &out).unwrap());
+    }
+
+    #[test]
+    fn a_comment_byte_adjacent_after_a_literal_is_deleted_as_well() {
+        // The mirror image was kept, because the merged run inherited the
+        // literal's kind. It is a comment again, so it goes.
+        let config = go_config();
+        let source =
+            b"package main\n\nimport \"fmt\"\n\nfunc f() {\n\tfmt.Println(\"lit\"/*c*/)\n}\n";
+        let out = stripped(&config, source, &delete_every_comment());
+        assert_eq!(
+            out,
+            b"package main\nimport \"fmt\"\nfunc f() {\nfmt.Println(\"lit\" )\n}\n"
+        );
+        assert!(equivalent(&config, source, &out).unwrap());
+    }
+
+    #[test]
+    fn comment_bytes_inside_a_literal_still_survive_stripping() {
+        // The case that must not regress: containment is a shared byte, so it
+        // still merges and the outer kind still wins. These `//` bytes are the
+        // program, and stripping every comment has to leave them alone.
+        let config = go_config();
+        let source = b"package main\n\nvar s = `a // b\nc`\nvar t = \"// not a comment\"\n";
+        let out = stripped(&config, source, &delete_every_comment());
+        assert_eq!(
+            out,
+            b"package main\nvar s = `a // b\nc`\nvar t = \"// not a comment\"\n"
+        );
         assert!(equivalent(&config, source, &out).unwrap());
     }
 
