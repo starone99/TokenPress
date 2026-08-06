@@ -1554,6 +1554,44 @@ ripgrep is not on Gemma's list.** The flip side is a real and previously
 unstated saving — for a Gemma-tokenizer model, converting a CRLF tree to LF
 is worth about 11-13% on its own, before TokenPress runs at all.
 
+##### Default settings on all six tokenizers (added 2026-08-07)
+
+The counterpart to the aggressive table above, for the eight corpora the
+README leads with: **no flags at all**, so comments, docstrings and
+annotations are all kept and only whitespace, blank lines and indentation are
+removed. Same LF checkout, same binary, measured 2026-08-07.
+
+| Corpus | Files | `o200k_base` | `cl100k_base` | Qwen3.6 | GLM-5.2 | Kimi K3 | Gemma 4 |
+|---|---|---|---|---|---|---|---|
+| fastapi | 1,140 | -21.7% | -22.2% | **-26.7%** | -22.1% | -21.6% | -23.9% |
+| ripgrep | 99 | -17.0% | -16.9% | **-22.8%** | -16.9% | -16.6% | -20.9% |
+| uv | 719 | -13.1% | -13.3% | **-16.8%** | -13.1% | -13.3% | -15.3% |
+| langchain | 2,531 | -12.5% | -12.9% | **-15.6%** | -12.9% | -12.2% | -12.7% |
+| tokio | 790 | -11.5% | -12.0% | **-19.1%** | -12.0% | -11.5% | -17.4% |
+| django | 3,032 | -10.0% | -10.3% | **-12.6%** | -10.3% | -9.8% | -9.8% |
+| requests | 36 | -8.5% | -8.6% | **-9.7%** | -8.5% | -7.9% | -7.3% |
+| transformers | 4,700 | -8.6% | -8.9% | **-10.3%** | -8.9% | -8.5% | -7.0% |
+
+**The ranking is not the aggressive ranking.** tokio leads that table at
+-50.5% and sits fifth here at -11.5%: it is doc-comment-dense, so almost all
+of its aggressive saving is the comments the flag deletes, and what remains at
+default settings is whitespace like anywhere else. fastapi is the opposite —
+first here, fourth there. Reading either table as a proxy for the other gets
+both wrong.
+
+**Qwen3.6 is the most generous on every single row**, by 0.9pp to 7.6pp. That
+is the same property the aggressive tables show — it prices whitespace runs
+comparatively expensively, so removing them buys more — and default settings
+are pure whitespace removal, which is where the effect is cleanest. Gemma 4
+is second on the Rust corpora and *last* on the two largest Python ones, so
+"the open-model tokenizers save more" is not a rule; only Qwen's lead is.
+
+**These are the numbers that cost nothing.** No comment, docstring or
+annotation is removed at this setting, and in Python, Ruby, Go, Java and C#
+the output is byte-identical to the input once all whitespace is deleted from
+both. The aggressive figures buy more by deleting prose a model might have
+used, and whether that hurts its answers is unmeasured.
+
 #### Showcase candidates (≥40% aggressive reduction)
 
 A hunt for well-known projects, per supported language, where the aggressive

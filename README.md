@@ -33,13 +33,17 @@ touched.
 
 ## How much it saves
 
-Aggressive settings, full corpora at pinned commits, every file passing
-verification. The solid bar is what *every* tokenizer saves; the shaded tail
-is how much further the most favourable one goes.
+Each row is a **real open-source codebase**, formatted whole at a pinned
+commit, every file passing verification. The solid bar is what *every*
+tokenizer saves; the shaded tail is how much further the most favourable one
+goes.
+
+**Aggressive settings** — the opt-in flags that also drop comments and
+docstrings:
 
 ```text
-                      0%   10%  20%  30%  40%  50%  60%
-                      ├────┼────┼────┼────┼────┼────┤
+target codebase       0%   10%  20%  30%  40%  50%  60%
+──────────────────────├────┼────┼────┼────┼────┼────┤
 tokio (Rust)          █████████████████████████░░░      -50.5 … -55.2%
 ripgrep (Rust)        ███████████████████░░             -37.3 … -42.7%
 langchain (Python)    ███████████████████░░             -37.1 … -41.1%
@@ -50,11 +54,37 @@ uv (Rust + Python)    ███████████░                      
 django (Python)       ██████████░░                      -20.7 … -24.8%
 ```
 
-The spread is the point: savings are per tokenizer, which is why the benchmark
-measures six of them — GLM-5.2, Kimi K3, Gemma 4, Qwen3.6, `o200k_base` and
-`cl100k_base`. The other five supported languages, one corpus each, same run:
+**Default settings** — same codebases, no flags at all. Comments, docstrings
+and type annotations are all kept; only whitespace, blank lines and
+indentation go:
 
 ```text
+target codebase       0%   10%  20%  30%  40%  50%  60%
+──────────────────────├────┼────┼────┼────┼────┼────┤
+fastapi (Python)      ███████████░░                     -21.6 … -26.7%
+ripgrep (Rust)        ████████░░░                       -16.6 … -22.8%
+uv (Rust + Python)    ███████░                          -13.1 … -16.8%
+langchain (Python)    ██████░░                          -12.2 … -15.6%
+tokio (Rust)          ██████░░░░                        -11.5 … -19.1%
+django (Python)       █████░                            -9.8 … -12.6%
+requests (Python)     ████░                             -7.3 … -9.7%
+transformers (Python) ████░                             -7.0 … -10.3%
+```
+
+Note how the order changes. tokio leads the aggressive chart because it is
+doc-comment-dense — strip those and half the repo is gone — but at default
+settings it is mid-pack, because what is left to remove is only whitespace.
+**The default numbers are the ones that cost you nothing**; the aggressive
+ones are a trade you are choosing.
+
+The spread within each row is the other point: savings are per tokenizer,
+which is why the benchmark measures six — GLM-5.2, Kimi K3, Gemma 4, Qwen3.6,
+`o200k_base` and `cl100k_base`. The other five supported languages, one
+codebase each, aggressive, same run:
+
+```text
+target codebase       0%   10%  20%  30%  40%  50%  60%
+──────────────────────├────┼────┼────┼────┼────┼────┤
 commons-lang (Java)   █████████████████████░░           -42.9 … -46.6%
 express (JS)          █████████████░░░░                 -25.4 … -33.3%
 rack (Ruby)           █████████░                        -18.2 … -20.8%
@@ -100,6 +130,12 @@ There is no reverse mapping: no source map, no patch-back. A model can read
 formatted code and answer about it, but a diff against the formatted copy will
 not apply to an unformatted original. **A file a model is going to edit should
 be given to it unformatted.**
+
+**This is also why there is no editor plugin and no format-on-save.** That is
+how most people meet Black, Prettier or rustfmt, and it is the one integration
+TokenPress should not have: the file open in your editor is, by definition,
+one a human is reading. An extension that ran this on save would be wrong in
+exactly the case the question above is asking about.
 
 ## Use it in your project
 
@@ -257,8 +293,8 @@ external checker is invoked — is in [LANGUAGES.md](LANGUAGES.md).
 | | |
 |---|---|
 | [LANGUAGES.md](LANGUAGES.md) | Per-language support, caveats and external checkers |
-| [VERIFICATION.md](VERIFICATION.md) | What the check proves, and what is never touched |
 | [INTEGRATIONS.md](INTEGRATIONS.md) | pre-commit, GitHub Action, config file, cargo features |
+| [CHANGELOG.md](CHANGELOG.md) | What changed, with the output-affecting entries marked |
 | [benchmarks/RESULTS.md](benchmarks/RESULTS.md) | Full methodology, thirteen corpora, six tokenizers |
 | [benchmarks/SHOWCASE.md](benchmarks/SHOWCASE.md) | The summary, and the ≥40% candidates per tokenizer |
 | [ROADMAP.md](ROADMAP.md) | What is next, and the questions that are open |

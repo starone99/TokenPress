@@ -8,7 +8,7 @@ whether the default setting keeps your comments — is the table in the
 **Python and Rust are the primary targets.** They are what the project was
 built for, what the benchmarks cover most deeply — six of the eight corpora in
 the README's chart — and where the work goes first. The other five are supported,
-on the same invariant and the same verification, but each rests on a single
+on the same invariant and the same checks, but each rests on a single
 corpus and none is the reason this exists.
 
 | Language | Extensions | Default keeps comments | External check |
@@ -175,7 +175,7 @@ is a subtraction while `a -b` is a call with a unary-minus argument — and
 newlines are statement terminators in Ruby, so they stay. There is therefore no
 Ruby caveat warning on stderr: there is nothing to warn about. Context-lossless
 here is about *comments*, not line numbers — those no backend preserves, Ruby
-included (see [VERIFICATION.md](VERIFICATION.md)).
+included (see *The four documented exceptions* below).
 
 **Go is supported.** The backend parses with tree-sitter, re-emits
 whitespace-minimally over the source bytes, verifies with re-parse plus
@@ -290,3 +290,81 @@ link. The demo runs C# at `--verify ast` (in-process re-parse plus AST
 equivalence) and not at `--verify external`, because a WebAssembly module
 cannot spawn a compiler.
 
+## What it never touches
+
+Identifiers, string/number literals, decorators/attributes, the token sequence
+inside macro invocations, import order — anything that carries meaning for an
+LLM or affects behavior. In Python, comments, docstrings and annotations are
+kept by default and only removed by explicit opt-in — and every strip flag
+loses information: `--py-strip-docstrings` removes the leading string literal
+of a module, class or function body (other string expressions are untouched),
+which empties `__doc__`.
+
+## The four documented exceptions
+
+One applies to every backend, two are Rust, one is JavaScript/TypeScript.
+These are the scope limits on the "preserving
+behavior" claim at the top of this page.
+
+#### Every backend: line numbers are never preserved
+
+At any settings. Deleting
+blank lines and re-flowing whitespace is the core of what TokenPress does, so
+every line below a removal moves — in Python, Ruby, Go, Java and C# exactly as
+in Rust and JS/TS. No flag turns this off. Code whose behavior depends on physical line
+numbers can therefore change behavior after formatting: Ruby `__LINE__` and
+`caller`, Rust `line!()` and `std::panic::Location`, Python `inspect` and
+traceback line numbers, JavaScript `Error.stack`, Go `runtime.Caller` (a
+`//line` directive is the one case that is protected, because it is a comment
+the toolchain reads), Java stack-trace line numbers, C# stack-trace line
+numbers and `CallerLineNumberAttribute`, and any test that asserts on a
+traceback or a stack trace.
+
+Format-time verification cannot detect this **by construction**: the canonical
+forms the re-parse/equivalence check compares are location-independent, which
+is what makes them usable as an equality stand-in at all, so a moved line is
+the same token in the same position before and after. `--verify external` does
+not help either — `tsc`, `ruby -c`, `gofmt -e`, `javac`'s parse gate and the
+`csc` diagnostic comparison all stop before anything runs, and none of them
+compares positions. The
+layer that does catch it is running a corpus's own upstream test suite against
+the formatted copy (`benchmarks/verify-upstream.sh`), and it has: on 2026-08-02
+the rack v3.2.6 target came back **DIVERGED** on one test,
+`Rack::Builder::parse_file` "sets `__LINE__` correctly" — TokenPress deletes the
+blank line above the code in `test/builder/line.ru`, so `__LINE__` reads `2`
+where the test asserts `3`. Reproduced byte-identically on repeat runs — not a
+flake. That rewrite saved **zero tokens** (35 before, 35 after at
+`o200k_base`: a blank line and a plain newline each cost one token). Full triage in
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md). The limitation is documented
+rather than mitigated: if your code, your tests or your tooling depend on line
+numbers, TokenPress output is not a drop-in replacement for the original —
+keep it.
+
+#### Rust: regular comments are dropped
+
+`//` and `/* */` comments are always lost, because the `syn` token stream the
+emitter works from does not preserve them.
+Doc comments (`///`, `//!`) are preserved unless `--rs-strip-doc-comments` is
+passed. If a Rust file's `//` comments matter to you, keep the original —
+TokenPress cannot round-trip them.
+
+#### Rust: macro body whitespace is minimized
+
+ The *tokens* inside a macro invocation
+are preserved exactly, but the whitespace between them is not. For
+whitespace-sensitive macros — `stringify!` is the common case — this changes
+the string produced at runtime. TokenPress's verification is token-canonical
+(re-parse + token-stream equivalence), and a re-spaced macro body is
+token-identical to the original, so this class of behavior change is **not**
+detected by the verifier. If your code depends on the exact text
+`stringify!` renders, review the diff before accepting it.
+
+#### JS/TS: trailing and expression-position comments are dropped
+
+Regardless of
+`--js-strip-comments`, the JS/TS emitter keeps only leading statement-level
+comments plus jsdoc, annotation (`#__PURE__`) and legal (`//!`, `/*!`,
+`@license`, `@preserve`) comments. Everything else — a `// tail` after a
+statement, a comment between arguments — is lost, and the verifier cannot see
+it because its canonical form is comment-free. If a JS/TS file's inline
+comments matter to you, keep the original.
