@@ -295,15 +295,35 @@ same commit.
 
 ## Code style
 
-CI enforces exactly two things, and they must both pass locally:
+**Do not run `cargo fmt` on this tree.** This repository formats its own
+sources with TokenPress, through the `tokenpress-format` hook in
+`.pre-commit-config.yaml`. Two formatters cannot both own one tree — rustfmt
+lays code out for a human reader, TokenPress joins it for a tokenizer — so
+each would revert the other on every commit. TokenPress is the formatter of
+record here, the rustfmt check is gone from CI, and running `cargo fmt` would
+produce a diff the hook then undoes.
+
+What this means when you write code here, and it is not a small adjustment:
+
+- **`//` comments do not survive.** The Rust backend re-emits from the `syn`
+  token stream, so at default settings every `//` and `/* */` comment is
+  dropped on the next hook run. `///` and `//!` doc comments survive. Put
+  reasoning that has to last in a doc comment, in the commit message, or in
+  `docs/` — not in a plain comment, where it will be deleted without warning.
+- **Line-addressed tools degrade.** A file is joined, so `git blame`, review
+  comments and panic locations point at a column rather than a line
+  (`cli.rs:224:28997` is real). Region coverage, not line coverage, is the
+  number that still carries weight.
+
+CI enforces one lint gate, and it must pass locally:
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings -A clippy::possible_missing_else
 ```
 
-Clippy warnings are errors. Run `cargo fmt` before committing; no custom
-rustfmt configuration is used.
+Clippy warnings are errors. The single allowed lint is a direct consequence of
+the formatting: `possible_missing_else` looks for `}` and `if` on one line,
+which is what a token-minimizing emitter produces. Nothing else is waived.
 
 ## Adding a language backend
 
