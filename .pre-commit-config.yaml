@@ -1,0 +1,10 @@
+# TokenPress, run on TokenPress.
+#
+# `rev` is a tag, so the hook downloads that release's binary and verifies it
+# against the release's SHA256SUMS rather than compiling this workspace inside
+# pre-commit's clone of it.
+repos:
+  - repo: https://github.com/starone99/TokenPress
+    rev: v0.1.0
+    hooks:
+      - id: tokenpress-format

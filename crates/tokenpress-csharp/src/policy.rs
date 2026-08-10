@@ -117,12 +117,7 @@
 //!   code is not subject to lexical analysis") — the grammar refuses the file
 //!   at the parse gate, so it is never rewritten. Safe, not silent, and one
 //!   more instance of the refusal class C1 recorded.
-
-use std::ops::Range;
-
-use tokenpress_treesitter::emit::CommentPolicy;
-use tokenpress_treesitter::parser::{Node, Tree};
-
+use std::ops::Range;use tokenpress_treesitter::emit::CommentPolicy;use tokenpress_treesitter::parser::{Node,Tree};
 /// The comment node kinds this module scans — the one
 /// [`crate::config::csharp_config`] configures.
 ///
@@ -131,8 +126,7 @@ use tokenpress_treesitter::parser::{Node, Tree};
 /// the bail-out is handed a tree and a source, not a config — the engine's
 /// callback contract. `the_scanned_kinds_are_the_configured_comment_kinds`
 /// below asserts the two lists against each other so they cannot drift.
-const COMMENT_KINDS: [&str; 1] = ["comment"];
-
+const COMMENT_KINDS:[&str;1]=["comment"];
 /// The line terminators C# has and the grammar does not honour inside a
 /// comment.
 ///
@@ -146,8 +140,7 @@ const COMMENT_KINDS: [&str; 1] = ["comment"];
 ///
 /// CR and LF are absent from this list because the grammar honours them
 /// already; a `//` comment node stops at either.
-const NEW_LINES_THE_GRAMMAR_IGNORES: [&str; 3] = ["\u{85}", "\u{2028}", "\u{2029}"];
-
+const NEW_LINES_THE_GRAMMAR_IGNORES:[&str;3]=["\u{85}","\u{2028}","\u{2029}"];
 /// True when a comment has to survive stripping — which, for C#, is never.
 ///
 /// [`CommentPolicy`]'s `keep_comment` callback, handed a comment span's own
@@ -160,10 +153,7 @@ const NEW_LINES_THE_GRAMMAR_IGNORES: [&str; 3] = ["\u{85}", "\u{2028}", "\u{2029
 /// place to land. See the module docs for what that decision is, and note that
 /// with one comment kind it can only ever be answered by a **text-prefix**
 /// test on these bytes.
-pub fn is_semantic_comment(_bytes: &[u8]) -> bool {
-    false
-}
-
+pub fn is_semantic_comment(_bytes:&[u8])->bool{false}
 /// The head of the file that has to be reproduced byte for byte: for C#,
 /// nothing.
 ///
@@ -171,10 +161,7 @@ pub fn is_semantic_comment(_bytes: &[u8]) -> bool {
 /// engine reads an empty range as "there is no such region". See the module
 /// docs for the candidates that were checked (`extern alias`, `global using`,
 /// a BOM, `#line default`) and why none of them needs one.
-pub fn no_prologue(_tree: &Tree, _source: &[u8]) -> Range<usize> {
-    0..0
-}
-
+pub fn no_prologue(_tree:&Tree,_source:&[u8])->Range<usize>{0..0}
 /// True when a comment in `source` sits where the grammar and a real C#
 /// compiler can disagree about a comment's boundaries, so the file must be
 /// left byte-identical.
@@ -256,10 +243,7 @@ pub fn no_prologue(_tree: &Tree, _source: &[u8]) -> Range<usize> {
 /// so clause 1 had nothing to bite on there, and a corpus with commented-out
 /// `#if` blocks would exercise it. C6(a)'s corpus run is the place to widen
 /// the measurement.
-pub fn has_comment_boundary_hazard(tree: &Tree, source: &[u8]) -> bool {
-    node_has_comment_boundary_hazard(tree.root_node(), source)
-}
-
+pub fn has_comment_boundary_hazard(tree:&Tree,source:&[u8])->bool{node_has_comment_boundary_hazard(tree.root_node(),source)}
 /// The assembled C# comment policy.
 ///
 /// The three decisions are plain functions with nothing to capture, so the
@@ -267,51 +251,26 @@ pub fn has_comment_boundary_hazard(tree: &Tree, source: &[u8]) -> bool {
 /// That is what makes this type nameable at all: an `impl Fn` triple would
 /// force every caller that wants to hold a policy — a struct field, a helper's
 /// parameter — into an `impl Trait` chain it cannot write down.
-pub type CSharpCommentPolicy =
-    CommentPolicy<fn(&[u8]) -> bool, fn(&Tree, &[u8]) -> Range<usize>, fn(&Tree, &[u8]) -> bool>;
-
+pub type CSharpCommentPolicy=CommentPolicy<fn(&[u8])->bool,fn(&Tree,&[u8])->Range<usize>,fn(&Tree,&[u8])->bool>;
 /// The C# comment policy: the one call the formatter makes.
 ///
 /// Building one is three function-pointer stores, so callers construct a
 /// policy per operation rather than sharing one, exactly as they do with
 /// [`crate::config::csharp_config`].
-pub fn comment_policy() -> CSharpCommentPolicy {
-    CommentPolicy::new(
-        is_semantic_comment,
-        no_prologue,
-        has_comment_boundary_hazard,
-    )
-}
-
+pub fn comment_policy()->CSharpCommentPolicy{CommentPolicy::new(is_semantic_comment,no_prologue,has_comment_boundary_hazard,)}
 /// Whether `node`'s subtree holds a hazardous comment.
 ///
 /// Comments are `extra` nodes and can appear anywhere, so the walk is the
 /// whole tree rather than the top level. A comment node has no children of
 /// interest, so answering for one ends the descent.
-fn node_has_comment_boundary_hazard(node: Node, source: &[u8]) -> bool {
-    if COMMENT_KINDS.contains(&node.kind()) {
-        return comment_is_hazardous(&source[node.byte_range()], &source[node.end_byte()..]);
-    }
-    let mut cursor = node.walk();
-    let mut children = node.children(&mut cursor);
-    children.any(|child| node_has_comment_boundary_hazard(child, source))
-}
-
+fn node_has_comment_boundary_hazard(node:Node,source:&[u8])->bool{if COMMENT_KINDS.contains(&node.kind()){return comment_is_hazardous(&source[node.byte_range()],&source[node.end_byte()..]);}let mut cursor=node.walk();let mut children=node.children(&mut cursor);children.any(|child|node_has_comment_boundary_hazard(child,source))}
 /// The three clauses of [`has_comment_boundary_hazard`], applied to one
 /// comment: its own bytes, and everything after it in the file.
 ///
 /// Clause 2 is asked only of `//` comments, because a delimited comment ends
 /// at `*/` whatever line terminators it spans — the wide terminators matter
 /// inside one only by starting a line, which is clause 1's business.
-fn comment_is_hazardous(bytes: &[u8], after: &[u8]) -> bool {
-    hides_a_directive(bytes)
-        || (bytes.starts_with(b"//")
-            && NEW_LINES_THE_GRAMMAR_IGNORES
-                .iter()
-                .any(|terminator| contains(bytes, terminator.as_bytes())))
-        || shields_a_directive(after)
-}
-
+fn comment_is_hazardous(bytes:&[u8],after:&[u8])->bool{hides_a_directive(bytes)||(bytes.starts_with(b"//")&&NEW_LINES_THE_GRAMMAR_IGNORES.iter().any(|terminator|contains(bytes,terminator.as_bytes())))||shields_a_directive(after)}
 /// Whether a comment's own bytes carry a line whose first non-whitespace
 /// character is `#`.
 ///
@@ -326,457 +285,40 @@ fn comment_is_hazardous(bytes: &[u8], after: &[u8]) -> bool {
 /// so a file carrying one is refused by the compiler whichever arm it lands
 /// in, and there is nothing to gain from a keyword list that would have to
 /// track the language's.
-fn hides_a_directive(bytes: &[u8]) -> bool {
-    let mut index = 0;
-    while index < bytes.len() {
-        let width = new_line_width(&bytes[index..]);
-        if width == 0 {
-            index += 1;
-            continue;
-        }
-        index += width;
-        while bytes.get(index).is_some_and(|byte| is_blank(*byte)) {
-            index += 1;
-        }
-        if bytes.get(index) == Some(&b'#') {
-            return true;
-        }
-    }
-    false
-}
-
+fn hides_a_directive(bytes:&[u8])->bool{let mut index=0;while index<bytes.len(){let width=new_line_width(&bytes[index..]);if width==0{index+=1;continue;}index+=width;while bytes.get(index).is_some_and(|byte|is_blank(*byte)){index+=1;}if bytes.get(index)==Some(&b'#'){return true;}}false}
 /// Whether the bytes following a comment reach a `#` without leaving the
 /// comment's line — the position deleting the comment would promote to column
 /// 0.
 ///
 /// A `//` comment is followed immediately by its line terminator, so this can
 /// only ever answer `true` for a delimited one.
-fn shields_a_directive(after: &[u8]) -> bool {
-    let mut index = 0;
-    while let Some(byte) = after.get(index) {
-        if is_blank(*byte) {
-            index += 1;
-            continue;
-        }
-        return *byte == b'#';
-    }
-    false
-}
-
+fn shields_a_directive(after:&[u8])->bool{let mut index=0;while let Some(byte)=after.get(index){if is_blank(*byte){index+=1;continue;}return*byte==b'#';}false}
 /// The width in bytes of the C# line terminator `bytes` starts with, or 0.
 ///
 /// CRLF is deliberately two terminators rather than one: the scan that uses
 /// this only asks "does a line start here", and a line starting at the LF of a
 /// CRLF is the same line as one starting after it.
-fn new_line_width(bytes: &[u8]) -> usize {
-    match bytes.first() {
-        Some(b'\n' | b'\r') => 1,
-        _ => NEW_LINES_THE_GRAMMAR_IGNORES
-            .iter()
-            .find(|terminator| bytes.starts_with(terminator.as_bytes()))
-            .map_or(0, |terminator| terminator.len()),
-    }
-}
-
+fn new_line_width(bytes:&[u8])->usize{match bytes.first(){Some(b'\n'|b'\r')=>1,_=>NEW_LINES_THE_GRAMMAR_IGNORES.iter().find(|terminator|bytes.starts_with(terminator.as_bytes())).map_or(0,|terminator|terminator.len()),}}
 /// Whether `byte` is one of the two characters `pp-directive` allows between
 /// the start of a line and the `#`.
-fn is_blank(byte: u8) -> bool {
-    byte == b' ' || byte == b'\t'
-}
-
+fn is_blank(byte:u8)->bool{byte==b' '||byte==b'\t'}
 /// Whether `needle` occurs in `haystack`.
 ///
 /// `windows` yields nothing when the needle is longer than the haystack, so a
 /// comment shorter than a three-byte terminator answers `false` rather than
 /// panicking.
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|window| window == needle)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::csharp_config;
-    use tokenpress_treesitter::emit::strip_comments_source;
-    use tokenpress_treesitter::parser::parse;
-
-    /// The comments-stripped emitter as C3 will assemble it — the engine's own
-    /// end-to-end entry point, with no `_pinned` variant because C# has no
-    /// column-0 comment rule (the directive rule this module defends is about
-    /// the `#`, not about the comment).
-    fn stripped(source: &[u8]) -> Vec<u8> {
-        strip_comments_source(&csharp_config(), source, &comment_policy()).unwrap()
-    }
-
-    /// The **comments-kept** setting as C3 will assemble it: the same three
-    /// callbacks with the keep predicate answering yes to everything, which is
-    /// the only thing that differs between C#'s two settings.
-    fn kept(source: &[u8]) -> Vec<u8> {
-        let policy: CSharpCommentPolicy = CommentPolicy::new(
-            keeps_every_comment,
-            no_prologue,
-            has_comment_boundary_hazard,
-        );
-        strip_comments_source(&csharp_config(), source, &policy).unwrap()
-    }
-
-    /// The stripping emitter with the bail-out disarmed: what the output would
-    /// be if [`has_comment_boundary_hazard`] did not exist.
-    fn stripped_without_the_bail_out(source: &[u8]) -> Vec<u8> {
-        let policy: CSharpCommentPolicy =
-            CommentPolicy::new(is_semantic_comment, no_prologue, never_bails_out);
-        strip_comments_source(&csharp_config(), source, &policy).unwrap()
-    }
-
-    fn keeps_every_comment(_bytes: &[u8]) -> bool {
-        true
-    }
-
-    fn never_bails_out(_tree: &Tree, _source: &[u8]) -> bool {
-        false
-    }
-
-    /// Whether the bail-out fires for a source the engine accepts.
-    fn bails_out(source: &[u8]) -> bool {
-        let config = csharp_config();
-        let tree = parse(&config, source).unwrap();
-        has_comment_boundary_hazard(&tree, source)
-    }
-
-    // --- The bail-out ------------------------------------------------------
-
-    #[test]
-    fn a_comment_that_hides_a_directive_is_left_byte_identical() {
-        // Hazard 1, and the file that made this bail-out exist. To the
-        // compiler both `#if FALSE` sections are skipped text scanned only for
-        // directives (ECMA-334 §6.5.1), so `/*` and `*/` are inert and
-        // `int x = 1;` is a field. The grammar evaluates no conditions and
-        // lexes one comment straight through both `#endif`s — and this file
-        // parses **clean**, so the parse gate does not save us.
-        let source = b"class A {\n#if FALSE\n/*\n#endif\nint x = 1;\n#if FALSE\n*/\n#endif\n}\n";
-        assert!(bails_out(source));
-        assert_eq!(stripped(source), source);
-
-        // Non-vacuous: with the bail-out disarmed the field really does vanish,
-        // and every check this backend has says the output is fine — the
-        // re-parse passes and the equivalence artifact is comment-blind.
-        assert_eq!(
-            stripped_without_the_bail_out(source),
-            &b"class A {\n#if FALSE\n#endif\n}\n"[..]
-        );
-    }
-
-    #[test]
-    fn a_line_comment_carrying_a_wide_new_line_is_left_byte_identical() {
-        // Hazard 2. ECMA-334 §6.3.2 makes U+0085, U+2028 and U+2029 line
-        // terminators, so each ends a `//` comment for the compiler; the
-        // grammar runs the comment on to the LF. Without the bail-out the
-        // second field is deleted, which is the Java reproduction's shape
-        // arriving through the character set instead of through an escape.
-        for terminator in NEW_LINES_THE_GRAMMAR_IGNORES {
-            let source =
-                format!("class A {{\nint x = 1; // c{terminator}int y = 2;\nint z = 3;\n}}\n");
-            let source = source.as_bytes();
-            assert!(bails_out(source), "{terminator:?}");
-            assert_eq!(stripped(source), source, "{terminator:?}");
-            assert_eq!(
-                stripped_without_the_bail_out(source),
-                b"class A {\nint x = 1;\nint z = 3;\n}\n".to_vec(),
-                "{terminator:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_comment_shielding_a_directive_on_its_line_is_left_byte_identical() {
-        // Hazard 3, the converse of the preprocessor line rule: deleting a
-        // comment must not *create* a directive. `/* c */ #if FOO` is not a
-        // directive line to the compiler — only whitespace may precede the `#`
-        // — but the grammar accepts it, and blanking the comment puts the `#`
-        // at column 0.
-        let source = b"class A {\n/* c */ #if FOO\nint x = 1;\n#endif\n}\n";
-        assert!(bails_out(source));
-        assert_eq!(stripped(source), source);
-        assert_eq!(
-            stripped_without_the_bail_out(source),
-            &b"class A {\n#if FOO\nint x = 1;\n#endif\n}\n"[..]
-        );
-    }
-
-    #[test]
-    fn the_narrowness_table_holds() {
-        // What each clause does and does not fire on. The cost of the whole
-        // rule over C1's corpus is 0 of 880 parseable files; see
-        // `has_comment_boundary_hazard` for the caveat on that zero.
-        for (comment, expected) in [
-            // Ordinary comments, including the XML doc form.
-            ("// an ordinary note", false),
-            ("/// <summary>Doc.</summary>", false),
-            ("/* a block comment */", false),
-            ("//", false),
-            // Clause 1: a line-initial `#` inside the comment, indented or
-            // not, and with or without the space `pp-directive` allows after
-            // the `#`.
-            ("/*\n#endif\n*/", true),
-            ("/*\n   #endif\n*/", true),
-            ("/*\n\t#  if FOO\n*/", true),
-            ("/*\nnot#endif\n*/", false),
-            ("/*\n*/", false),
-            // ...over C#'s whole line-terminator set, not just LF.
-            ("/* a\r#endif */", true),
-            ("/* a\r\n#endif */", true),
-            ("/* c\u{2028}#endif */", true),
-            // Clause 2 is a `//` rule: a delimited comment that merely
-            // *contains* a wide terminator still ends at its `*/`.
-            ("/* c\u{2028} */", false),
-            ("// c\u{85}x", true),
-        ] {
-            let source = format!("class A {{\n{comment}\nint x = 1;\n}}\n");
-            assert_eq!(bails_out(source.as_bytes()), expected, "{comment:?}");
-        }
-    }
-
-    #[test]
-    fn a_unicode_escape_in_a_comment_is_not_a_hazard() {
-        // The Java rule that does **not** carry over. ECMA-334 §6.4.1
-        // processes `\uXXXX` in identifiers, character literals, regular
-        // string literals and interpolated regular strings, and nowhere else —
-        // comments included — so unlike `javac` no C# compiler can decode one
-        // into a comment terminator. The grammar agrees: the tail stays inside
-        // the comment node, and the file formats normally.
-        let source = b"class A {\nint x = 1; // c \\u000A int y = 2;\nint z = 3;\n}\n";
-        assert!(!bails_out(source));
-        assert_eq!(
-            stripped(source),
-            &b"class A {\nint x = 1;\nint z = 3;\n}\n"[..]
-        );
-        assert!(!bails_out(b"class A { /* c \\u002A/ int y = 2; */ }\n"));
-    }
-
-    #[test]
-    fn a_delimited_comment_does_not_nest() {
-        // ECMA-334 §6.3.3 gives no nesting rule: the comment ends at the first
-        // `*/`, and the grammar ends it there too, so the code after it is
-        // code to both.
-        let source = b"class A { /* /* */ int x = 1; }\n";
-        assert!(!bails_out(source));
-        assert_eq!(stripped(source), &b"class A { int x = 1; }\n"[..]);
-    }
-
-    #[test]
-    fn a_file_with_no_hazardous_comment_does_not_bail_out() {
-        assert!(!bails_out(b""));
-        assert!(!bails_out(
-            b"class A {\n// plain\n/* plain */\nint x = 1;\n}\n"
-        ));
-        // A comment that ends the file, with no byte after it at all.
-        assert!(!bails_out(b"class A {}\n// end"));
-    }
-
-    #[test]
-    fn the_bail_out_reaches_a_comment_nested_in_a_method_body() {
-        // The walk descends the whole tree, not just the top level.
-        assert!(bails_out(
-            b"class A {\nvoid m() {\n/*\n#endif\n*/\nint x = 1;\n}\n}\n"
-        ));
-    }
-
-    #[test]
-    fn a_file_that_trips_the_bail_out_is_byte_identical_at_both_settings() {
-        // The bail-out is one of the two callbacks the two settings share, so
-        // it fires whether comments are being kept or stripped, and the plan it
-        // produces protects every byte in the file.
-        let source = b"class A {\n#if FALSE\n/*\n#endif\nint x = 1;\n#if FALSE\n*/\n#endif\n}\n";
-        assert_eq!(kept(source), source);
-        assert_eq!(stripped(source), source);
-    }
-
-    // --- The preprocessor line constraint ----------------------------------
-
-    #[test]
-    fn every_probed_directive_survives_stripping_byte_exactly() {
-        // C1's probe list — every directive it recorded as parsing clean —
-        // plus the three it did not probe. Each source is already whitespace-
-        // minimal, so "byte-exactly" is the whole file at **both** comment
-        // settings, not just the directive lines.
-        for source in [
-            &b"#pragma warning disable 618\nclass A {}\n#pragma warning restore 618\n"[..],
-            b"#define FOO\nclass A {}\n",
-            b"#nullable enable\nclass A {}\n",
-            b"#line 1 \"A.cs\"\nclass A {}\n",
-            b"#warning careful\nclass A {}\n",
-            b"class A {\n#if FOO\nint x = 1;\n#endif\n}\n",
-            b"class A {\n#region helpers\nint x = 1;\n#endregion\n}\n",
-            b"class A {\n#if FOO\nint x = 1;\n#elif BAR\nint x = 2;\n#else\nint x = 3;\n#endif\n}\n",
-            b"#undef FOO\nclass A {}\n",
-            b"#error broken\n",
-        ] {
-            assert_eq!(stripped(source), source, "{source:?}");
-            assert_eq!(kept(source), source, "{source:?}");
-        }
-    }
-
-    #[test]
-    fn an_indented_directive_still_begins_its_line_after_stripping() {
-        // C1's corpus met `#region` indented inside a method. The emitter
-        // collapses the indentation — a directive may be preceded by
-        // whitespace — but `newline_sensitive = true` keeps the newline that
-        // starts the line, which is the whole of the constraint.
-        let source =
-            b"class A {\n    void m() {\n        #region helpers\n        int x = 1; // note\n        #endregion\n    }\n}\n";
-        assert_eq!(
-            stripped(source),
-            &b"class A {\nvoid m() {\n#region helpers\nint x = 1;\n#endregion\n}\n}\n"[..]
-        );
-    }
-
-    #[test]
-    fn deleting_a_comment_never_pulls_the_next_directive_onto_its_line() {
-        // The hazard `newline_sensitive = true` buys off: a deleted comment
-        // becomes part of a whitespace run, and a run that held a newline still
-        // emits one.
-        let source = b"class A {\nint x = 1; // note\n#if FOO\nint y = 2;\n#endif\n}\n";
-        assert_eq!(
-            stripped(source),
-            &b"class A {\nint x = 1;\n#if FOO\nint y = 2;\n#endif\n}\n"[..]
-        );
-        // ...including when the comment is a whole line of its own above the
-        // directive, where the run on both sides of it collapses to the one
-        // newline that starts the directive's line...
-        assert_eq!(
-            stripped(b"class A {\n/* a\nb */\n#if FOO\nint x = 1;\n#endif\n}\n"),
-            &b"class A {\n#if FOO\nint x = 1;\n#endif\n}\n"[..]
-        );
-        // ...and when it is the first thing in the file, where the head
-        // whitespace is dropped outright and the directive begins the output.
-        assert_eq!(
-            stripped(b"// header\n#if FOO\nclass A {}\n#endif\n"),
-            &b"#if FOO\nclass A {}\n#endif\n"[..]
-        );
-    }
-
-    #[test]
-    fn a_directive_argument_is_never_read_as_a_comment() {
-        // `#region`, `#warning` and `#define` take the rest of the line as
-        // their argument, and the grammar puts those bytes in a `preproc_arg`
-        // leaf rather than a `comment` node — so the stripper cannot touch
-        // them however comment-like they look.
-        for source in [
-            &b"class A {\n#region helpers // note\n#endregion\n}\n"[..],
-            b"#warning careful // not a comment */\nclass A {}\n",
-            b"#define FOO // reason\nclass A {}\n",
-        ] {
-            assert_eq!(stripped(source), source, "{source:?}");
-        }
-        // `#pragma` and `#if` are the exceptions: their trailing `//` really is
-        // a `comment` node, and deleting it leaves a well-formed directive.
-        assert_eq!(
-            stripped(b"#pragma warning disable 618 // reason\nclass A {}\n"),
-            &b"#pragma warning disable 618\nclass A {}\n"[..]
-        );
-        assert_eq!(
-            stripped(b"class A {\n#if FOO // reason\nint x = 1;\n#endif\n}\n"),
-            &b"class A {\n#if FOO\nint x = 1;\n#endif\n}\n"[..]
-        );
-    }
-
-    // --- The keep predicate ------------------------------------------------
-
-    #[test]
-    fn no_csharp_comment_is_semantic() {
-        // Under the C5 gate's invocation (`csc /nologo /noconfig /nostdlib+
-        // /t:library`, no `/doc`) the compiler reads nothing out of a comment,
-        // so there is no correctness keep-list.
-        for comment in [
-            &b"// an ordinary note"[..],
-            b"/// <summary>Doc.</summary>",
-            b"/* a block comment */",
-            b"//",
-        ] {
-            let text = String::from_utf8_lossy(comment);
-            assert!(!is_semantic_comment(comment), "{text}");
-        }
-    }
-
-    #[test]
-    fn xml_doc_comments_are_deleted_like_any_other_comment() {
-        // **This test pins an open decision, not a settled one.** Whether
-        // `--csharp-strip-comments` keeps `///` XML documentation comments or
-        // deletes them with everything else is a user decision tracked as a
-        // `[blocked]` item in the ROADMAP; the C5 gate's `csc` invocation is
-        // indifferent, so no measurement can settle it. The current predicate
-        // deletes them, and this test records that. **If the decision comes
-        // back "keep", this is the test to change first**, per the
-        // repository's TDD rule — change the test, watch it fail, then turn
-        // the predicate into a text-prefix list like `tokenpress-go`'s. It has
-        // to be a text prefix and not a node kind, because C# has one comment
-        // kind (see `crate::config`).
-        let source =
-            b"/// <summary>Doc.</summary>\n/// <param name=\"x\">The x.</param>\nclass A {\nint x = 1;\n}\n";
-        assert!(!is_semantic_comment(b"/// <summary>Doc.</summary>"));
-        assert_eq!(stripped(source), &b"class A {\nint x = 1;\n}\n"[..]);
-    }
-
-    // --- The empty prologue ------------------------------------------------
-
-    #[test]
-    fn the_prologue_is_always_empty() {
-        // C# has no build-constraint header and no file-header construct that
-        // survives into the compiler; `extern alias`, `global using`, a BOM and
-        // `#line default` were the candidates and none needs a verbatim region.
-        let config = csharp_config();
-        for source in [
-            &b""[..],
-            b"class A {}\n",
-            b"extern alias X;\nclass A {}\n",
-            b"global using System;\nclass A {}\n",
-            "\u{feff}// header\nclass A {}\n".as_bytes(),
-            b"#line default\nclass A {}\n",
-        ] {
-            let tree = parse(&config, source).unwrap();
-            assert_eq!(no_prologue(&tree, source), 0..0, "{source:?}");
-        }
-    }
-
-    #[test]
-    fn the_head_of_the_file_survives_without_a_prologue() {
-        // Nothing is lost by the empty range. A BOM is not in the engine's
-        // ASCII whitespace set, so byte 0 is copied verbatim...
-        assert_eq!(
-            stripped("\u{feff}// header\nclass A {}\n".as_bytes()),
-            "\u{feff}\nclass A {}\n".as_bytes()
-        );
-        // ...and an `extern alias` keeps its place at the head of the file,
-        // ahead of the `global using` that C# requires to follow it, with the
-        // header comment and the whitespace it left both gone.
-        assert_eq!(
-            stripped(b"// header\nextern alias X;\nglobal using System;\nclass A {}\n"),
-            &b"extern alias X;\nglobal using System;\nclass A {}\n"[..]
-        );
-    }
-
-    // --- The assembled policy ----------------------------------------------
-
-    #[test]
-    fn the_policy_deletes_every_comment_and_keeps_the_code() {
-        let source =
-            b"/// <summary>Doc.</summary>\nclass A {\n// note\nint x = 1; /* trailing */\nstring s = \"// not a comment\";\n}\n";
-        assert_eq!(
-            stripped(source),
-            &b"class A {\nint x = 1;\nstring s = \"// not a comment\";\n}\n"[..]
-        );
-        // ...and the same policy at the kept setting changes nothing here,
-        // because the input is already whitespace-minimal.
-        assert_eq!(kept(source), source);
-    }
-
-    #[test]
-    fn the_scanned_kinds_are_the_configured_comment_kinds() {
-        // The bail-out names the kind itself rather than reading it out of a
-        // `LanguageConfig` it is not given. This is what keeps the two lists
-        // from drifting apart.
-        assert_eq!(csharp_config().comment_kinds(), COMMENT_KINDS);
-    }
-}
+fn contains(haystack:&[u8],needle:&[u8])->bool{haystack.windows(needle.len()).any(|window|window==needle)}#[cfg(test)]mod tests{use super::*;use crate::config::csharp_config;use tokenpress_treesitter::emit::strip_comments_source;use tokenpress_treesitter::parser::parse;
+/// The comments-stripped emitter as C3 will assemble it — the engine's own
+/// end-to-end entry point, with no `_pinned` variant because C# has no
+/// column-0 comment rule (the directive rule this module defends is about
+/// the `#`, not about the comment).
+fn stripped(source:&[u8])->Vec<u8>{strip_comments_source(&csharp_config(),source,&comment_policy()).unwrap()}
+/// The **comments-kept** setting as C3 will assemble it: the same three
+/// callbacks with the keep predicate answering yes to everything, which is
+/// the only thing that differs between C#'s two settings.
+fn kept(source:&[u8])->Vec<u8>{let policy:CSharpCommentPolicy=CommentPolicy::new(keeps_every_comment,no_prologue,has_comment_boundary_hazard,);strip_comments_source(&csharp_config(),source,&policy).unwrap()}
+/// The stripping emitter with the bail-out disarmed: what the output would
+/// be if [`has_comment_boundary_hazard`] did not exist.
+fn stripped_without_the_bail_out(source:&[u8])->Vec<u8>{let policy:CSharpCommentPolicy=CommentPolicy::new(is_semantic_comment,no_prologue,never_bails_out);strip_comments_source(&csharp_config(),source,&policy).unwrap()}fn keeps_every_comment(_bytes:&[u8])->bool{true}fn never_bails_out(_tree:&Tree,_source:&[u8])->bool{false}
+/// Whether the bail-out fires for a source the engine accepts.
+fn bails_out(source:&[u8])->bool{let config=csharp_config();let tree=parse(&config,source).unwrap();has_comment_boundary_hazard(&tree,source)}#[test]fn a_comment_that_hides_a_directive_is_left_byte_identical(){let source=b"class A {\n#if FALSE\n/*\n#endif\nint x = 1;\n#if FALSE\n*/\n#endif\n}\n";assert!(bails_out(source));assert_eq!(stripped(source),source);assert_eq!(stripped_without_the_bail_out(source),&b"class A {\n#if FALSE\n#endif\n}\n"[..]);}#[test]fn a_line_comment_carrying_a_wide_new_line_is_left_byte_identical(){for terminator in NEW_LINES_THE_GRAMMAR_IGNORES{let source=format!("class A {{\nint x = 1; // c{terminator}int y = 2;\nint z = 3;\n}}\n");let source=source.as_bytes();assert!(bails_out(source),"{terminator:?}");assert_eq!(stripped(source),source,"{terminator:?}");assert_eq!(stripped_without_the_bail_out(source),b"class A {\nint x = 1;\nint z = 3;\n}\n".to_vec(),"{terminator:?}");}}#[test]fn a_comment_shielding_a_directive_on_its_line_is_left_byte_identical(){let source=b"class A {\n/* c */ #if FOO\nint x = 1;\n#endif\n}\n";assert!(bails_out(source));assert_eq!(stripped(source),source);assert_eq!(stripped_without_the_bail_out(source),&b"class A {\n#if FOO\nint x = 1;\n#endif\n}\n"[..]);}#[test]fn the_narrowness_table_holds(){for(comment,expected)in[("// an ordinary note",false),("/// <summary>Doc.</summary>",false),("/* a block comment */",false),("//",false),("/*\n#endif\n*/",true),("/*\n   #endif\n*/",true),("/*\n\t#  if FOO\n*/",true),("/*\nnot#endif\n*/",false),("/*\n*/",false),("/* a\r#endif */",true),("/* a\r\n#endif */",true),("/* c\u{2028}#endif */",true),("/* c\u{2028} */",false),("// c\u{85}x",true),]{let source=format!("class A {{\n{comment}\nint x = 1;\n}}\n");assert_eq!(bails_out(source.as_bytes()),expected,"{comment:?}");}}#[test]fn a_unicode_escape_in_a_comment_is_not_a_hazard(){let source=b"class A {\nint x = 1; // c \\u000A int y = 2;\nint z = 3;\n}\n";assert!(!bails_out(source));assert_eq!(stripped(source),&b"class A {\nint x = 1;\nint z = 3;\n}\n"[..]);assert!(!bails_out(b"class A { /* c \\u002A/ int y = 2; */ }\n"));}#[test]fn a_delimited_comment_does_not_nest(){let source=b"class A { /* /* */ int x = 1; }\n";assert!(!bails_out(source));assert_eq!(stripped(source),&b"class A { int x = 1; }\n"[..]);}#[test]fn a_file_with_no_hazardous_comment_does_not_bail_out(){assert!(!bails_out(b""));assert!(!bails_out(b"class A {\n// plain\n/* plain */\nint x = 1;\n}\n"));assert!(!bails_out(b"class A {}\n// end"));}#[test]fn the_bail_out_reaches_a_comment_nested_in_a_method_body(){assert!(bails_out(b"class A {\nvoid m() {\n/*\n#endif\n*/\nint x = 1;\n}\n}\n"));}#[test]fn a_file_that_trips_the_bail_out_is_byte_identical_at_both_settings(){let source=b"class A {\n#if FALSE\n/*\n#endif\nint x = 1;\n#if FALSE\n*/\n#endif\n}\n";assert_eq!(kept(source),source);assert_eq!(stripped(source),source);}#[test]fn every_probed_directive_survives_stripping_byte_exactly(){for source in[&b"#pragma warning disable 618\nclass A {}\n#pragma warning restore 618\n"[..],b"#define FOO\nclass A {}\n",b"#nullable enable\nclass A {}\n",b"#line 1 \"A.cs\"\nclass A {}\n",b"#warning careful\nclass A {}\n",b"class A {\n#if FOO\nint x = 1;\n#endif\n}\n",b"class A {\n#region helpers\nint x = 1;\n#endregion\n}\n",b"class A {\n#if FOO\nint x = 1;\n#elif BAR\nint x = 2;\n#else\nint x = 3;\n#endif\n}\n",b"#undef FOO\nclass A {}\n",b"#error broken\n",]{assert_eq!(stripped(source),source,"{source:?}");assert_eq!(kept(source),source,"{source:?}");}}#[test]fn an_indented_directive_still_begins_its_line_after_stripping(){let source=b"class A {\n    void m() {\n        #region helpers\n        int x = 1; // note\n        #endregion\n    }\n}\n";assert_eq!(stripped(source),&b"class A {\nvoid m() {\n#region helpers\nint x = 1;\n#endregion\n}\n}\n"[..]);}#[test]fn deleting_a_comment_never_pulls_the_next_directive_onto_its_line(){let source=b"class A {\nint x = 1; // note\n#if FOO\nint y = 2;\n#endif\n}\n";assert_eq!(stripped(source),&b"class A {\nint x = 1;\n#if FOO\nint y = 2;\n#endif\n}\n"[..]);assert_eq!(stripped(b"class A {\n/* a\nb */\n#if FOO\nint x = 1;\n#endif\n}\n"),&b"class A {\n#if FOO\nint x = 1;\n#endif\n}\n"[..]);assert_eq!(stripped(b"// header\n#if FOO\nclass A {}\n#endif\n"),&b"#if FOO\nclass A {}\n#endif\n"[..]);}#[test]fn a_directive_argument_is_never_read_as_a_comment(){for source in[&b"class A {\n#region helpers // note\n#endregion\n}\n"[..],b"#warning careful // not a comment */\nclass A {}\n",b"#define FOO // reason\nclass A {}\n",]{assert_eq!(stripped(source),source,"{source:?}");}assert_eq!(stripped(b"#pragma warning disable 618 // reason\nclass A {}\n"),&b"#pragma warning disable 618\nclass A {}\n"[..]);assert_eq!(stripped(b"class A {\n#if FOO // reason\nint x = 1;\n#endif\n}\n"),&b"class A {\n#if FOO\nint x = 1;\n#endif\n}\n"[..]);}#[test]fn no_csharp_comment_is_semantic(){for comment in[&b"// an ordinary note"[..],b"/// <summary>Doc.</summary>",b"/* a block comment */",b"//",]{let text=String::from_utf8_lossy(comment);assert!(!is_semantic_comment(comment),"{text}");}}#[test]fn xml_doc_comments_are_deleted_like_any_other_comment(){let source=b"/// <summary>Doc.</summary>\n/// <param name=\"x\">The x.</param>\nclass A {\nint x = 1;\n}\n";assert!(!is_semantic_comment(b"/// <summary>Doc.</summary>"));assert_eq!(stripped(source),&b"class A {\nint x = 1;\n}\n"[..]);}#[test]fn the_prologue_is_always_empty(){let config=csharp_config();for source in[&b""[..],b"class A {}\n",b"extern alias X;\nclass A {}\n",b"global using System;\nclass A {}\n","\u{feff}// header\nclass A {}\n".as_bytes(),b"#line default\nclass A {}\n",]{let tree=parse(&config,source).unwrap();assert_eq!(no_prologue(&tree,source),0..0,"{source:?}");}}#[test]fn the_head_of_the_file_survives_without_a_prologue(){assert_eq!(stripped("\u{feff}// header\nclass A {}\n".as_bytes()),"\u{feff}\nclass A {}\n".as_bytes());assert_eq!(stripped(b"// header\nextern alias X;\nglobal using System;\nclass A {}\n"),&b"extern alias X;\nglobal using System;\nclass A {}\n"[..]);}#[test]fn the_policy_deletes_every_comment_and_keeps_the_code(){let source=b"/// <summary>Doc.</summary>\nclass A {\n// note\nint x = 1; /* trailing */\nstring s = \"// not a comment\";\n}\n";assert_eq!(stripped(source),&b"class A {\nint x = 1;\nstring s = \"// not a comment\";\n}\n"[..]);assert_eq!(kept(source),source);}#[test]fn the_scanned_kinds_are_the_configured_comment_kinds(){assert_eq!(csharp_config().comment_kinds(),COMMENT_KINDS);}}

@@ -214,69 +214,28 @@
 //! parse failures, 4 refusals (2 of them this new class: `csv.rb` and
 //! `erb.rb`), **−45.8 % bytes**, and every written output also passed
 //! `ruby -c`.
-
-use std::ops::Range;
-
-use tokenpress_core::Result;
-
-use crate::parser::{self, Location, Node, ParseResult, Visit};
-
+use std::ops::Range;use tokenpress_core::Result;use crate::parser::{self,Location,Node,ParseResult,Visit};
 /// A byte range of the source that has to be reproduced verbatim.
-pub type Span = Range<usize>;
-
+pub type Span=Range<usize>;
 /// Collects every byte range of `parsed`'s source that must survive verbatim.
 ///
 /// The result is sorted, non-overlapping and within the source — the
 /// precondition [`rewrite`] is documented to need. Spans that touch or
 /// overlap are merged: the gap between two touching spans is empty, so
 /// keeping them apart would only hand the policy nothing to do.
-pub fn protected_spans(parsed: &ParseResult<'_>) -> Vec<Span> {
-    let mut spans = code_spans(parsed);
-    // Comments and embdocs are not in the tree at all.
-    spans.extend(parsed.comments().map(|comment| span(&comment.location())));
-    merge(spans)
-}
-
+pub fn protected_spans(parsed:&ParseResult<'_>)->Vec<Span>{let mut spans=code_spans(parsed);spans.extend(parsed.comments().map(|comment|span(&comment.location())));merge(spans)}
 /// The protected spans a comment policy may choose about: everything
 /// [`protected_spans`] returns except the comments, sorted and merged.
-fn code_spans(parsed: &ParseResult<'_>) -> Vec<Span> {
-    let mut collector = Collector {
-        source: parsed.source(),
-        spans: Vec::new(),
-    };
-    collector.visit(&parsed.node());
-    let mut spans = collector.spans;
-    // Anything after `__END__` is not in the tree either, but it is program
-    // data rather than commentary: no policy may delete it.
-    if let Some(data) = parsed.data_loc() {
-        spans.push(span(&data));
-    }
-    merge(spans)
-}
-
+fn code_spans(parsed:&ParseResult<'_>)->Vec<Span>{let mut collector=Collector{source:parsed.source(),spans:Vec::new(),};collector.visit(&parsed.node());let mut spans=collector.spans;if let Some(data)=parsed.data_loc(){spans.push(span(&data));}merge(spans)}
 /// Rebuilds `source`, copying `spans` verbatim and passing every gap between
 /// them — the whole of the rest of the file — through `policy`.
 ///
 /// `spans` must be sorted, non-overlapping and within `source`, which is what
 /// [`protected_spans`] returns.
-pub fn rewrite(source: &[u8], spans: &[Span], mut policy: impl FnMut(&[u8]) -> Vec<u8>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(source.len());
-    let mut cursor = 0;
-    for span in spans {
-        out.extend_from_slice(&policy(&source[cursor..span.start]));
-        out.extend_from_slice(&source[span.clone()]);
-        cursor = span.end;
-    }
-    out.extend_from_slice(&policy(&source[cursor..]));
-    out
-}
-
+pub fn rewrite(source:&[u8],spans:&[Span],mut policy:impl FnMut(&[u8])->Vec<u8>)->Vec<u8>{let mut out=Vec::with_capacity(source.len());let mut cursor=0;for span in spans{out.extend_from_slice(&policy(&source[cursor..span.start]));out.extend_from_slice(&source[span.clone()]);cursor=span.end;}out.extend_from_slice(&policy(&source[cursor..]));out}
 /// The identity gap policy: the bytes between protected spans pass through
 /// unchanged. The policy stages replace it; see the module docs.
-pub fn keep(gap: &[u8]) -> Vec<u8> {
-    gap.to_vec()
-}
-
+pub fn keep(gap:&[u8])->Vec<u8>{gap.to_vec()}
 /// Parses `source`, collects its protected spans and rewrites it with
 /// [`keep`], reproducing the input byte for byte.
 ///
@@ -286,184 +245,67 @@ pub fn keep(gap: &[u8]) -> Vec<u8> {
 ///
 /// Returns [`tokenpress_core::Error::Parse`] for a source prism reports
 /// errors for.
-pub fn identity(source: &[u8]) -> Result<Vec<u8>> {
-    let parsed = parser::parse(source)?;
-    let spans = protected_spans(&parsed);
-    Ok(rewrite(source, &spans, keep))
-}
-
+pub fn identity(source:&[u8])->Result<Vec<u8>>{let parsed=parser::parse(source)?;let spans=protected_spans(&parsed);Ok(rewrite(source,&spans,keep))}
 /// The whitespace-minimizing gap policy: indentation and trailing whitespace
 /// go, blank-line runs collapse to one newline, every other
 /// horizontal-whitespace run collapses to one space.
 ///
 /// See the module docs for the rules and for why the start of a gap counts as
 /// mid-line.
-pub fn minimize(gap: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(gap.len());
-    // Set only by a newline *this call* has emitted. A gap starts mid-line as
-    // far as the policy can tell, so it starts `false`.
-    let mut line_start = false;
-    let mut index = 0;
-
-    while index < gap.len() {
-        let rest = &gap[index..];
-        if rest[0] == b'\\' {
-            // A continuation: the backslash and whatever it holds move
-            // together, and the logical line carries on past them.
-            let unit = rest.len().min(2);
-            out.extend_from_slice(&rest[..unit]);
-            index += unit;
-            line_start = false;
-        } else if let Some(width) = newline_len(rest) {
-            // The first newline of a run terminates a statement; the ones
-            // after it only open blank lines.
-            if !line_start {
-                out.extend_from_slice(&rest[..width]);
-                line_start = true;
-            }
-            index += width;
-        } else if is_horizontal(rest[0]) {
-            index += rest.iter().take_while(|byte| is_horizontal(**byte)).count();
-            // Indentation and trailing whitespace vanish. Anything else is a
-            // separator, and a separator is one space.
-            if !line_start && newline_len(&gap[index..]).is_none() {
-                out.push(b' ');
-            }
-        } else {
-            out.push(rest[0]);
-            index += 1;
-            line_start = false;
-        }
-    }
-    out
-}
-
+pub fn minimize(gap:&[u8])->Vec<u8>{let mut out=Vec::with_capacity(gap.len());let mut line_start=false;let mut index=0;while index<gap.len(){let rest=&gap[index..];if rest[0]==b'\\'{let unit=rest.len().min(2);out.extend_from_slice(&rest[..unit]);index+=unit;line_start=false;}else if let Some(width)=newline_len(rest){if!line_start{out.extend_from_slice(&rest[..width]);line_start=true;}index+=width;}else if is_horizontal(rest[0]){index+=rest.iter().take_while(|byte|is_horizontal(**byte)).count();if!line_start&&newline_len(&gap[index..]).is_none(){out.push(b' ');}}else{out.push(rest[0]);index+=1;line_start=false;}}out}
 /// Parses `source`, collects its protected spans and rewrites it with
 /// [`minimize`]: the whitespace-minimal emitter, comments kept.
 ///
 /// Returns [`tokenpress_core::Error::Parse`] for a source prism reports
 /// errors for.
-pub fn minimize_source(source: &[u8]) -> Result<Vec<u8>> {
-    let parsed = parser::parse(source)?;
-    let spans = protected_spans(&parsed);
-    Ok(rewrite(source, &spans, minimize))
-}
-
+pub fn minimize_source(source:&[u8])->Result<Vec<u8>>{let parsed=parser::parse(source)?;let spans=protected_spans(&parsed);Ok(rewrite(source,&spans,minimize))}
 /// What a comment-stripping run does with the bytes it has classified: which
 /// spans survive verbatim, and which vanish.
 ///
 /// Both lists are sorted and non-overlapping, and no `deleted` span overlaps a
 /// `protected` one — the precondition [`strip_comments`] is documented to
 /// need. [`strip_comments_plan`] produces plans that satisfy it.
-#[derive(Debug, PartialEq, Eq)]
-pub struct StripPlan {
-    /// Byte ranges copied verbatim: what [`protected_spans`] returns, minus
-    /// the comments that `deleted` removes.
-    pub protected: Vec<Span>,
-    /// Byte ranges removed outright: a comment or embdoc, the horizontal
-    /// whitespace in front of it, and the line terminator that ends it when
-    /// nothing else shares its line.
-    pub deleted: Vec<Span>,
-}
-
+#[derive(Debug,PartialEq,Eq)]pub struct StripPlan{
+/// Byte ranges copied verbatim: what [`protected_spans`] returns, minus
+/// the comments that `deleted` removes.
+pub protected:Vec<Span>,
+/// Byte ranges removed outright: a comment or embdoc, the horizontal
+/// whitespace in front of it, and the line terminator that ends it when
+/// nothing else shares its line.
+pub deleted:Vec<Span>,}
 /// Classifies `parsed`'s source for comment stripping: every comment and
 /// embdoc is deleted, except the ones in the magic-comment window and the ones
 /// that live inside a protected literal.
 ///
 /// See the module docs for the window and for what a deleted span covers.
-pub fn strip_comments_plan(parsed: &ParseResult<'_>) -> StripPlan {
-    let source = parsed.source();
-    let code = code_spans(parsed);
-    let window_end = magic_comment_window_end(parsed);
-
-    let mut protected = code.clone();
-    let mut deleted = Vec::new();
-    for comment in parsed.comments() {
-        let comment = span(&comment.location());
-        // Inside the window a comment is semantic; inside a literal it is not
-        // a comment at all, only text that happens to look like one.
-        if comment.start < window_end || code.iter().any(|literal| overlaps(literal, &comment)) {
-            protected.push(comment);
-        } else {
-            deleted.push(with_its_line(source, comment));
-        }
-    }
-
-    StripPlan {
-        protected: merge(protected),
-        deleted: merge(deleted),
-    }
-}
-
+pub fn strip_comments_plan(parsed:&ParseResult<'_>)->StripPlan{let source=parsed.source();let code=code_spans(parsed);let window_end=magic_comment_window_end(parsed);let mut protected=code.clone();let mut deleted=Vec::new();for comment in parsed.comments(){let comment=span(&comment.location());if comment.start<window_end||code.iter().any(|literal|overlaps(literal,&comment)){protected.push(comment);}else{deleted.push(with_its_line(source,comment));}}StripPlan{protected:merge(protected),deleted:merge(deleted),}}
 /// Rebuilds `source` under `plan`: the deleted spans are dropped, the
 /// protected spans are copied verbatim, and every gap between them — one
 /// contiguous gap across each deletion, never two — goes through `policy`.
 ///
 /// `plan` must satisfy the invariants [`StripPlan`] documents, which is what
 /// [`strip_comments_plan`] returns.
-pub fn strip_comments(
-    source: &[u8],
-    plan: &StripPlan,
-    policy: impl FnMut(&[u8]) -> Vec<u8>,
-) -> Vec<u8> {
-    let (kept, spans) = delete(source, plan);
-    rewrite(&kept, &spans, policy)
-}
-
+pub fn strip_comments(source:&[u8],plan:&StripPlan,policy:impl FnMut(&[u8])->Vec<u8>,)->Vec<u8>{let(kept,spans)=delete(source,plan);rewrite(&kept,&spans,policy)}
 /// Parses `source`, plans its comment stripping and rewrites what is left with
 /// [`minimize`]: the comments-stripped emitter.
 ///
 /// Returns [`tokenpress_core::Error::Parse`] for a source prism reports
 /// errors for.
-pub fn strip_comments_source(source: &[u8]) -> Result<Vec<u8>> {
-    let parsed = parser::parse(source)?;
-    let plan = strip_comments_plan(&parsed);
-    Ok(strip_comments(source, &plan, minimize))
-}
-
+pub fn strip_comments_source(source:&[u8])->Result<Vec<u8>>{let parsed=parser::parse(source)?;let plan=strip_comments_plan(&parsed);Ok(strip_comments(source,&plan,minimize))}
 /// Removes `plan.deleted` from `source` and remaps `plan.protected` onto the
 /// bytes that are left.
 ///
 /// A deleted span never overlaps a protected one, so a protected span only
 /// ever moves: both of its ends shift by the number of bytes deleted before
 /// it.
-fn delete(source: &[u8], plan: &StripPlan) -> (Vec<u8>, Vec<Span>) {
-    let mut kept = Vec::with_capacity(source.len());
-    let mut cursor = 0;
-    for span in &plan.deleted {
-        kept.extend_from_slice(&source[cursor..span.start]);
-        cursor = span.end;
-    }
-    kept.extend_from_slice(&source[cursor..]);
-
-    let mut spans = Vec::with_capacity(plan.protected.len());
-    let mut removed = 0;
-    let mut next = 0;
-    for span in &plan.protected {
-        while next < plan.deleted.len() && plan.deleted[next].end <= span.start {
-            removed += plan.deleted[next].len();
-            next += 1;
-        }
-        spans.push(span.start - removed..span.end - removed);
-    }
-    (kept, spans)
-}
-
+fn delete(source:&[u8],plan:&StripPlan)->(Vec<u8>,Vec<Span>){let mut kept=Vec::with_capacity(source.len());let mut cursor=0;for span in&plan.deleted{kept.extend_from_slice(&source[cursor..span.start]);cursor=span.end;}kept.extend_from_slice(&source[cursor..]);let mut spans=Vec::with_capacity(plan.protected.len());let mut removed=0;let mut next=0;for span in&plan.protected{while next<plan.deleted.len()&&plan.deleted[next].end<=span.start{removed+=plan.deleted[next].len();next+=1;}spans.push(span.start-removed..span.end-removed);}(kept,spans)}
 /// The end of the magic-comment window: the offset of the first code token, or
 /// the length of the source when there is no code at all.
 ///
 /// The root node's location is exactly its statements', so it starts at the
 /// first byte of code however many comments and blank lines precede it, and it
 /// is empty — start equal to end — when the file holds no statement to locate.
-fn magic_comment_window_end(parsed: &ParseResult<'_>) -> usize {
-    let program = parsed.node().location();
-    if program.start_offset() == program.end_offset() {
-        parsed.source().len()
-    } else {
-        program.start_offset()
-    }
-}
-
+fn magic_comment_window_end(parsed:&ParseResult<'_>)->usize{let program=parsed.node().location();if program.start_offset()==program.end_offset(){parsed.source().len()}else{program.start_offset()}}
 /// Grows a comment's span over the bytes deleting it would otherwise leave
 /// behind: the horizontal whitespace in front of it and, when that whitespace
 /// is all that shares its line, the line terminator that ends it.
@@ -471,272 +313,31 @@ fn magic_comment_window_end(parsed: &ParseResult<'_>) -> usize {
 /// The backward scan cannot walk into a protected span: every one of them ends
 /// with a delimiter, a terminator line or the end of the file, never with the
 /// horizontal whitespace this would have to cross.
-fn with_its_line(source: &[u8], comment: Span) -> Span {
-    let mut start = comment.start;
-    while start > 0 && is_horizontal(source[start - 1]) {
-        start -= 1;
-    }
-
-    // An inline comment's span swallows the `\r` of a CRLF terminator. Hand it
-    // back, so that a surviving line keeps its CRLF and a deleted line takes
-    // both bytes with it.
-    let mut end = comment.end;
-    if source[..end].ends_with(b"\r") && source[end..].starts_with(b"\n") {
-        end -= 1;
-    }
-
-    if start == 0 || source[start - 1] == b'\n' {
-        // The comment is the whole line, so the line goes with it — a comment
-        // that ends the file has no terminator to take.
-        end += newline_len(&source[end..]).unwrap_or(0);
-    }
-    start..end
-}
-
+fn with_its_line(source:&[u8],comment:Span)->Span{let mut start=comment.start;while start>0&&is_horizontal(source[start-1]){start-=1;}let mut end=comment.end;if source[..end].ends_with(b"\r")&&source[end..].starts_with(b"\n"){end-=1;}if start==0||source[start-1]==b'\n'{end+=newline_len(&source[end..]).unwrap_or(0);}start..end}
 /// Whether two spans share at least one byte.
-fn overlaps(left: &Span, right: &Span) -> bool {
-    left.start < right.end && right.start < left.end
-}
-
+fn overlaps(left:&Span,right:&Span)->bool{left.start<right.end&&right.start<left.end}
 /// The whitespace a run is made of. Only spaces and tabs: every other byte
 /// Ruby happens to accept as whitespace is rare enough that leaving it alone
 /// costs nothing and guessing about it could cost correctness.
-fn is_horizontal(byte: u8) -> bool {
-    byte == b' ' || byte == b'\t'
-}
-
+fn is_horizontal(byte:u8)->bool{byte==b' '||byte==b'\t'}
 /// Width of the line terminator starting `bytes`, or `None` when `bytes` does
 /// not start with one. A lone `\r` is not a terminator here — see the module
 /// docs.
-fn newline_len(bytes: &[u8]) -> Option<usize> {
-    match bytes {
-        [b'\n', ..] => Some(1),
-        [b'\r', b'\n', ..] => Some(2),
-        _ => None,
-    }
-}
-
+fn newline_len(bytes:&[u8])->Option<usize>{match bytes{[b'\n',..]=>Some(1),[b'\r',b'\n',..]=>Some(2),_=>None,}}
 /// The `Visit` pass that records literal spans. It is generic over node kind
 /// — the two `*_node_enter` hooks see *every* node — so a construct is
 /// classified by what its own location and delimiters say, never by where in
 /// the tree it was found.
-struct Collector<'pr> {
-    source: &'pr [u8],
-    spans: Vec<Span>,
-}
-
-impl<'pr> Collector<'pr> {
-    fn record(&mut self, node: &Node<'pr>) {
-        if let Some(node) = node.as_string_node() {
-            self.spans.push(span(&node.location()));
-            self.heredoc(node.opening_loc(), node.closing_loc());
-        } else if let Some(node) = node.as_interpolated_string_node() {
-            self.spans.push(span(&node.location()));
-            self.heredoc(node.opening_loc(), node.closing_loc());
-        } else if let Some(node) = node.as_x_string_node() {
-            self.spans.push(span(&node.location()));
-            self.heredoc(Some(node.opening_loc()), Some(node.closing_loc()));
-        } else if let Some(node) = node.as_interpolated_x_string_node() {
-            self.spans.push(span(&node.location()));
-            self.heredoc(Some(node.opening_loc()), Some(node.closing_loc()));
-        } else if let Some(node) = node.as_symbol_node() {
-            self.spans.push(span(&node.location()));
-        } else if let Some(node) = node.as_interpolated_symbol_node() {
-            self.spans.push(span(&node.location()));
-        } else if let Some(node) = node.as_regular_expression_node() {
-            self.spans.push(span(&node.location()));
-        } else if let Some(node) = node.as_interpolated_regular_expression_node() {
-            self.spans.push(span(&node.location()));
-        } else if let Some(node) = node.as_match_last_line_node() {
-            self.spans.push(span(&node.location()));
-        } else if let Some(node) = node.as_interpolated_match_last_line_node() {
-            self.spans.push(span(&node.location()));
-        } else if let Some(node) = node.as_array_node() {
-            // Only the `%w`/`%i`/`%W`/`%I` spelling, whose separators are
-            // whitespace. A `[1, 2]` array opens with `[` and an implicit
-            // `1, 2` array has no opening delimiter at all; both are ordinary
-            // rewritable code.
-            if node
-                .opening_loc()
-                .is_some_and(|opening| opening.as_slice().starts_with(b"%"))
-            {
-                self.spans.push(span(&node.location()));
-            }
-        }
-    }
-
-    /// Records a heredoc's body and terminator when `opening` is a heredoc
-    /// delimiter. See the module docs for the derivation.
-    fn heredoc(&mut self, opening: Option<Location<'pr>>, closing: Option<Location<'pr>>) {
-        // A literal with no delimiters (a `%w` element) or no closing one
-        // (`?a`) is never a heredoc.
-        let (Some(opening), Some(closing)) = (opening, closing) else {
-            return;
-        };
-        if opening.as_slice().starts_with(b"<<") {
-            let after_marker = opening.end_offset();
-            // Distance to the newline that ends the marker's line. Counting
-            // rather than searching keeps this total: a marker line with no
-            // newline left in the file would simply run to the end, and no
-            // arm exists that could not be taken.
-            let to_line_end = self.source[after_marker..]
-                .iter()
-                .take_while(|byte| **byte != b'\n')
-                .count();
-            self.spans
-                .push(after_marker + to_line_end..closing.end_offset());
-        }
-    }
-}
-
-impl<'pr> Visit<'pr> for Collector<'pr> {
-    fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
-        self.record(&node);
-    }
-
-    fn visit_leaf_node_enter(&mut self, node: Node<'pr>) {
-        self.record(&node);
-    }
-}
-
-fn span(location: &Location<'_>) -> Span {
-    location.start_offset()..location.end_offset()
-}
-
+struct Collector<'pr>{source:&'pr[u8],spans:Vec<Span>,}impl<'pr>Collector<'pr>{fn record(&mut self,node:&Node<'pr>){if let Some(node)=node.as_string_node(){self.spans.push(span(&node.location()));self.heredoc(node.opening_loc(),node.closing_loc());}else if let Some(node)=node.as_interpolated_string_node(){self.spans.push(span(&node.location()));self.heredoc(node.opening_loc(),node.closing_loc());}else if let Some(node)=node.as_x_string_node(){self.spans.push(span(&node.location()));self.heredoc(Some(node.opening_loc()),Some(node.closing_loc()));}else if let Some(node)=node.as_interpolated_x_string_node(){self.spans.push(span(&node.location()));self.heredoc(Some(node.opening_loc()),Some(node.closing_loc()));}else if let Some(node)=node.as_symbol_node(){self.spans.push(span(&node.location()));}else if let Some(node)=node.as_interpolated_symbol_node(){self.spans.push(span(&node.location()));}else if let Some(node)=node.as_regular_expression_node(){self.spans.push(span(&node.location()));}else if let Some(node)=node.as_interpolated_regular_expression_node(){self.spans.push(span(&node.location()));}else if let Some(node)=node.as_match_last_line_node(){self.spans.push(span(&node.location()));}else if let Some(node)=node.as_interpolated_match_last_line_node(){self.spans.push(span(&node.location()));}else if let Some(node)=node.as_array_node(){if node.opening_loc().is_some_and(|opening|opening.as_slice().starts_with(b"%")){self.spans.push(span(&node.location()));}}}
+/// Records a heredoc's body and terminator when `opening` is a heredoc
+/// delimiter. See the module docs for the derivation.
+fn heredoc(&mut self,opening:Option<Location<'pr>>,closing:Option<Location<'pr>>){let(Some(opening),Some(closing))=(opening,closing)else{return;};if opening.as_slice().starts_with(b"<<"){let after_marker=opening.end_offset();let to_line_end=self.source[after_marker..].iter().take_while(|byte|**byte!=b'\n').count();self.spans.push(after_marker+to_line_end..closing.end_offset());}}}impl<'pr>Visit<'pr>for Collector<'pr>{fn visit_branch_node_enter(&mut self,node:Node<'pr>){self.record(&node);}fn visit_leaf_node_enter(&mut self,node:Node<'pr>){self.record(&node);}}fn span(location:&Location<'_>)->Span{location.start_offset()..location.end_offset()}
 /// Sorts `spans` and merges every pair that overlaps or touches.
-fn merge(mut spans: Vec<Span>) -> Vec<Span> {
-    spans.sort_by_key(|span| span.start);
-    let mut merged: Vec<Span> = Vec::with_capacity(spans.len());
-    for span in spans {
-        match merged.last_mut() {
-            Some(last) if span.start <= last.end => last.end = last.end.max(span.end),
-            _ => merged.push(span),
-        }
-    }
-    merged
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokenpress_core::Error;
-
-    /// Every construct whose bytes the emitter may not touch. Byte strings,
-    /// not `&str`: a Ruby source is a byte sequence and one of these is not
-    /// valid UTF-8.
-    const HAZARDS: &[(&str, &[u8])] = &[
-        ("plain heredoc", b"x = <<EOS\nbody\nEOS\n"),
-        ("dash heredoc", b"x = <<-EOS\n  body\n  EOS\n"),
-        ("squiggly heredoc", b"x = <<~EOS\n  body\nEOS\n"),
-        (
-            "single quoted heredoc marker",
-            b"x = <<~'EOS'\n  a#{b}\nEOS\n",
-        ),
-        (
-            "double quoted heredoc marker",
-            b"x = <<\"EOS\"\n  body\nEOS\n",
-        ),
-        (
-            "two heredocs on one line",
-            b"a = <<~A; b = <<~B\n  one\nA\n  two\nB\n",
-        ),
-        (
-            "heredoc with interpolation",
-            b"x = <<~EOS\n  a#{1 + 2}b\nEOS\n",
-        ),
-        (
-            "heredoc with a method call",
-            b"x = <<~EOS.strip\n  body\nEOS\n",
-        ),
-        (
-            "heredoc with a chained method call",
-            b"x = <<~A.strip.upcase\n  body\nA\n",
-        ),
-        ("heredoc as an argument", b"p(<<~A, 1)\n  hi\nA\n"),
-        (
-            "heredoc argument followed by a block",
-            b"foo(<<~A) do\n  b\nA\n  bar\nend\n",
-        ),
-        (
-            "heredoc nested in an interpolation",
-            b"a = <<~A\n  #{<<~B}\n  inner\nB\n  rest\nA\n",
-        ),
-        ("empty heredoc", b"x = <<~A\nA\n"),
-        ("backtick heredoc", b"x = <<~`A`\n  echo\nA\n"),
-        (
-            "heredoc body that looks like a comment",
-            b"x = <<~A\n  # no\nA\n",
-        ),
-        (
-            "heredoc body that looks like an embdoc",
-            b"x = <<~A\n=begin\nno\n=end\nA\n",
-        ),
-        (
-            "comment after a heredoc marker",
-            b"x = <<~A # note\n  body\nA\n",
-        ),
-        (
-            "heredoc before __END__",
-            b"x = <<~A\n  b\nA\n__END__\ndata\n",
-        ),
-        ("word list", b"x = %w[a   b]\n"),
-        ("symbol list", b"x = %i[a   b]\n"),
-        ("interpolated word list", b"x = %W[a#{b}   c]\n"),
-        ("interpolated symbol list", b"x = %I[a#{b}   c]\n"),
-        ("multi-line word list", b"x = %w[a\n   b]\n"),
-        ("empty word list", b"x = %w[]\n"),
-        ("percent q string", b"x = %q(a   b)\n"),
-        ("percent big q string", b"x = %Q(a   #{b})\n"),
-        ("percent regexp", b"x = %r{a   b}i\n"),
-        ("plain regexp", b"x = /a   b/\n"),
-        ("interpolated regexp", b"x = /a#{b}   c/\n"),
-        ("match last line regexp", b"if /a   b/\n  1\nend\n"),
-        (
-            "interpolated match last line regexp",
-            b"if /a#{b}   c/\n  1\nend\n",
-        ),
-        ("backtick xstring", b"x = `echo   hi`\n"),
-        ("interpolated backtick xstring", b"x = `echo   #{a}`\n"),
-        ("percent x xstring", b"x = %x(echo   hi)\n"),
-        ("single quoted string", b"x = 'a  \\n  b'\n"),
-        ("double quoted string", b"x = \"a  \\t  b\"\n"),
-        ("string interpolation", b"x = \"a#{b}c\"\n"),
-        (
-            "adjacent strings over a continuation",
-            b"x = \"a\" \\\n  \"b\"\n",
-        ),
-        ("character literal", b"c = ?a\n"),
-        ("plain symbol", b"x = :sym\n"),
-        ("quoted symbol", b"x = :\"quoted   sym\"\n"),
-        ("percent s symbol", b"x = %s(w)\n"),
-        ("interpolated symbol", b"x = :\"a#{b}c\"\n"),
-        ("comment inside an interpolation", b"x = \"a#{1 # c\n}b\"\n"),
-        (
-            "comment inside a heredoc interpolation",
-            b"x = <<~A\n  #{1 # c\n  }\nA\n",
-        ),
-        ("__END__ with data", b"x = 1\n__END__\ndata here\n"),
-        ("__END__ without a trailing newline", b"x = 1\n__END__"),
-        ("__END__ with nothing after it", b"x = 1\n__END__\n"),
-        ("embdoc", b"=begin\nhi\n=end\nx = 1\n"),
-        (
-            "shebang and magic comment",
-            b"#!/usr/bin/env ruby\n# frozen_string_literal: true\nx = 1\n",
-        ),
-        ("inline comments", b"x = 1 # c1\n# c2\ny = 2\n"),
-        ("non-utf8 comment", b"# \xe9\nx = 1\n"),
-        (
-            "non-utf8 string under a magic comment",
-            b"# encoding: binary\nx = \"\xff\xfe\"\n",
-        ),
-        ("plain array", b"x = [1,   2]\n"),
-        ("implicit array", b"y = 1,   2\n"),
-        ("no literals at all", b"def f(a, b)\n  a + b\nend\n"),
-        ("bare percent string", b"x = %(a   b)\n"),
-        ("empty source", b""),
-        (
-            "everything at once",
-            b"#!/usr/bin/env ruby\n\
+fn merge(mut spans:Vec<Span>)->Vec<Span>{spans.sort_by_key(|span|span.start);let mut merged:Vec<Span> =Vec::with_capacity(spans.len());for span in spans{match merged.last_mut(){Some(last)if span.start<=last.end=>last.end=last.end.max(span.end),_=>merged.push(span),}}merged}#[cfg(test)]mod tests{use super::*;use tokenpress_core::Error;
+/// Every construct whose bytes the emitter may not touch. Byte strings,
+/// not `&str`: a Ruby source is a byte sequence and one of these is not
+/// valid UTF-8.
+const HAZARDS:&[(&str,&[u8])]=&[("plain heredoc",b"x = <<EOS\nbody\nEOS\n"),("dash heredoc",b"x = <<-EOS\n  body\n  EOS\n"),("squiggly heredoc",b"x = <<~EOS\n  body\nEOS\n"),("single quoted heredoc marker",b"x = <<~'EOS'\n  a#{b}\nEOS\n",),("double quoted heredoc marker",b"x = <<\"EOS\"\n  body\nEOS\n",),("two heredocs on one line",b"a = <<~A; b = <<~B\n  one\nA\n  two\nB\n",),("heredoc with interpolation",b"x = <<~EOS\n  a#{1 + 2}b\nEOS\n",),("heredoc with a method call",b"x = <<~EOS.strip\n  body\nEOS\n",),("heredoc with a chained method call",b"x = <<~A.strip.upcase\n  body\nA\n",),("heredoc as an argument",b"p(<<~A, 1)\n  hi\nA\n"),("heredoc argument followed by a block",b"foo(<<~A) do\n  b\nA\n  bar\nend\n",),("heredoc nested in an interpolation",b"a = <<~A\n  #{<<~B}\n  inner\nB\n  rest\nA\n",),("empty heredoc",b"x = <<~A\nA\n"),("backtick heredoc",b"x = <<~`A`\n  echo\nA\n"),("heredoc body that looks like a comment",b"x = <<~A\n  # no\nA\n",),("heredoc body that looks like an embdoc",b"x = <<~A\n=begin\nno\n=end\nA\n",),("comment after a heredoc marker",b"x = <<~A # note\n  body\nA\n",),("heredoc before __END__",b"x = <<~A\n  b\nA\n__END__\ndata\n",),("word list",b"x = %w[a   b]\n"),("symbol list",b"x = %i[a   b]\n"),("interpolated word list",b"x = %W[a#{b}   c]\n"),("interpolated symbol list",b"x = %I[a#{b}   c]\n"),("multi-line word list",b"x = %w[a\n   b]\n"),("empty word list",b"x = %w[]\n"),("percent q string",b"x = %q(a   b)\n"),("percent big q string",b"x = %Q(a   #{b})\n"),("percent regexp",b"x = %r{a   b}i\n"),("plain regexp",b"x = /a   b/\n"),("interpolated regexp",b"x = /a#{b}   c/\n"),("match last line regexp",b"if /a   b/\n  1\nend\n"),("interpolated match last line regexp",b"if /a#{b}   c/\n  1\nend\n",),("backtick xstring",b"x = `echo   hi`\n"),("interpolated backtick xstring",b"x = `echo   #{a}`\n"),("percent x xstring",b"x = %x(echo   hi)\n"),("single quoted string",b"x = 'a  \\n  b'\n"),("double quoted string",b"x = \"a  \\t  b\"\n"),("string interpolation",b"x = \"a#{b}c\"\n"),("adjacent strings over a continuation",b"x = \"a\" \\\n  \"b\"\n",),("character literal",b"c = ?a\n"),("plain symbol",b"x = :sym\n"),("quoted symbol",b"x = :\"quoted   sym\"\n"),("percent s symbol",b"x = %s(w)\n"),("interpolated symbol",b"x = :\"a#{b}c\"\n"),("comment inside an interpolation",b"x = \"a#{1 # c\n}b\"\n"),("comment inside a heredoc interpolation",b"x = <<~A\n  #{1 # c\n  }\nA\n",),("__END__ with data",b"x = 1\n__END__\ndata here\n"),("__END__ without a trailing newline",b"x = 1\n__END__"),("__END__ with nothing after it",b"x = 1\n__END__\n"),("embdoc",b"=begin\nhi\n=end\nx = 1\n"),("shebang and magic comment",b"#!/usr/bin/env ruby\n# frozen_string_literal: true\nx = 1\n",),("inline comments",b"x = 1 # c1\n# c2\ny = 2\n"),("non-utf8 comment",b"# \xe9\nx = 1\n"),("non-utf8 string under a magic comment",b"# encoding: binary\nx = \"\xff\xfe\"\n",),("plain array",b"x = [1,   2]\n"),("implicit array",b"y = 1,   2\n"),("no literals at all",b"def f(a, b)\n  a + b\nend\n"),("bare percent string",b"x = %(a   b)\n"),("empty source",b""),("everything at once",b"#!/usr/bin/env ruby\n\
               # frozen_string_literal: true\n\
               =begin\n\
               doc\n\
@@ -750,562 +351,19 @@ mod tests {
                 end\n\
               end\n\
               __END__\n\
-              trailing   data\n",
-        ),
-        ("crlf line endings", b"x = 1\r\ny = 2\r\n"),
-        ("crlf heredoc", b"x = <<~A\r\n  b\r\nA\r\n"),
-    ];
-
-    /// A length-preserving gap policy: everything outside a protected span is
-    /// upper-cased. Length preservation is what lets the assertions compare
-    /// the *same* byte offsets before and after.
-    fn upcase(gap: &[u8]) -> Vec<u8> {
-        gap.to_ascii_uppercase()
-    }
-
-    /// A gap policy that changes length: runs of spaces collapse to one.
-    fn collapse_spaces(gap: &[u8]) -> Vec<u8> {
-        let mut out: Vec<u8> = Vec::new();
-        for byte in gap {
-            if !(*byte == b' ' && out.last() == Some(&b' ')) {
-                out.push(*byte);
-            }
-        }
-        out
-    }
-
-    fn spans_of(source: &[u8]) -> Vec<Span> {
-        let parsed = parser::parse(source).unwrap();
-        protected_spans(&parsed)
-    }
-
-    fn rewritten(source: &[u8], policy: impl FnMut(&[u8]) -> Vec<u8>) -> Vec<u8> {
-        rewrite(source, &spans_of(source), policy)
-    }
-
-    #[test]
-    fn every_hazard_survives_the_identity_rewriter_byte_for_byte() {
-        for (name, source) in HAZARDS {
-            let out = identity(source).unwrap();
-            assert_eq!(out, *source, "{name}");
-        }
-    }
-
-    #[test]
-    fn every_hazard_keeps_its_protected_bytes_under_a_gap_policy() {
-        for (name, source) in HAZARDS {
-            let spans = spans_of(source);
-            let out = rewritten(source, upcase);
-            // `upcase` preserves length, so the protected spans still index
-            // the same bytes in the output.
-            assert_eq!(out.len(), source.len(), "{name}");
-            for span in &spans {
-                assert_eq!(out[span.clone()], source[span.clone()], "{name} {span:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn every_hazard_yields_ordered_disjoint_in_bounds_spans() {
-        for (name, source) in HAZARDS {
-            let spans = spans_of(source);
-            let mut previous = 0;
-            for span in &spans {
-                assert!(span.start >= previous, "{name}: {span:?} out of order");
-                assert!(span.start <= span.end, "{name}: {span:?} inverted");
-                assert!(span.end <= source.len(), "{name}: {span:?} out of bounds");
-                previous = span.end;
-            }
-        }
-    }
-
-    #[test]
-    fn a_heredoc_span_runs_from_the_marker_line_end_to_the_terminator() {
-        let source = b"x = <<~EOS.strip\n  body\nEOS\n";
-        assert_eq!(spans_of(source), vec![4..10, 16..28]);
-        // The marker itself, then the body *and* the terminator line.
-        assert_eq!(&source[4..10], b"<<~EOS");
-        assert_eq!(&source[16..28], b"\n  body\nEOS\n");
-    }
-
-    #[test]
-    fn the_code_after_a_heredoc_marker_stays_in_a_gap() {
-        // `.strip` sits between the marker and the body, so it is rewritable.
-        let out = rewritten(b"x = <<~EOS.strip\n  body\nEOS\n", upcase);
-        assert_eq!(out, b"X = <<~EOS.STRIP\n  body\nEOS\n");
-    }
-
-    #[test]
-    fn two_heredocs_on_one_line_merge_into_one_span() {
-        let source = b"a = <<~A; b = <<~B\n  one\nA\n  two\nB\n";
-        // `<<~A`, then the second marker joined to everything from the end of
-        // the marker line through the last terminator.
-        assert_eq!(spans_of(source), vec![4..8, 14..35]);
-        assert_eq!(&source[14..35], b"<<~B\n  one\nA\n  two\nB\n");
-    }
-
-    #[test]
-    fn an_empty_heredoc_body_still_protects_the_terminator() {
-        // The marker ends where the derived region starts, so the two touch
-        // and merge; `y = 2` after the terminator stays a gap.
-        let source = b"x = <<~A\nA\ny = 2\n";
-        assert_eq!(spans_of(source), vec![4..11]);
-        assert_eq!(&source[4..11], b"<<~A\nA\n");
-    }
-
-    #[test]
-    fn a_comment_after_a_marker_merges_with_the_heredoc_region() {
-        // The comment ends where the marker line does, which is where the
-        // derived region begins.
-        let source = b"x = <<~A # note\n  body\nA\n";
-        assert_eq!(spans_of(source), vec![4..8, 9..25]);
-        assert_eq!(&source[9..25], b"# note\n  body\nA\n");
-    }
-
-    #[test]
-    fn a_comment_span_is_exactly_the_comment() {
-        let source = b"x = 1 # c1\n# c2\ny = 2\n";
-        assert_eq!(spans_of(source), vec![6..10, 11..15]);
-        assert_eq!(&source[6..10], b"# c1");
-        assert_eq!(&source[11..15], b"# c2");
-    }
-
-    #[test]
-    fn an_embdoc_span_covers_the_whole_block() {
-        let source = b"=begin\nhi\n=end\nx = 1\n";
-        assert_eq!(spans_of(source), vec![0..15]);
-        assert_eq!(&source[0..15], b"=begin\nhi\n=end\n");
-    }
-
-    #[test]
-    fn the_data_section_is_protected() {
-        let source = b"x = 1\n__END__\ndata here\n";
-        assert_eq!(spans_of(source), vec![6..24]);
-        assert_eq!(&source[6..24], b"__END__\ndata here\n");
-    }
-
-    #[test]
-    fn a_word_list_is_protected_whole_so_its_separators_survive() {
-        // The elements alone would leave the separating whitespace in a gap,
-        // and that whitespace *is* the separator.
-        let source = b"x = %w[a   b]\n";
-        assert_eq!(spans_of(source), vec![4..13]);
-        assert_eq!(rewritten(source, collapse_spaces), b"x = %w[a   b]\n");
-    }
-
-    #[test]
-    fn a_plain_array_is_not_protected() {
-        let source = b"x = [1,   2]\n";
-        assert!(spans_of(source).is_empty());
-        assert_eq!(rewritten(source, collapse_spaces), b"x = [1, 2]\n");
-    }
-
-    #[test]
-    fn an_implicit_array_is_not_protected() {
-        // No opening delimiter at all, so the `%` test has nothing to read.
-        assert!(spans_of(b"y = 1,   2\n").is_empty());
-    }
-
-    #[test]
-    fn overlapping_spans_merge() {
-        // The comment lives inside the string literal's span.
-        let source = b"x = \"a#{1 # c\n}b\"\n";
-        assert_eq!(spans_of(source), vec![4..17]);
-        assert_eq!(&source[4..17], b"\"a#{1 # c\n}b\"");
-    }
-
-    #[test]
-    fn a_gap_policy_reaches_the_code_around_a_literal() {
-        assert_eq!(rewritten(b"x = 'a  b'\n", upcase), b"X = 'a  b'\n");
-        assert_eq!(
-            rewritten(b"def f\n  x = 'a  b'\nend\n", collapse_spaces),
-            b"def f\n x = 'a  b'\nend\n"
-        );
-    }
-
-    #[test]
-    fn keep_returns_the_gap_unchanged() {
-        assert_eq!(keep(b"  a  "), b"  a  ");
-    }
-
-    #[test]
-    fn rewrite_with_no_spans_is_just_the_policy() {
-        assert_eq!(rewrite(b"a b", &[], upcase), b"A B");
-    }
-
-    #[test]
-    fn identity_reports_a_parse_error() {
-        let err = identity(b"def ; end").unwrap_err();
-        assert!(matches!(err, Error::Parse(_)), "{err}");
-    }
-
-    #[test]
-    fn minimize_strips_line_indentation() {
-        assert_eq!(minimize(b"a\n    b\n\tc\n"), b"a\nb\nc\n");
-    }
-
-    #[test]
-    fn minimize_strips_trailing_whitespace() {
-        assert_eq!(minimize(b"a   \nb\t\n"), b"a\nb\n");
-    }
-
-    #[test]
-    fn minimize_strips_a_whitespace_run_that_ends_the_gap_after_a_newline() {
-        // Indentation with nothing after it is still indentation.
-        assert_eq!(minimize(b"a\n   "), b"a\n");
-    }
-
-    #[test]
-    fn minimize_collapses_blank_line_runs_to_one_newline() {
-        assert_eq!(minimize(b"a\n\n\n\nb\n"), b"a\nb\n");
-        // A line holding only whitespace is blank too.
-        assert_eq!(minimize(b"a\n  \n\t\nb\n"), b"a\nb\n");
-        // A gap that opens with blank lines keeps the first newline: the
-        // policy cannot see what came before it.
-        assert_eq!(minimize(b"\n\n\na\n"), b"\na\n");
-    }
-
-    #[test]
-    fn minimize_keeps_the_newline_that_ends_a_statement() {
-        // Newlines are statement terminators; only *blank* lines go.
-        assert_eq!(minimize(b"a = 1\nb = 2\n"), b"a = 1\nb = 2\n");
-    }
-
-    #[test]
-    fn minimize_collapses_intra_line_whitespace_to_one_space() {
-        assert_eq!(minimize(b"a   =\t\t1\n"), b"a = 1\n");
-    }
-
-    #[test]
-    fn minimize_never_collapses_a_space_run_to_nothing() {
-        // The load-bearing choice: one space, never zero. `a -b` is a call
-        // with a unary-minus argument, `a - b` a subtraction.
-        assert_eq!(minimize(b"a  -  b\n"), b"a - b\n");
-        assert_eq!(minimize(b"defined?  x\n"), b"defined? x\n");
-        assert_eq!(minimize(b"not  x\n"), b"not x\n");
-        // A run that ends the gap is mid-line as far as the policy knows, so
-        // it also keeps its space — the next bytes may be a protected span.
-        assert_eq!(minimize(b"p   "), b"p ");
-    }
-
-    #[test]
-    fn minimize_treats_the_start_of_a_gap_as_mid_line() {
-        // Stateless per gap: without a newline of its own to key on, leading
-        // whitespace is an intra-line run, not indentation.
-        assert_eq!(minimize(b"    a\n"), b" a\n");
-    }
-
-    #[test]
-    fn minimize_keeps_a_backslash_and_the_byte_after_it_verbatim() {
-        // `\` + `\n` is one indivisible line continuation, and the physical
-        // line after it is mid-logical-line, so its leading run collapses to
-        // a space rather than vanishing.
-        assert_eq!(minimize(b"a + \\\n  b\n"), b"a + \\\n b\n");
-        // A backslash that ends the gap has nothing to protect.
-        assert_eq!(minimize(b"a \\"), b"a \\");
-    }
-
-    #[test]
-    fn minimize_preserves_crlf_line_endings() {
-        assert_eq!(minimize(b"a = 1\r\nb = 2\r\n"), b"a = 1\r\nb = 2\r\n");
-        assert_eq!(minimize(b"a   \r\n   b\r\n"), b"a\r\nb\r\n");
-        assert_eq!(minimize(b"a\r\n\r\n\r\nb\r\n"), b"a\r\nb\r\n");
-    }
-
-    #[test]
-    fn minimize_copies_a_carriage_return_that_ends_no_line() {
-        // The byte a CRLF heredoc leaves in the gap before its body.
-        assert_eq!(minimize(b"x = <<~A\r"), b"x = <<~A\r");
-    }
-
-    #[test]
-    fn minimize_of_an_empty_gap_is_empty() {
-        assert_eq!(minimize(b""), b"");
-    }
-
-    #[test]
-    fn minimize_source_rewrites_only_the_gaps() {
-        assert_eq!(
-            minimize_source(b"def f(a,   b)\n    a  +  b\nend\n").unwrap(),
-            b"def f(a, b)\na + b\nend\n"
-        );
-    }
-
-    #[test]
-    fn minimize_source_keeps_word_list_separators_but_not_array_spacing() {
-        // The stage-1 seam, now under the real policy.
-        assert_eq!(
-            minimize_source(b"x = %w[a   b]\n").unwrap(),
-            b"x = %w[a   b]\n"
-        );
-        assert_eq!(minimize_source(b"x = [1,   2]\n").unwrap(), b"x = [1, 2]\n");
-    }
-
-    #[test]
-    fn minimize_source_leaves_a_heredoc_body_alone_while_minimizing_its_marker_line() {
-        assert_eq!(
-            minimize_source(b"x   =   <<~EOS.strip\n  body\nEOS\n").unwrap(),
-            b"x = <<~EOS.strip\n  body\nEOS\n"
-        );
-    }
-
-    #[test]
-    fn minimize_source_keeps_comments_and_the_newline_before_a_column_zero_construct() {
-        // `=begin` and `__END__` must stay at column 0, so the newline that
-        // puts them there is the one blank-run collapsing keeps. The blank
-        // run after the embdoc collapses to two newlines rather than one:
-        // the embdoc span ends *with* a newline, which the following gap
-        // cannot see, so its own first newline still counts as a terminator.
-        assert_eq!(
-            minimize_source(b"x = 1   # c\n\n\n=begin\nd\n=end\n\n\n__END__\ndata\n").unwrap(),
-            b"x = 1 # c\n=begin\nd\n=end\n\n__END__\ndata\n"
-        );
-    }
-
-    #[test]
-    fn minimize_source_reports_a_parse_error() {
-        let err = minimize_source(b"def ; end").unwrap_err();
-        assert!(matches!(err, Error::Parse(_)), "{err}");
-    }
-
-    #[test]
-    fn every_hazard_stays_equivalent_under_minimization() {
-        for (name, source) in HAZARDS {
-            let out = minimize_source(source).unwrap();
-            let equivalent = crate::comparable::equivalent(source, &out).unwrap();
-            assert!(equivalent, "{name}: {}", String::from_utf8_lossy(&out));
-        }
-    }
-
-    fn plan_of(source: &[u8]) -> StripPlan {
-        let parsed = parser::parse(source).unwrap();
-        strip_comments_plan(&parsed)
-    }
-
-    /// Comment stripping with the identity gap policy: only the comments and
-    /// the bytes they leave behind move, so the assertion is byte-exact.
-    fn stripped(source: &[u8]) -> Vec<u8> {
-        strip_comments(source, &plan_of(source), keep)
-    }
-
-    #[test]
-    fn a_plan_deletes_a_comment_with_the_whitespace_in_front_of_it() {
-        let source = b"x = 1 # c\n# d\ny = \"s\" # e\n";
-        let plan = plan_of(source);
-        // Only the string literal is protected: every comment sits after the
-        // first code token.
-        assert_eq!(plan.protected, vec![18..21]);
-        assert_eq!(plan.deleted, vec![5..9, 10..14, 21..25]);
-        // The trailing comments take their leading space but not their
-        // newline; the full-line comment takes its newline and no more.
-        assert_eq!(&source[5..9], b" # c");
-        assert_eq!(&source[10..14], b"# d\n");
-        assert_eq!(&source[21..25], b" # e");
-    }
-
-    #[test]
-    fn stripping_a_trailing_comment_leaves_the_code_line_intact() {
-        assert_eq!(stripped(b"x = 1  # note\ny = 2\n"), b"x = 1\ny = 2\n");
-        // No trailing newline to take, either.
-        assert_eq!(stripped(b"x = 1  # note"), b"x = 1");
-    }
-
-    #[test]
-    fn stripping_a_full_line_comment_removes_the_line_it_leaves_empty() {
-        assert_eq!(stripped(b"x = 1\n  # c\ny = 2\n"), b"x = 1\ny = 2\n");
-        // Several in a row, and one that ends the file.
-        assert_eq!(
-            stripped(b"x = 1\n# a\n# b\ny = 2\n# c\n"),
-            b"x = 1\ny = 2\n"
-        );
-    }
-
-    #[test]
-    fn stripping_a_comment_line_after_a_heredoc_leaves_no_blank_line() {
-        // The heredoc region ends with the terminator's newline, so the
-        // comment line starts right after a protected span.
-        assert_eq!(
-            stripped(b"x = <<~A\nb\nA\n# c\ny = 2\n"),
-            b"x = <<~A\nb\nA\ny = 2\n"
-        );
-    }
-
-    #[test]
-    fn the_shebang_survives_stripping() {
-        assert_eq!(
-            stripped(b"#!/usr/bin/env ruby\nx = 1 # c\n"),
-            b"#!/usr/bin/env ruby\nx = 1\n"
-        );
-    }
-
-    #[test]
-    fn magic_comments_before_the_first_code_token_survive_stripping() {
-        let source = b"#!/usr/bin/env ruby\n\
+              trailing   data\n",),("crlf line endings",b"x = 1\r\ny = 2\r\n"),("crlf heredoc",b"x = <<~A\r\n  b\r\nA\r\n"),];
+/// A length-preserving gap policy: everything outside a protected span is
+/// upper-cased. Length preservation is what lets the assertions compare
+/// the *same* byte offsets before and after.
+fn upcase(gap:&[u8])->Vec<u8>{gap.to_ascii_uppercase()}
+/// A gap policy that changes length: runs of spaces collapse to one.
+fn collapse_spaces(gap:&[u8])->Vec<u8>{let mut out:Vec<u8> =Vec::new();for byte in gap{if!(*byte==b' '&&out.last()==Some(&b' ')){out.push(*byte);}}out}fn spans_of(source:&[u8])->Vec<Span>{let parsed=parser::parse(source).unwrap();protected_spans(&parsed)}fn rewritten(source:&[u8],policy:impl FnMut(&[u8])->Vec<u8>)->Vec<u8>{rewrite(source,&spans_of(source),policy)}#[test]fn every_hazard_survives_the_identity_rewriter_byte_for_byte(){for(name,source)in HAZARDS{let out=identity(source).unwrap();assert_eq!(out,*source,"{name}");}}#[test]fn every_hazard_keeps_its_protected_bytes_under_a_gap_policy(){for(name,source)in HAZARDS{let spans=spans_of(source);let out=rewritten(source,upcase);assert_eq!(out.len(),source.len(),"{name}");for span in&spans{assert_eq!(out[span.clone()],source[span.clone()],"{name} {span:?}");}}}#[test]fn every_hazard_yields_ordered_disjoint_in_bounds_spans(){for(name,source)in HAZARDS{let spans=spans_of(source);let mut previous=0;for span in&spans{assert!(span.start>=previous,"{name}: {span:?} out of order");assert!(span.start<=span.end,"{name}: {span:?} inverted");assert!(span.end<=source.len(),"{name}: {span:?} out of bounds");previous=span.end;}}}#[test]fn a_heredoc_span_runs_from_the_marker_line_end_to_the_terminator(){let source=b"x = <<~EOS.strip\n  body\nEOS\n";assert_eq!(spans_of(source),vec![4..10,16..28]);assert_eq!(&source[4..10],b"<<~EOS");assert_eq!(&source[16..28],b"\n  body\nEOS\n");}#[test]fn the_code_after_a_heredoc_marker_stays_in_a_gap(){let out=rewritten(b"x = <<~EOS.strip\n  body\nEOS\n",upcase);assert_eq!(out,b"X = <<~EOS.STRIP\n  body\nEOS\n");}#[test]fn two_heredocs_on_one_line_merge_into_one_span(){let source=b"a = <<~A; b = <<~B\n  one\nA\n  two\nB\n";assert_eq!(spans_of(source),vec![4..8,14..35]);assert_eq!(&source[14..35],b"<<~B\n  one\nA\n  two\nB\n");}#[test]fn an_empty_heredoc_body_still_protects_the_terminator(){let source=b"x = <<~A\nA\ny = 2\n";assert_eq!(spans_of(source),vec![4..11]);assert_eq!(&source[4..11],b"<<~A\nA\n");}#[test]fn a_comment_after_a_marker_merges_with_the_heredoc_region(){let source=b"x = <<~A # note\n  body\nA\n";assert_eq!(spans_of(source),vec![4..8,9..25]);assert_eq!(&source[9..25],b"# note\n  body\nA\n");}#[test]fn a_comment_span_is_exactly_the_comment(){let source=b"x = 1 # c1\n# c2\ny = 2\n";assert_eq!(spans_of(source),vec![6..10,11..15]);assert_eq!(&source[6..10],b"# c1");assert_eq!(&source[11..15],b"# c2");}#[test]fn an_embdoc_span_covers_the_whole_block(){let source=b"=begin\nhi\n=end\nx = 1\n";assert_eq!(spans_of(source),vec![0..15]);assert_eq!(&source[0..15],b"=begin\nhi\n=end\n");}#[test]fn the_data_section_is_protected(){let source=b"x = 1\n__END__\ndata here\n";assert_eq!(spans_of(source),vec![6..24]);assert_eq!(&source[6..24],b"__END__\ndata here\n");}#[test]fn a_word_list_is_protected_whole_so_its_separators_survive(){let source=b"x = %w[a   b]\n";assert_eq!(spans_of(source),vec![4..13]);assert_eq!(rewritten(source,collapse_spaces),b"x = %w[a   b]\n");}#[test]fn a_plain_array_is_not_protected(){let source=b"x = [1,   2]\n";assert!(spans_of(source).is_empty());assert_eq!(rewritten(source,collapse_spaces),b"x = [1, 2]\n");}#[test]fn an_implicit_array_is_not_protected(){assert!(spans_of(b"y = 1,   2\n").is_empty());}#[test]fn overlapping_spans_merge(){let source=b"x = \"a#{1 # c\n}b\"\n";assert_eq!(spans_of(source),vec![4..17]);assert_eq!(&source[4..17],b"\"a#{1 # c\n}b\"");}#[test]fn a_gap_policy_reaches_the_code_around_a_literal(){assert_eq!(rewritten(b"x = 'a  b'\n",upcase),b"X = 'a  b'\n");assert_eq!(rewritten(b"def f\n  x = 'a  b'\nend\n",collapse_spaces),b"def f\n x = 'a  b'\nend\n");}#[test]fn keep_returns_the_gap_unchanged(){assert_eq!(keep(b"  a  "),b"  a  ");}#[test]fn rewrite_with_no_spans_is_just_the_policy(){assert_eq!(rewrite(b"a b",&[],upcase),b"A B");}#[test]fn identity_reports_a_parse_error(){let err=identity(b"def ; end").unwrap_err();assert!(matches!(err,Error::Parse(_)),"{err}");}#[test]fn minimize_strips_line_indentation(){assert_eq!(minimize(b"a\n    b\n\tc\n"),b"a\nb\nc\n");}#[test]fn minimize_strips_trailing_whitespace(){assert_eq!(minimize(b"a   \nb\t\n"),b"a\nb\n");}#[test]fn minimize_strips_a_whitespace_run_that_ends_the_gap_after_a_newline(){assert_eq!(minimize(b"a\n   "),b"a\n");}#[test]fn minimize_collapses_blank_line_runs_to_one_newline(){assert_eq!(minimize(b"a\n\n\n\nb\n"),b"a\nb\n");assert_eq!(minimize(b"a\n  \n\t\nb\n"),b"a\nb\n");assert_eq!(minimize(b"\n\n\na\n"),b"\na\n");}#[test]fn minimize_keeps_the_newline_that_ends_a_statement(){assert_eq!(minimize(b"a = 1\nb = 2\n"),b"a = 1\nb = 2\n");}#[test]fn minimize_collapses_intra_line_whitespace_to_one_space(){assert_eq!(minimize(b"a   =\t\t1\n"),b"a = 1\n");}#[test]fn minimize_never_collapses_a_space_run_to_nothing(){assert_eq!(minimize(b"a  -  b\n"),b"a - b\n");assert_eq!(minimize(b"defined?  x\n"),b"defined? x\n");assert_eq!(minimize(b"not  x\n"),b"not x\n");assert_eq!(minimize(b"p   "),b"p ");}#[test]fn minimize_treats_the_start_of_a_gap_as_mid_line(){assert_eq!(minimize(b"    a\n"),b" a\n");}#[test]fn minimize_keeps_a_backslash_and_the_byte_after_it_verbatim(){assert_eq!(minimize(b"a + \\\n  b\n"),b"a + \\\n b\n");assert_eq!(minimize(b"a \\"),b"a \\");}#[test]fn minimize_preserves_crlf_line_endings(){assert_eq!(minimize(b"a = 1\r\nb = 2\r\n"),b"a = 1\r\nb = 2\r\n");assert_eq!(minimize(b"a   \r\n   b\r\n"),b"a\r\nb\r\n");assert_eq!(minimize(b"a\r\n\r\n\r\nb\r\n"),b"a\r\nb\r\n");}#[test]fn minimize_copies_a_carriage_return_that_ends_no_line(){assert_eq!(minimize(b"x = <<~A\r"),b"x = <<~A\r");}#[test]fn minimize_of_an_empty_gap_is_empty(){assert_eq!(minimize(b""),b"");}#[test]fn minimize_source_rewrites_only_the_gaps(){assert_eq!(minimize_source(b"def f(a,   b)\n    a  +  b\nend\n").unwrap(),b"def f(a, b)\na + b\nend\n");}#[test]fn minimize_source_keeps_word_list_separators_but_not_array_spacing(){assert_eq!(minimize_source(b"x = %w[a   b]\n").unwrap(),b"x = %w[a   b]\n");assert_eq!(minimize_source(b"x = [1,   2]\n").unwrap(),b"x = [1, 2]\n");}#[test]fn minimize_source_leaves_a_heredoc_body_alone_while_minimizing_its_marker_line(){assert_eq!(minimize_source(b"x   =   <<~EOS.strip\n  body\nEOS\n").unwrap(),b"x = <<~EOS.strip\n  body\nEOS\n");}#[test]fn minimize_source_keeps_comments_and_the_newline_before_a_column_zero_construct(){assert_eq!(minimize_source(b"x = 1   # c\n\n\n=begin\nd\n=end\n\n\n__END__\ndata\n").unwrap(),b"x = 1 # c\n=begin\nd\n=end\n\n__END__\ndata\n");}#[test]fn minimize_source_reports_a_parse_error(){let err=minimize_source(b"def ; end").unwrap_err();assert!(matches!(err,Error::Parse(_)),"{err}");}#[test]fn every_hazard_stays_equivalent_under_minimization(){for(name,source)in HAZARDS{let out=minimize_source(source).unwrap();let equivalent=crate::comparable::equivalent(source,&out).unwrap();assert!(equivalent,"{name}: {}",String::from_utf8_lossy(&out));}}fn plan_of(source:&[u8])->StripPlan{let parsed=parser::parse(source).unwrap();strip_comments_plan(&parsed)}
+/// Comment stripping with the identity gap policy: only the comments and
+/// the bytes they leave behind move, so the assertion is byte-exact.
+fn stripped(source:&[u8])->Vec<u8>{strip_comments(source,&plan_of(source),keep)}#[test]fn a_plan_deletes_a_comment_with_the_whitespace_in_front_of_it(){let source=b"x = 1 # c\n# d\ny = \"s\" # e\n";let plan=plan_of(source);assert_eq!(plan.protected,vec![18..21]);assert_eq!(plan.deleted,vec![5..9,10..14,21..25]);assert_eq!(&source[5..9],b" # c");assert_eq!(&source[10..14],b"# d\n");assert_eq!(&source[21..25],b" # e");}#[test]fn stripping_a_trailing_comment_leaves_the_code_line_intact(){assert_eq!(stripped(b"x = 1  # note\ny = 2\n"),b"x = 1\ny = 2\n");assert_eq!(stripped(b"x = 1  # note"),b"x = 1");}#[test]fn stripping_a_full_line_comment_removes_the_line_it_leaves_empty(){assert_eq!(stripped(b"x = 1\n  # c\ny = 2\n"),b"x = 1\ny = 2\n");assert_eq!(stripped(b"x = 1\n# a\n# b\ny = 2\n# c\n"),b"x = 1\ny = 2\n");}#[test]fn stripping_a_comment_line_after_a_heredoc_leaves_no_blank_line(){assert_eq!(stripped(b"x = <<~A\nb\nA\n# c\ny = 2\n"),b"x = <<~A\nb\nA\ny = 2\n");}#[test]fn the_shebang_survives_stripping(){assert_eq!(stripped(b"#!/usr/bin/env ruby\nx = 1 # c\n"),b"#!/usr/bin/env ruby\nx = 1\n");}#[test]fn magic_comments_before_the_first_code_token_survive_stripping(){let source=b"#!/usr/bin/env ruby\n\
                        # frozen_string_literal: true\n\
                        # encoding: utf-8\n\
-                       x = 1 # gone\n";
-        assert_eq!(
-            stripped(source),
-            b"#!/usr/bin/env ruby\n\
+                       x = 1 # gone\n";assert_eq!(stripped(source),b"#!/usr/bin/env ruby\n\
               # frozen_string_literal: true\n\
               # encoding: utf-8\n\
-              x = 1\n"
-        );
-    }
-
-    #[test]
-    fn the_window_survives_blank_lines_between_magic_comments() {
-        let source = b"# frozen_string_literal: true\n\n# encoding: utf-8\n\nx = 1 # gone\n";
-        assert_eq!(
-            stripped(source),
-            b"# frozen_string_literal: true\n\n# encoding: utf-8\n\nx = 1\n"
-        );
-    }
-
-    #[test]
-    fn the_window_ends_at_the_first_code_token_not_the_first_line() {
-        // Same text on both sides of the first code token: the one in the
-        // window is semantic, the one after it is not.
-        let source = b"# frozen_string_literal: true\nx = 1\n# frozen_string_literal: true\n";
-        assert_eq!(stripped(source), b"# frozen_string_literal: true\nx = 1\n");
-    }
-
-    #[test]
-    fn a_file_of_only_comments_keeps_every_comment() {
-        // No code token at all, so the window is the whole file.
-        assert_eq!(stripped(b"# a\n\n# b\n"), b"# a\n\n# b\n");
-        assert_eq!(
-            stripped(b"=begin\nlicense\n=end\n"),
-            b"=begin\nlicense\n=end\n"
-        );
-    }
-
-    #[test]
-    fn an_embdoc_after_the_first_code_token_is_deleted_whole() {
-        assert_eq!(
-            stripped(b"x = 1\n=begin\ndoc\n=end\ny = 2\n"),
-            b"x = 1\ny = 2\n"
-        );
-        // An embdoc that ends the file, with no newline after `=end`.
-        assert_eq!(stripped(b"x = 1\n=begin\ndoc\n=end"), b"x = 1\n");
-    }
-
-    #[test]
-    fn an_embdoc_before_the_first_code_token_survives() {
-        assert_eq!(
-            stripped(b"=begin\ndoc\n=end\nx = 1 # gone\n"),
-            b"=begin\ndoc\n=end\nx = 1\n"
-        );
-    }
-
-    #[test]
-    fn the_data_section_survives_stripping_byte_for_byte() {
-        assert_eq!(
-            stripped(b"x = 1 # c\n__END__\n# not a comment\ndata   here\n"),
-            b"x = 1\n__END__\n# not a comment\ndata   here\n"
-        );
-    }
-
-    #[test]
-    fn a_comment_inside_a_literal_is_protected_not_deleted() {
-        // It lives inside the string's span, so deleting it would edit the
-        // literal.
-        assert_eq!(
-            stripped(b"x = \"a#{1 # c\n}b\" # gone\n"),
-            b"x = \"a#{1 # c\n}b\"\n"
-        );
-    }
-
-    #[test]
-    fn a_comment_on_a_heredoc_marker_line_is_deleted() {
-        assert_eq!(
-            stripped(b"x = <<~A # note\n  body\nA\n"),
-            b"x = <<~A\n  body\nA\n"
-        );
-    }
-
-    #[test]
-    fn stripping_keeps_crlf_line_endings() {
-        // The comment span swallows the `\r` of its CRLF terminator: a line
-        // that survives keeps both bytes, a line that goes takes both.
-        assert_eq!(stripped(b"x = 1 # c\r\ny = 2\r\n"), b"x = 1\r\ny = 2\r\n");
-        assert_eq!(
-            stripped(b"x = 1\r\n# c\r\ny = 2\r\n"),
-            b"x = 1\r\ny = 2\r\n"
-        );
-    }
-
-    #[test]
-    fn non_utf8_comments_are_stripped_and_kept_like_any_other() {
-        // In the window it survives; after the first code token it goes, and
-        // the bytes of the file around it are untouched either way.
-        assert_eq!(stripped(b"# \xe9\nx = 1\n"), b"# \xe9\nx = 1\n");
-        assert_eq!(stripped(b"x = 1 # \xe9\n"), b"x = 1\n");
-        assert_eq!(
-            stripped(b"# encoding: binary\nx = \"\xff\xfe\" # c\n"),
-            b"# encoding: binary\nx = \"\xff\xfe\"\n"
-        );
-    }
-
-    #[test]
-    fn strip_comments_source_also_minimizes_the_gaps() {
-        // The headline configuration: comments gone *and* whitespace
-        // minimized, so blank-line runs left behind collapse too.
-        assert_eq!(
-            strip_comments_source(b"def f(a,   b)\n\n  # c\n\n    a  +  b\nend\n").unwrap(),
-            b"def f(a, b)\na + b\nend\n"
-        );
-    }
-
-    #[test]
-    fn strip_comments_source_reports_a_parse_error() {
-        let err = strip_comments_source(b"def ; end").unwrap_err();
-        assert!(matches!(err, Error::Parse(_)), "{err}");
-    }
-
-    #[test]
-    fn every_hazard_yields_a_disjoint_in_bounds_strip_plan() {
-        for (name, source) in HAZARDS {
-            let plan = plan_of(source);
-            for spans in [&plan.protected, &plan.deleted] {
-                let mut previous = 0;
-                for span in spans {
-                    assert!(span.start >= previous, "{name}: {span:?} out of order");
-                    assert!(span.start < span.end, "{name}: {span:?} empty");
-                    assert!(span.end <= source.len(), "{name}: {span:?} out of bounds");
-                    previous = span.end;
-                }
-            }
-            for deleted in &plan.deleted {
-                for protected in &plan.protected {
-                    assert!(
-                        deleted.end <= protected.start || protected.end <= deleted.start,
-                        "{name}: {deleted:?} overlaps {protected:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn every_hazard_keeps_its_protected_bytes_under_stripping() {
-        for (name, source) in HAZARDS {
-            let plan = plan_of(source);
-            let out = stripped(source);
-            for span in &plan.protected {
-                let bytes = &source[span.clone()];
-                let kept = out.windows(bytes.len()).any(|window| window == bytes);
-                assert!(kept, "{name}: {span:?} lost");
-            }
-        }
-    }
-
-    #[test]
-    fn every_hazard_stays_equivalent_under_comment_stripping() {
-        for (name, source) in HAZARDS {
-            let out = strip_comments_source(source).unwrap();
-            let equivalent = crate::comparable::equivalent(source, &out).unwrap();
-            assert!(equivalent, "{name}: {}", String::from_utf8_lossy(&out));
-        }
-    }
-}
+              x = 1\n");}#[test]fn the_window_survives_blank_lines_between_magic_comments(){let source=b"# frozen_string_literal: true\n\n# encoding: utf-8\n\nx = 1 # gone\n";assert_eq!(stripped(source),b"# frozen_string_literal: true\n\n# encoding: utf-8\n\nx = 1\n");}#[test]fn the_window_ends_at_the_first_code_token_not_the_first_line(){let source=b"# frozen_string_literal: true\nx = 1\n# frozen_string_literal: true\n";assert_eq!(stripped(source),b"# frozen_string_literal: true\nx = 1\n");}#[test]fn a_file_of_only_comments_keeps_every_comment(){assert_eq!(stripped(b"# a\n\n# b\n"),b"# a\n\n# b\n");assert_eq!(stripped(b"=begin\nlicense\n=end\n"),b"=begin\nlicense\n=end\n");}#[test]fn an_embdoc_after_the_first_code_token_is_deleted_whole(){assert_eq!(stripped(b"x = 1\n=begin\ndoc\n=end\ny = 2\n"),b"x = 1\ny = 2\n");assert_eq!(stripped(b"x = 1\n=begin\ndoc\n=end"),b"x = 1\n");}#[test]fn an_embdoc_before_the_first_code_token_survives(){assert_eq!(stripped(b"=begin\ndoc\n=end\nx = 1 # gone\n"),b"=begin\ndoc\n=end\nx = 1\n");}#[test]fn the_data_section_survives_stripping_byte_for_byte(){assert_eq!(stripped(b"x = 1 # c\n__END__\n# not a comment\ndata   here\n"),b"x = 1\n__END__\n# not a comment\ndata   here\n");}#[test]fn a_comment_inside_a_literal_is_protected_not_deleted(){assert_eq!(stripped(b"x = \"a#{1 # c\n}b\" # gone\n"),b"x = \"a#{1 # c\n}b\"\n");}#[test]fn a_comment_on_a_heredoc_marker_line_is_deleted(){assert_eq!(stripped(b"x = <<~A # note\n  body\nA\n"),b"x = <<~A\n  body\nA\n");}#[test]fn stripping_keeps_crlf_line_endings(){assert_eq!(stripped(b"x = 1 # c\r\ny = 2\r\n"),b"x = 1\r\ny = 2\r\n");assert_eq!(stripped(b"x = 1\r\n# c\r\ny = 2\r\n"),b"x = 1\r\ny = 2\r\n");}#[test]fn non_utf8_comments_are_stripped_and_kept_like_any_other(){assert_eq!(stripped(b"# \xe9\nx = 1\n"),b"# \xe9\nx = 1\n");assert_eq!(stripped(b"x = 1 # \xe9\n"),b"x = 1\n");assert_eq!(stripped(b"# encoding: binary\nx = \"\xff\xfe\" # c\n"),b"# encoding: binary\nx = \"\xff\xfe\"\n");}#[test]fn strip_comments_source_also_minimizes_the_gaps(){assert_eq!(strip_comments_source(b"def f(a,   b)\n\n  # c\n\n    a  +  b\nend\n").unwrap(),b"def f(a, b)\na + b\nend\n");}#[test]fn strip_comments_source_reports_a_parse_error(){let err=strip_comments_source(b"def ; end").unwrap_err();assert!(matches!(err,Error::Parse(_)),"{err}");}#[test]fn every_hazard_yields_a_disjoint_in_bounds_strip_plan(){for(name,source)in HAZARDS{let plan=plan_of(source);for spans in[&plan.protected,&plan.deleted]{let mut previous=0;for span in spans{assert!(span.start>=previous,"{name}: {span:?} out of order");assert!(span.start<span.end,"{name}: {span:?} empty");assert!(span.end<=source.len(),"{name}: {span:?} out of bounds");previous=span.end;}}for deleted in&plan.deleted{for protected in&plan.protected{assert!(deleted.end<=protected.start||protected.end<=deleted.start,"{name}: {deleted:?} overlaps {protected:?}");}}}}#[test]fn every_hazard_keeps_its_protected_bytes_under_stripping(){for(name,source)in HAZARDS{let plan=plan_of(source);let out=stripped(source);for span in&plan.protected{let bytes=&source[span.clone()];let kept=out.windows(bytes.len()).any(|window|window==bytes);assert!(kept,"{name}: {span:?} lost");}}}#[test]fn every_hazard_stays_equivalent_under_comment_stripping(){for(name,source)in HAZARDS{let out=strip_comments_source(source).unwrap();let equivalent=crate::comparable::equivalent(source,&out).unwrap();assert!(equivalent,"{name}: {}",String::from_utf8_lossy(&out));}}}
