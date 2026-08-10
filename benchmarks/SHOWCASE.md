@@ -485,6 +485,58 @@ All caveats matter:
 
 ---
 
+## The fourteenth codebase: TokenPress itself, which does not use it
+
+Measured 2026-08-11 at commit `adee552`, on the 50 supported files this
+repository tracks — 49 Rust and one JavaScript, `crates/` and `site/`,
+253,666 tokens at `o200k_base`. Every file passes verification at both
+settings.
+
+| Setting | `o200k_base` | `cl100k_base` |
+|---|---|---|
+| Default | 253,666 → 196,415 (**-22.6%**) | 252,123 → 195,843 (**-22.3%**) |
+| Aggressive | 253,666 → 134,958 (**-46.8%**) | 252,123 → 134,489 (**-46.7%**) |
+
+That aggressive figure would place this repository third of fourteen, between
+commons-lang and langchain. It is not in the table above, for the reason every
+number on this page is what it is: the corpora are pinned third-party
+repositories, chosen before they were measured, and a project ranking itself
+among them is not the same kind of evidence.
+
+**The hook is not enabled here, and the measurement is why.** At *default*
+settings — no flags — the Rust backend drops every `//` and `/* */` comment,
+because it re-emits from the `syn` token stream and only `///` and `//!` doc
+comments survive. On this repository that is **1,942 comment lines, 7.8% of
+24,903 Rust lines.** One file makes the shape concrete:
+`crates/tokenpress-go/src/policy.rs` goes 772 → 254 lines, 112 plain comment
+lines → 0, while all 238 of its doc-comment lines survive.
+
+Those 1,942 lines are where this codebase keeps the reasoning that the code
+cannot state — why `merge` requires a genuinely shared byte, why `types_or` is
+a coarse pre-filter and the regex is the authority, why the release build
+pins its .NET SDK into a private directory. Doc comments describe the API;
+these describe the decision. Deleting them costs more than 22.6% of a token
+bill is worth **on a codebase whose readers are contributors.**
+
+Which is the README's own question, applied to the project that asks it: *is
+this code read by a human?* Here it is, so the answer is no — and reaching a
+different answer for ourselves than we recommend to everyone else would be the
+part worth distrusting. The default/aggressive distinction does not rescue
+it either: default is already what deletes those comments, and the aggressive
+flags only add the 4,422 doc-comment lines on top.
+
+The one file that comes close to adopting it without loss is `site/app.js`,
+and "close" is the honest word. The JavaScript backend keeps own-line comments
+at default settings, unlike the Rust one, and the demo page formats to
+2,796 → 2,462 tokens (-11.9%) with **33 of its 34 comments intact**. The one
+that goes is `site/app.js:350`, the sole content of an empty `catch { }`
+block — a comment with no statement to attach to. Trailing comments, the ones
+sharing a line with code, are dropped in JavaScript too; this file happens to
+have none outside its sample-code strings, which is why the count is 33 and
+not lower.
+
+---
+
 ## Caveats
 
 **The aggressive settings are lossy by design.** They are opt-in flags, and
