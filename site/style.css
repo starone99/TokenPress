@@ -275,6 +275,29 @@ pre {
   max-height: 26rem;
 }
 
+/* The formatted output is the one thing on this page guaranteed to contain a
+   very long line -- the Rust backend emits a whole file as one, which is the
+   product working, not a rendering accident. Two rules keep that inside its
+   box.
+
+   `min-width: 0` on the panels: a grid item defaults to `min-width: auto`,
+   meaning it refuses to shrink below its content, so the `overflow-x: auto`
+   above never engaged and the panel widened the page instead. Scrolling the
+   whole document sideways to read one pane is the symptom.
+
+   Wrapping the output rather than scrolling it: minimized code carries no
+   indentation to preserve, so there is nothing for a wrap to misalign, and a
+   twenty-thousand-character line is not something to drag a scrollbar
+   through. `anywhere` because the line may have no spaces at all. */
+.panel {
+  min-width: 0;
+}
+
+#output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .changed {
   margin: 0;
   font-size: 0.88rem;
