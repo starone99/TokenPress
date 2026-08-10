@@ -1,4 +1,9 @@
 <p align="center">
+  <img src="assets/mascot-header.png" width="360"
+       alt="Mascota de TokenPress: un robot prensa de tornillo; entran líneas de código largas por la izquierda y salen cortas por la derecha">
+</p>
+
+<p align="center">
   <strong>TokenPress</strong>
 </p>
 

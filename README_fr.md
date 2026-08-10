@@ -1,4 +1,9 @@
 <p align="center">
+  <img src="assets/mascot-header.png" width="360"
+       alt="Mascotte de TokenPress : un robot presse à vis ; de longues lignes de code entrent à gauche et en ressortent courtes à droite">
+</p>
+
+<p align="center">
   <strong>TokenPress</strong>
 </p>
 

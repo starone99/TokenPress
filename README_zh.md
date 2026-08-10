@@ -1,4 +1,9 @@
 <p align="center">
+  <img src="assets/mascot-header.png" width="360"
+       alt="TokenPress 吉祥物：螺旋压榨机器人，左边送入长代码行，右边输出短代码行">
+</p>
+
+<p align="center">
   <strong>TokenPress</strong>
 </p>
 

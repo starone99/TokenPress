@@ -1,4 +1,9 @@
 <p align="center">
+  <img src="assets/mascot-header.png" width="360"
+       alt="TokenPress 마스코트: 나사 프레스 로봇. 왼쪽에서 긴 코드 줄이 들어가 오른쪽으로 짧은 줄이 나온다">
+</p>
+
+<p align="center">
   <strong>TokenPress</strong>
 </p>
 

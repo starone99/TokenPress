@@ -1,4 +1,9 @@
 <p align="center">
+  <img src="assets/mascot-header.png" width="360"
+       alt="TokenPress mascot: a screw-press robot, long lines of code going in on the left and short ones coming out on the right">
+</p>
+
+<p align="center">
   <strong>TokenPress</strong>
 </p>
 

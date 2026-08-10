@@ -1,4 +1,9 @@
 <p align="center">
+  <img src="assets/mascot-header.png" width="360"
+       alt="TokenPress のマスコット: ねじプレスのロボット。左から長いコード行が入り、右へ短い行が出てくる">
+</p>
+
+<p align="center">
   <strong>TokenPress</strong>
 </p>
 
