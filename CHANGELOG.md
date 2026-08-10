@@ -45,7 +45,28 @@ that would not be true.
 
 ## Unreleased
 
-Everything so far. There has been no release.
+Nothing yet.
+
+## v0.1.1 — 2026-08-11
+
+The first release shipped a bug in the command that reports the numbers this
+project exists to produce. That is the whole of this release.
+
+### Fixed
+
+- **`format`, `check`, `diff` and `stats` reported growth as `-0.0%`.** The
+  percentage was computed with `original.saturating_sub(formatted)`, which
+  clamps to zero whenever output is larger than input, and the format string
+  hardcoded a leading `-`. A file that grew — which Rust doc blocks can do,
+  as the stability section above describes — reported no change instead of
+  the growth. `3 → 4 tokens` read `-0.0%`; it now reads `+33.3%`. Reductions
+  are unchanged, and a file whose count does not move now reads `0.0%` rather
+  than `-0.0%`, since neither a plus nor a minus is true of it. `--json` was
+  never affected: it emits raw counts and no percentage.
+
+## v0.1.0 — 2026-08-10
+
+The first release.
 
 ### Added
 
@@ -125,15 +146,6 @@ Everything so far. There has been no release.
   structurally blind to it.
 - The release workflow packaged `tar.gz` only on Linux, which would have made
   the macOS jobs upload nothing and fail the build.
-- **`format`, `check`, `diff` and `stats` reported growth as `-0.0%`.** The
-  percentage was computed with `original.saturating_sub(formatted)`, which
-  clamps to zero whenever output is larger than input, and the format string
-  hardcoded a leading `-`. A file that grew — which Rust doc blocks can do,
-  as the stability section above describes — reported no change instead of
-  the growth. `3 → 4 tokens` read `-0.0%`; it now reads `+33.3%`. Reductions
-  are unchanged, and a file whose count does not move now reads `0.0%` rather
-  than `-0.0%`, since neither a plus nor a minus is true of it. `--json` was
-  never affected: it emits raw counts and no percentage.
 
 ### Known limitations
 

@@ -172,7 +172,7 @@ Black・Prettier・rustfmt に出会う経路がそれですが、TokenPress に
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/starone99/TokenPress
-    rev: v0.1.0                  # 固定こそが要点 — 意図的にだけ上げること
+    rev: v0.1.1                  # 固定こそが要点 — 意図的にだけ上げること
     hooks:
       - id: tokenpress-check     # 何も書かず、変更が生じるなら失敗
     # - id: tokenpress-format    # 上書きします。上の問いを先に読んでください。
@@ -181,7 +181,7 @@ repos:
 **GitHub Action** — 既存のワークフローに 1 ステップ:
 
 ```yaml
-- uses: starone99/TokenPress@v0.1.0
+- uses: starone99/TokenPress@v0.1.1
   with:
     paths: src tests
     mode: check                  # `format` はワークスペースを書き換えます

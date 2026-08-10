@@ -189,7 +189,7 @@ Action et personne n'a rien à installer.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/starone99/TokenPress
-    rev: v0.1.0                  # l'épinglage est l'essentiel — montez-le délibérément
+    rev: v0.1.1                  # l'épinglage est l'essentiel — montez-le délibérément
     hooks:
       - id: tokenpress-check     # n'écrit rien ; échoue si quelque chose changerait
     # - id: tokenpress-format    # réécrit sur place. Lisez d'abord la question ci-dessus.
@@ -198,7 +198,7 @@ repos:
 **GitHub Action** — une étape dans un workflow existant :
 
 ```yaml
-- uses: starone99/TokenPress@v0.1.0
+- uses: starone99/TokenPress@v0.1.1
   with:
     paths: src tests
     mode: check                  # `format` réécrit le workspace

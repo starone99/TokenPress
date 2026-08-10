@@ -160,7 +160,7 @@ Black、Prettier、rustfmt，但它恰恰是 TokenPress 不该有的集成：在
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/starone99/TokenPress
-    rev: v0.1.0                  # 固定版本才是重点 —— 只在有意时升级
+    rev: v0.1.1                  # 固定版本才是重点 —— 只在有意时升级
     hooks:
       - id: tokenpress-check     # 不写任何东西；若有改动则失败
     # - id: tokenpress-format    # 会就地改写。请先读上面那个问题。
@@ -169,7 +169,7 @@ repos:
 **GitHub Action** —— 在已有工作流中加一步：
 
 ```yaml
-- uses: starone99/TokenPress@v0.1.0
+- uses: starone99/TokenPress@v0.1.1
   with:
     paths: src tests
     mode: check                  # `format` 会改写工作区

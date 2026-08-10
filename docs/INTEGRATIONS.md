@@ -22,13 +22,13 @@ framework (`.pre-commit-hooks.yaml`). Add them to the consuming repository's
 ```yaml
 repos:
   - repo: https://github.com/starone99/TokenPress
-    rev: v0.1.0                  # pin a real tag or a full commit SHA
+    rev: v0.1.1                  # pin a real tag or a full commit SHA
     hooks:
       - id: tokenpress-check
       # - id: tokenpress-format  # …or rewrite instead of only reporting
 ```
 
-`rev: v0.1.0` above is a placeholder: pin an actual released tag or commit SHA,
+`rev: v0.1.1` above is a placeholder: pin an actual released tag or commit SHA,
 never a branch — pre-commit clones the repository at that ref, and the hook
 obtains the CLI from that clone.
 
@@ -138,7 +138,7 @@ obtains the CLI from its own pinned checkout, so nothing has to be installed
 first:
 
 ```yaml
-- uses: starone99/TokenPress@v0.1.0
+- uses: starone99/TokenPress@v0.1.1
   with:
     paths: src tests          # default `.`; directories are walked, .gitignore-aware
     mode: check               # default; `format` rewrites in place
@@ -195,7 +195,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: starone99/TokenPress@v0.1.0
+      - uses: starone99/TokenPress@v0.1.1
         with:
           paths: src tests
 ```
@@ -214,7 +214,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: tokenpress
-        uses: starone99/TokenPress@v0.1.0
+        uses: starone99/TokenPress@v0.1.1
         continue-on-error: true
         with:
           mode: format

@@ -184,7 +184,7 @@ precisa instalar nada.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/starone99/TokenPress
-    rev: v0.1.0                  # o pin é o ponto — suba-o deliberadamente
+    rev: v0.1.1                  # o pin é o ponto — suba-o deliberadamente
     hooks:
       - id: tokenpress-check     # não escreve nada; falha se algo mudaria
     # - id: tokenpress-format    # reescreve no lugar. Leia antes a pergunta acima.
@@ -193,7 +193,7 @@ repos:
 **GitHub Action** — um passo num workflow que você já tem:
 
 ```yaml
-- uses: starone99/TokenPress@v0.1.0
+- uses: starone99/TokenPress@v0.1.1
   with:
     paths: src tests
     mode: check                  # `format` reescreve o workspace

@@ -1,7 +1,7 @@
 # GitHub Action wrapping the `tokenpress` CLI, so a consumer can add a
 # TokenPress gate to an existing ruff/clippy-style workflow with one step:
 #
-#     - uses: starone99/TokenPress@v0.1.0
+#     - uses: starone99/TokenPress@v0.1.1
 #       with:
 #         paths: src tests
 #
