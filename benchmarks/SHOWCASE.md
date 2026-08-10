@@ -485,7 +485,7 @@ All caveats matter:
 
 ---
 
-## The fourteenth codebase: TokenPress itself, which does not use it
+## The fourteenth codebase: TokenPress itself, which does use it
 
 Measured 2026-08-11 at commit `adee552`, on the 50 supported files this
 repository tracks — 49 Rust and one JavaScript, `crates/` and `site/`,
@@ -503,37 +503,48 @@ number on this page is what it is: the corpora are pinned third-party
 repositories, chosen before they were measured, and a project ranking itself
 among them is not the same kind of evidence.
 
-**The hook is not enabled here, and the measurement is why.** At *default*
-settings — no flags — the Rust backend drops every `//` and `/* */` comment,
-because it re-emits from the `syn` token stream and only `///` and `//!` doc
-comments survive. On this repository that is **1,942 comment lines, 7.8% of
-24,903 Rust lines.** One file makes the shape concrete:
-`crates/tokenpress-go/src/policy.rs` goes 772 → 254 lines, 112 plain comment
-lines → 0, while all 238 of its doc-comment lines survive.
+**The `tokenpress-format` hook runs on this repository, at default settings**
+— see [`.pre-commit-config.yaml`](../.pre-commit-config.yaml). What that cost
+and what it did not is worth recording precisely, because the two are easy to
+mix up.
 
-Those 1,942 lines are where this codebase keeps the reasoning that the code
-cannot state — why `merge` requires a genuinely shared byte, why `types_or` is
-a coarse pre-filter and the regex is the authority, why the release build
-pins its .NET SDK into a private directory. Doc comments describe the API;
-these describe the decision. Deleting them costs more than 22.6% of a token
-bill is worth **on a codebase whose readers are contributors.**
+**What it did not cost: the tests or the coverage gate.** Formatting changed
+no test outcome — the same suite passes on the formatted tree and on the
+unformatted one, failure for failure. And the gate that CONTRIBUTING calls
+mandatory, `cargo llvm-cov --fail-under-lines 100`, still reads 100%.
+Measured per crate, clean profile data, formatted tree: `tokenpress-core`
+49/49 lines, `tokenpress-python` 162/162, `tokenpress-treesitter` 209/209,
+`tokenpress-rust` 72/72. Region coverage — the finer metric, and the one
+line-joining cannot flatter — is unchanged: `tokenpress-rust` reads 878
+regions with 7 missed before and 866 with the same 7 missed after.
 
-Which is the README's own question, applied to the project that asks it: *is
-this code read by a human?* Here it is, so the answer is no — and reaching a
-different answer for ourselves than we recommend to everyone else would be the
-part worth distrusting. The default/aggressive distinction does not rescue
-it either: default is already what deletes those comments, and the aggressive
-flags only add the 4,422 doc-comment lines on top.
+The honest asterisk is that 100% now means less than it did. `tokenpress-rust`
+carries the same code over **72 lines instead of 495**, so a line-coverage
+denominator is roughly seven times coarser than it was. Region coverage is
+what still carries the weight, and it is the number to watch here from now on.
 
-The one file that comes close to adopting it without loss is `site/app.js`,
-and "close" is the honest word. The JavaScript backend keeps own-line comments
-at default settings, unlike the Rust one, and the demo page formats to
-2,796 → 2,462 tokens (-11.9%) with **33 of its 34 comments intact**. The one
-that goes is `site/app.js:350`, the sole content of an empty `catch { }`
-block — a comment with no statement to attach to. Trailing comments, the ones
-sharing a line with code, are dropped in JavaScript too; this file happens to
-have none outside its sample-code strings, which is why the count is 33 and
-not lower.
+**What it did cost: 1,941 plain comment lines**, 7.8% of what were 24,903 Rust
+lines. At default settings — no flags, which is the part that surprises — the
+Rust backend drops every `//` and `/* */` comment, because it re-emits from
+the `syn` token stream. All 4,422 doc-comment lines survive.
+`crates/tokenpress-go/src/policy.rs` shows the shape: 772 → 254 lines, 112
+plain comment lines → 0, all 238 doc-comment lines intact. Across the tree the
+diff was 50 files, +1,004 / −20,981.
+
+That is a real loss and it is ongoing rather than one-time: a comment written
+tomorrow is removed by the next run. The reasoning those lines carried now
+lives in commit messages and in `docs/`, which is where a reader should look
+for why a decision was made. Stack traces and `git blame` degrade to matching
+proportion — a panic reports a column, not a line, and `cli.rs:224:28997` is a
+real example.
+
+One file behaves differently and it is worth knowing why. `site/app.js` keeps
+**33 of its 34 comments**: the JavaScript backend, unlike the Rust one,
+preserves own-line comments at default settings. The one that goes is
+`site/app.js:350`, the sole content of an empty `catch { }` block — a comment
+with no statement to attach to. Trailing comments, sharing a line with code,
+are dropped in JavaScript too; this file has none outside its sample-code
+strings.
 
 ---
 

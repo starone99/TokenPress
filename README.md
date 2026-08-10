@@ -141,15 +141,14 @@ formatted code and answer about it, but a diff against the formatted copy will
 not apply to an unformatted original. **A file a model is going to edit should
 be given to it unformatted.**
 
-**TokenPress does not run TokenPress on itself, and the numbers are
-published anyway.** This repository formats to **-22.6%** at default settings
-and **-46.8%** aggressive, which would rank it third of the fourteen codebases
-measured — and the hook is still not enabled here, because at default settings
-the Rust backend would delete 1,942 plain comment lines, 7.8% of the Rust in
-the tree, and those are where the reasoning lives. That is this section's
-question answered honestly about the project that asks it. Measurement,
-per-file evidence and the one file that could adopt it are in
-[SHOWCASE.md](benchmarks/SHOWCASE.md#the-fourteenth-codebase-tokenpress-itself-which-does-not-use-it).
+**TokenPress runs TokenPress on itself**, through the `tokenpress-format` hook
+in its own [`.pre-commit-config.yaml`](.pre-commit-config.yaml), at default
+settings: **-22.6%**, 253,666 → 196,415 tokens. The costs are the ones this
+section describes and they were paid deliberately — 1,941 plain comment lines
+deleted, `git blame` and stack traces degraded, the reasoning moved to commit
+messages and `docs/`. The tests and the 100%-coverage gate came through
+unchanged. Full before/after in
+[SHOWCASE.md](benchmarks/SHOWCASE.md#the-fourteenth-codebase-tokenpress-itself-which-does-use-it).
 
 **This is also why there is no editor plugin and no format-on-save.** That is
 how most people meet Black, Prettier or rustfmt, and it is the one integration
