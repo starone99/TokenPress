@@ -33,6 +33,31 @@ verification story in the project — the internal AST/token equivalence check
 and nothing else — and they are the two most people reach for first. Closing
 that gap matters more than an eighth language does.
 
+**A comment-preserving Rust backend**, on the tree-sitter engine Go, Java and
+C# already share. Rust is the only backend that re-emits from a *token
+stream* rather than rewriting the whitespace between source spans, and that
+one architectural difference is the whole reason `//` and `/* */` comments
+cannot survive it: comments are not tokens, so `syn` never hands them to the
+emitter. `///` and `//!` survive only because they are `#[doc = …]`
+attributes, which are.
+
+Every other backend already does the right thing — Ruby copies everything
+between protected spans verbatim, and Go, Java and C# keep comments by
+default with stripping behind a flag. Rust is the outlier, and bringing it
+in line makes "comments are kept at default settings" true everywhere
+instead of nearly everywhere.
+
+Two costs, stated up front because they are the reason this is not free.
+Rust's default-settings savings would drop: part of what is measured today
+comes from discarding comments, so the honest number after this change is
+lower than the one on the front page now. And the line joining goes — the
+span-rewriting model preserves newlines, which is what makes `git blame`,
+review comments and stack traces survive in the other backends. The
+aggressive figures, which strip doc comments anyway, move much less.
+
+This outranks the PHP backend below it, on the same reasoning the item above
+uses: closing a gap in what is already shipped beats adding a language.
+
 **PHP backend**, reusing the tree-sitter engine Go, Java and C# already
 share. The grammar is the easy part. PHP files are literal output outside
 `<?php … ?>`, so the boundary has to survive byte for byte, and no existing

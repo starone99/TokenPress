@@ -343,10 +343,18 @@ keep it.
 #### Rust: regular comments are dropped
 
 `//` and `/* */` comments are always lost, because the `syn` token stream the
-emitter works from does not preserve them.
-Doc comments (`///`, `//!`) are preserved unless `--rs-strip-doc-comments` is
-passed. If a Rust file's `//` comments matter to you, keep the original —
-TokenPress cannot round-trip them.
+emitter works from does not preserve them — comments are not tokens. Doc
+comments (`///`, `//!`) are preserved unless `--rs-strip-doc-comments` is
+passed, and only because they are `#[doc = …]` attributes, which are tokens.
+If a Rust file's `//` comments matter to you, keep the original — TokenPress
+cannot round-trip them.
+
+This is architectural rather than a missing flag, and it is scheduled to
+change: [the roadmap](../ROADMAP.md) carries a comment-preserving Rust
+backend built on the same tree-sitter engine Go, Java and C# use, where
+comments are kept by default and stripping is the opt-in. Rust's
+default-settings savings will fall when that lands, because some of what is
+measured today is discarded comments.
 
 #### Rust: macro body whitespace is minimized
 
