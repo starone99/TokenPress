@@ -374,8 +374,9 @@ messages, PR descriptions — is written in **English**.
 
 Before opening one, make sure locally that:
 
-- `cargo fmt --all -- --check` is clean
-- `cargo clippy --workspace --all-targets -- -D warnings` is clean
+- `cargo fmt` was **not** run — see "Code style" above
+- `cargo clippy --workspace --all-targets -- -D warnings -A clippy::possible_missing_else`
+  is clean
 - `cargo test --workspace` passes
 - `./scripts/coverage.sh` reports 100%
 
