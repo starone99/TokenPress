@@ -384,3 +384,15 @@ td.saving {
   color: var(--muted);
   font-size: 0.85rem;
 }
+
+/* The repository link used to exist only in the footer, at the bottom of a
+   long page. Someone arriving from a link, deciding in ten seconds whether
+   this is worth their attention, never scrolled that far. */
+.repo-link {
+  margin-top: 0.75rem;
+  font-size: 0.92rem;
+}
+
+.repo-link a {
+  font-weight: 600;
+}

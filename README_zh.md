@@ -29,6 +29,10 @@
 > 本翻译可能滞后。基准文档是 [README.md](README.md)；若数字或说法不一致，以英文
 > 版本为准。
 
+<p align="center">
+  <a href="https://starone99.github.io/TokenPress/"><strong>在浏览器中试用 →</strong></a>
+</p>
+
 ---
 
 如果你在做 agentic coding，为什么还在用一个为人类读者设计的格式化工具？Black、

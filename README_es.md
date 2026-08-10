@@ -30,6 +30,10 @@
 > [README.md](README.md); si una cifra o una afirmación no coincide, la versión
 > en inglés es la correcta.
 
+<p align="center">
+  <a href="https://starone99.github.io/TokenPress/"><strong>Pruébalo en tu navegador →</strong></a>
+</p>
+
 ---
 
 Si haces agentic coding, ¿por qué sigues ejecutando un formateador construido

@@ -30,6 +30,10 @@
 > [README.md](README.md) ; en cas d'écart sur un chiffre ou une affirmation,
 > c'est la version anglaise qui fait foi.
 
+<p align="center">
+  <a href="https://starone99.github.io/TokenPress/"><strong>Essayez-le dans votre navigateur →</strong></a>
+</p>
+
 ---
 
 Si vous faites de l'agentic coding, pourquoi utilisez-vous encore un formateur

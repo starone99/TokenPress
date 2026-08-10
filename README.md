@@ -26,6 +26,10 @@
   <a href="README_pt.md">Português</a>
 </p>
 
+<p align="center">
+  <a href="https://starone99.github.io/TokenPress/"><strong>Try it in your browser →</strong></a>
+</p>
+
 ---
 
 If you are doing agentic coding, why are you still running a formatter built

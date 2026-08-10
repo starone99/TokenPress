@@ -30,6 +30,10 @@
 > [README.md](README.md); se um número ou uma afirmação divergir, vale a versão
 > em inglês.
 
+<p align="center">
+  <a href="https://starone99.github.io/TokenPress/"><strong>Experimente no seu navegador →</strong></a>
+</p>
+
 ---
 
 Se você faz agentic coding, por que ainda usa um formatador construído para um

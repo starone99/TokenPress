@@ -29,6 +29,10 @@
 > この翻訳は古くなっている場合があります。正典は [README.md](README.md) です。
 > 数値や記述が食い違う場合は英語版が正しいものとしてください。
 
+<p align="center">
+  <a href="https://starone99.github.io/TokenPress/"><strong>ブラウザで試す →</strong></a>
+</p>
+
 ---
 
 エージェンティックコーディングをしているのに、なぜ人間の読者向けに作られた

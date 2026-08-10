@@ -29,6 +29,10 @@
 > 이 번역은 뒤처질 수 있습니다. 기준 문서는 [README.md](README.md)이며, 수치나
 > 설명이 어긋날 경우 영문 쪽이 맞습니다.
 
+<p align="center">
+  <a href="https://starone99.github.io/TokenPress/"><strong>브라우저에서 바로 써보기 →</strong></a>
+</p>
+
 ---
 
 에이전틱 코딩을 하고 있다면, 왜 아직도 사람이 읽으라고 만든 포매터를 쓰고
