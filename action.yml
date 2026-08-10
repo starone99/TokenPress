@@ -9,10 +9,21 @@
 # an image pull per run, and there is no JavaScript to run here -- the work is a
 # native binary built from this repository.
 #
-# The action builds the CLI from its own checkout. A composite action's files
-# are already on disk at `${{ github.action_path }}` at the ref the consumer
-# pinned, so nothing extra has to be checked out; the build just has to happen
-# *there* and not in the consumer's workspace.
+# The action obtains the CLI inside its own checkout. A composite action's
+# files are already on disk at `${{ github.action_path }}` at the ref the
+# consumer pinned, so nothing extra has to be checked out; the work just has to
+# happen *there* and not in the consumer's workspace.
+#
+# **Pin `uses:` to a release tag**, as the example above does. On a tag this
+# downloads that release's binary and verifies it against the release's
+# SHA256SUMS -- seconds, and the consumer's runner needs no toolchain. On a
+# branch or a bare commit there is no release binary corresponding to the pin,
+# so the CLI is compiled from the checkout, and the *consumer's* runner then
+# has to provide libclang and a C compiler (`ruby-prism-sys` runs bindgen; the
+# tree-sitter grammars are C) because a composite action cannot install
+# toolchain prerequisites into the job that uses it. Switching any of the
+# `ruby`/`go`/`java`/`csharp` inputs off asks for a binary no release ships, so
+# it compiles too, on a tag as much as anywhere else.
 name: TokenPress
 description: >-
   Fail CI when Python, Rust, JavaScript/TypeScript, Ruby, Go, Java or C#
@@ -195,15 +206,60 @@ runs:
         # `uses: ./`, and sanitized because cache keys must not contain commas.
         ref="${ACTION_REF//[^A-Za-z0-9._-]/-}"
 
+        # Can this run download a release binary instead of compiling one?
+        # Same two conditions as the pre-commit hook, for the same reasons:
+        # the consumer's pin has to *be* a release, and every backend has to
+        # be on, because a released binary links all four and the `ruby`/`go`/
+        # `java`/`csharp` inputs ask for a smaller one. Windows is excluded
+        # because `install.sh` publishes no archive for it.
+        # `github.action_ref` is the ref the consumer pinned in `uses:`; it is
+        # empty for a local `uses: ./`, which is why the local case still
+        # builds -- and is what keeps this repository's own CI compiling the
+        # sources under test rather than downloading a past release of them.
+        prebuilt=''
+        case "$ACTION_REF" in
+          v[0-9]*)
+            if [ -z "$build_flags" ] && [ "$RUNNER_OS" != 'Windows' ]; then
+              prebuilt="$ACTION_REF"
+            fi
+            ;;
+        esac
+
+        if [ -n "$prebuilt" ]; then
+          bin="$action_path/prebuilt/tokenpress"
+        else
+          bin="$action_path/target/release/tokenpress$ext"
+        fi
+
         {
           echo "action-path=$action_path"
-          echo "bin=$action_path/target/release/tokenpress$ext"
+          echo "bin=$bin"
+          echo "prebuilt=$prebuilt"
           echo "build-flags=$build_flags"
           echo "cache-key=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-$java_tag-$csharp_tag-$ref-$lock_hash"
           echo "cache-prefix=tokenpress-action-$RUNNER_OS-$ruby_tag-$go_tag-$java_tag-$csharp_tag-"
         } >>"$GITHUB_OUTPUT"
 
+    - name: Download the prebuilt CLI
+      if: steps.setup.outputs.prebuilt != ''
+      shell: bash
+      env:
+        ACTION_PATH: ${{ steps.setup.outputs.action-path }}
+        VERSION: ${{ steps.setup.outputs.prebuilt }}
+      run: |
+        set -euo pipefail
+        # The installer resolves the host's archive, checks it against the
+        # release's SHA256SUMS and refuses to install anything unverified, so
+        # this step is a download and a checksum, not a build. No fallback on
+        # failure: unlike the pre-commit hook -- which must not turn a failed
+        # download into a refusal to commit -- a workflow that asked for a
+        # tagged release and cannot have it should say so and stop, rather
+        # than quietly spending several minutes compiling instead.
+        TOKENPRESS_VERSION="$VERSION" TOKENPRESS_BIN_DIR="$ACTION_PATH/prebuilt" \
+          sh "$ACTION_PATH/install.sh"
+
     - name: Restore the CLI build cache
+      if: steps.setup.outputs.prebuilt == ''
       uses: actions/cache@v4
       with:
         path: |
@@ -215,6 +271,7 @@ runs:
         restore-keys: ${{ steps.setup.outputs.cache-prefix }}
 
     - name: Build the TokenPress CLI
+      if: steps.setup.outputs.prebuilt == ''
       shell: bash
       env:
         ACTION_PATH: ${{ steps.setup.outputs.action-path }}

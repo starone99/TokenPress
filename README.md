@@ -154,7 +154,7 @@ your machine — otherwise two people on different versions reformat each
 other's files forever. Pin it in a hook or an Action and nobody has to install
 anything.
 
-**pre-commit** — the framework fetches and builds the pinned revision itself:
+**pre-commit** — the framework fetches the pinned revision itself:
 
 ```yaml
 # .pre-commit-config.yaml
@@ -189,6 +189,17 @@ strip_doc_comments = true
 `format` only on the "nobody reads this code" side of the question above.
 Options, the full flag/config mapping and the cargo features are in
 [INTEGRATIONS.md](docs/INTEGRATIONS.md).
+
+**Pin to a release tag, not to a branch.** On a tag both integrations download
+that release's binary and check it against the release's `SHA256SUMS` — a few
+seconds, and no Rust toolchain, C compiler or libclang anywhere. A branch or a
+bare commit has no release binary to correspond to it, so the CLI is compiled
+from the checkout instead: correct, and minutes rather than seconds. Asking for
+a smaller binary than a release ships — the hook's `TOKENPRESS_NO_RUBY` and
+friends, the Action's `ruby`/`go`/`java`/`csharp` inputs — compiles for the
+same reason, and so does anything the releases have no archive for (Windows,
+and every non-x86_64 Linux). `TOKENPRESS_NO_PREBUILT=1` forces the source build
+outright.
 
 ## Or run it yourself
 
@@ -309,6 +320,7 @@ external checker is invoked — is in [LANGUAGES.md](docs/LANGUAGES.md).
 | [benchmarks/SHOWCASE.md](benchmarks/SHOWCASE.md) | The summary, and the ≥40% candidates per tokenizer |
 | [ROADMAP.md](ROADMAP.md) | What is next, and the questions that are open |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Building, testing, and the toolchains each backend needs |
+| [SECURITY.md](SECURITY.md) | Reporting a vulnerability, the threat model, release integrity |
 
 ## Development
 

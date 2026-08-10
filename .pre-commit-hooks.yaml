@@ -11,8 +11,16 @@
 # `language: script` (not `language: rust`): pre-commit's rust language runs
 # `cargo install --bins --path .` at the repository root, which cannot work
 # here because the root manifest is a virtual workspace manifest. The entry
-# script below builds the CLI from pre-commit's clone of this repository
-# instead, so a working `cargo` is the only prerequisite.
+# script below obtains the CLI from pre-commit's clone of this repository
+# instead.
+#
+# **Pin `rev:` to a release tag.** On a tag the entry script downloads that
+# release's binary, verifies it against the release's SHA256SUMS and runs it,
+# which takes seconds and needs no toolchain at all. On a branch or a bare
+# commit there is no release binary to correspond to the pin, so the script
+# compiles the CLI from the clone -- correct, but it wants `cargo`, a C
+# compiler and libclang, and the first run is minutes rather than seconds.
+# `TOKENPRESS_NO_PREBUILT=1` forces the source build on a tag too.
 #
 # Only the paths the CLI accepts are matched: any other path makes the CLI
 # exit 2 with "unsupported language for path". Ruby is the one backend that
@@ -71,8 +79,10 @@
   language: script
   files: (\.(py|rs|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|rake|gemspec|ru|go|java|cs)$|(^|/)(Gemfile|Rakefile)$)
   types_or: [python, rust, javascript, jsx, ts, tsx, ruby, go, java, "c#"]
-  # One process at a time: every invocation runs `cargo build` first, and
-  # parallel builds would only contend for the same cargo lock.
+  # One process at a time: the first invocation populates the CLI -- a
+  # download into the clone's `target/prebuilt/`, or a `cargo build` -- and
+  # parallel invocations would race to write the same path or contend for the
+  # same cargo lock. Later invocations reuse what the first one left.
   require_serial: true
   minimum_pre_commit_version: '2.9.0'
 

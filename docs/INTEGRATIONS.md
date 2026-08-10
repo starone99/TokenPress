@@ -29,8 +29,16 @@ repos:
 ```
 
 `rev: v0.1.0` above is a placeholder: pin an actual released tag or commit SHA,
-never a branch — pre-commit clones the repository at that ref and builds the
-CLI from it.
+never a branch — pre-commit clones the repository at that ref, and the hook
+obtains the CLI from that clone.
+
+**A tag and a SHA are not equally cheap.** On a tag the hook downloads that
+release's binary, checks it against the release's `SHA256SUMS` and caches it
+under the clone's `target/prebuilt/<tag>/`: seconds, and none of the
+prerequisites below apply. On a SHA there is no release binary corresponding to
+the pin, so the CLI is compiled from the clone instead — correct, and the
+reason the prerequisites exist. Pinning a tag is therefore the recommendation
+rather than merely one of two equal options.
 
 | Hook | Runs | Result |
 |---|---|---|
@@ -64,11 +72,14 @@ beside them, `go.mod`/`go.sum`, `pom.xml`/`build.gradle`, `.csproj`/`.sln`,
 are not source of any of the three).
 Extension-less scripts with a Python shebang are excluded on purpose: an
 explicitly named unsupported path makes the CLI exit 2. Both are
-`require_serial: true` — every invocation runs a `cargo build` first, and
-parallel copies would only contend for the same cargo lock.
+`require_serial: true` — the first invocation populates the CLI, by download or
+by `cargo build`, and parallel copies would only race to write the same path or
+contend for the same cargo lock.
 `minimum_pre_commit_version` is 2.9.0.
 
-Prerequisites for the consumer:
+Prerequisites for the consumer. **All of them are prerequisites of the source
+build**, so pinning a tag on a host the releases cover removes every one of
+them; what stays is `curl` or `wget`, and `sh` on Windows:
 
 - **A working `cargo` on `PATH`** — rustup is the easiest route. The hooks are
   `language: script`; the entry script builds `tokenpress-cli` inside
@@ -76,6 +87,14 @@ Prerequisites for the consumer:
   so `rust-toolchain.toml` pins the compiler (rustup then installs it on first
   use). The first hook run therefore pays one release build; later runs reuse
   that clone's `target/`.
+- **When the source build is what runs.** Four cases, and only the last is a
+  choice: the pin is not a tag; the host has no release archive (Windows, and
+  every non-x86_64 Linux — the release ships Linux x86_64, macOS on both
+  architectures, and Windows x86_64, but `install.sh` unpacks `tar.gz` only);
+  the download or its checksum failed, which is reported on stderr and never
+  turned into a refusal to commit; or `TOKENPRESS_NO_PREBUILT=1` is set. The
+  `TOKENPRESS_NO_*` backend switches below also force it, because a release
+  binary has all four backends linked in.
 - **libclang and a C compiler** — the CLI now builds four native backends.
   The Ruby one's `ruby-prism-sys` dependency compiles vendored prism C sources
   and generates its bindings with bindgen (libclang *and* a C compiler); the
@@ -114,8 +133,8 @@ pre-commit run --all-files
 ### GitHub Action
 
 Add the gate to an existing workflow with one step — the composite action
-builds the CLI from its own pinned checkout and caches it, so nothing has to be
-installed first:
+obtains the CLI from its own pinned checkout, so nothing has to be installed
+first:
 
 ```yaml
 - uses: starone99/TokenPress@v0.1.0
@@ -125,8 +144,19 @@ installed first:
     extra-args: --rs-strip-doc-comments   # optional, passed through verbatim
 ```
 
-**The runner needs libclang and a C compiler.** The action builds the CLI from
-its own checkout, and that build now includes all four native backends: the
+**Pinned to a `v…` tag on a Linux or macOS runner, the action downloads that
+release's binary** — verified against the release's `SHA256SUMS`, no compiler
+involved — **and the whole paragraph below does not apply.** It applies when
+the action compiles instead: a branch or SHA in `uses:`, a Windows runner
+(no `tar.gz` archive), or any of the four backend inputs switched off, which
+asks for a binary no release ships. A download that fails here fails the step
+rather than falling back to a build, because a workflow that pinned a release
+and cannot have it should say so instead of quietly spending minutes
+compiling.
+
+**The runner needs libclang and a C compiler** *for that build.* The action
+builds the CLI from its own checkout, and that build includes all four
+native backends: the
 Ruby one (`ruby-prism-sys`: vendored C + bindgen) and the Go, Java and C# ones
 (the tree-sitter runtime and their grammars: C via `cc`). GitHub-hosted Ubuntu
 runners generally ship both; Windows runners may need LLVM installed

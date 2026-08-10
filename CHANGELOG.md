@@ -68,6 +68,24 @@ Everything so far. There has been no release.
 - Benchmarks over thirteen commit-pinned corpora against six tokenizers, with
   an upstream-test harness that runs a corpus's own suite against a formatted
   copy.
+- **The pre-commit hook and the GitHub Action install a release binary when
+  the pin is a release tag**, instead of compiling the CLI on the consumer's
+  machine every time. Both go through `install.sh`, so the archive is checked
+  against the release's `SHA256SUMS` and an unverifiable download installs
+  nothing. This removes `cargo`, a C compiler and libclang from the consumer's
+  prerequisites in the case that should be the common one.
+
+  A source build still happens, by design, when the pin is a branch or a bare
+  commit (no release binary corresponds to it, and a formatter's verdict has
+  to come from the revision that was pinned), when the host has no release
+  archive (Windows, and every non-x86_64 Linux), or when a smaller binary than
+  a release ships is requested through `TOKENPRESS_NO_RUBY` and friends or the
+  Action's `ruby`/`go`/`java`/`csharp` inputs. `TOKENPRESS_NO_PREBUILT=1`
+  forces it outright. The hook treats a failed download as a reason to build;
+  the Action treats it as a reason to fail the step.
+- `SECURITY.md`: private reporting route, the threat model for a tool that
+  rewrites source files in place, and what release integrity does and does not
+  cover.
 
 ### Changed
 

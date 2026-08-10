@@ -71,9 +71,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       # ruby-prism-sys needs libclang (bindgen) + a C compiler. The released
-      # binary does not link the Ruby backend yet, but it will as soon as the
-      # formatter is registered in the CLI -- and a release that fails at the
-      # tag is the worst place to discover that.
+      # binary links all four native backends -- Ruby, Go, Java and C# -- so
+      # this is a prerequisite of the release build itself, not a precaution.
       - uses: ./.github/actions/libclang
       - name: Build release binary
         run: cargo build --release -p tokenpress-cli --target ${{ matrix.target }}
