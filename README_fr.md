@@ -9,7 +9,6 @@
 <p align="center">
   <a href="https://github.com/starone99/TokenPress/actions"><img src="https://github.com/starone99/TokenPress/workflows/CI/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage">
 </p>
 
 <p align="center">
@@ -139,9 +138,14 @@ concernant les lecteurs humains :
   Rust réémet un fichier entier sur une seule ligne : les outils d'édition qui
   adressent par ligne, `git diff`, les conflits de merge et les stack traces se
   dégradent tous. Les autres backends conservent les retours à la ligne.
-- **Rust et JS/TS perdent des commentaires par défaut**, et il n'y a pas de
-  dé-formatage. Sous un hook ce n'est pas une conversion unique : chaque
-  commentaire écrit ensuite est supprimé à l'exécution suivante.
+- **Les commentaires se perdent dès les réglages par défaut, et l'ampleur
+  dépend du langage.** Rust supprime tous les `//` et `/* */` : il réémet
+  depuis le flux de tokens de `syn`, donc seuls les commentaires de
+  documentation `///` et `//!` survivent. JS/TS garde le commentaire qui occupe
+  sa propre ligne et supprime celui qui partage une ligne avec du code. Les
+  cinq autres gardent les deux. Il n'y a pas de dé-formatage, et sous un hook
+  ce n'est pas une conversion unique : chaque commentaire écrit ensuite est
+  supprimé à l'exécution suivante.
 
 Il n'y a pas de correspondance inverse : ni source map, ni ré-application de
 patch. Un modèle peut lire du code formaté et répondre à son sujet, mais un
@@ -352,9 +356,15 @@ faire, et comment chaque vérificateur externe est invoqué — est dans
 
 TDD avec une barrière stricte : `scripts/coverage.ps1` (Windows) /
 `scripts/coverage.sh` font échouer la compilation sous 100 % de couverture de
-lignes. La CI lance fmt, clippy `-D warnings`, les tests sur Linux et Windows,
-et la barrière de couverture. Les règles sont dans
-[CONTRIBUTING.md](CONTRIBUTING.md).
+lignes. La CI lance clippy `-D warnings`, les tests sur Linux et Windows,
+et cette barrière — donc le badge CI ci-dessus au vert *est* l'affirmation de
+couverture, plutôt qu'un badge affirmant un chiffre que rien ne vérifie.
+
+**Ne lancez pas `cargo fmt` ici.** Ce dépôt formate ses propres sources avec
+TokenPress, donc rustfmt n'est pas dans la CI et ne produirait qu'un diff que
+le hook annule. Les règles sont dans [CONTRIBUTING.md](CONTRIBUTING.md), qui
+indique aussi où mettre le raisonnement puisque les commentaires `//` ne
+survivent pas.
 
 ## Licence
 

@@ -9,7 +9,6 @@
 <p align="center">
   <a href="https://github.com/starone99/TokenPress/actions"><img src="https://github.com/starone99/TokenPress/workflows/CI/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage">
 </p>
 
 <p align="center">
@@ -140,9 +139,13 @@ sobre lectores humanos:
   de edición que direccionan por línea, `git diff`, los conflictos de merge y
   los stack traces se degradan. Los demás backends conservan los saltos de
   línea.
-- **Rust y JS/TS pierden comentarios por defecto**, y no hay des-formateo. Bajo
-  un hook eso no es una conversión única: cada comentario que alguien escriba
-  después se elimina en la siguiente ejecución.
+- **Los comentarios se pierden ya por defecto, y cuánto depende del lenguaje.**
+  Rust descarta todos los `//` y `/* */`: reemite desde el flujo de tokens de
+  `syn`, así que solo sobreviven los comentarios de documentación `///` y
+  `//!`. JS/TS conserva el comentario que ocupa su propia línea y descarta el
+  que comparte línea con código. Los otros cinco conservan ambos. No hay
+  des-formateo, y bajo un hook eso no es una conversión única: cada comentario
+  que alguien escriba después se elimina en la siguiente ejecución.
 
 No hay mapeo inverso: ni source map ni parche de vuelta. Un modelo puede leer
 código formateado y responder sobre él, pero un diff contra esa copia no se
@@ -348,9 +351,16 @@ se invoca cada comprobador externo— está en [LANGUAGES.md](docs/LANGUAGES.md)
 
 TDD con una puerta dura: `scripts/coverage.ps1` (Windows) /
 `scripts/coverage.sh` hacen fallar la compilación por debajo del 100% de
-cobertura de líneas. CI ejecuta fmt, clippy `-D warnings`, los tests en Linux y
-Windows, y la puerta de cobertura. Las reglas están en
-[CONTRIBUTING.md](CONTRIBUTING.md).
+cobertura de líneas. CI ejecuta clippy `-D warnings`, los tests en Linux y
+Windows, y esa puerta: por eso que la insignia de CI de arriba esté en verde
+*es* la afirmación de cobertura, en lugar de una insignia que afirma un número
+que nadie comprueba.
+
+**No ejecutes `cargo fmt` aquí.** Este repositorio formatea sus propias fuentes
+con TokenPress, así que rustfmt no está en CI y solo produciría un diff que el
+hook deshace. Las reglas están en [CONTRIBUTING.md](CONTRIBUTING.md), que
+también dice dónde poner el razonamiento dado que los comentarios `//` no
+sobreviven.
 
 ## Licencia
 

@@ -9,7 +9,6 @@
 <p align="center">
   <a href="https://github.com/starone99/TokenPress/actions"><img src="https://github.com/starone99/TokenPress/workflows/CI/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage">
 </p>
 
 <p align="center">
@@ -129,9 +128,12 @@ gin (Go)              █████████░                        -18.
 - **Rust는 모든 줄을 합칩니다.** 기본 설정에서 Rust 백엔드는 파일 전체를 한 줄로
   다시 씁니다. 줄 단위로 주소를 매기는 편집 도구, `git diff`, 머지 충돌, 스택
   트레이스가 모두 무력해집니다. 다른 백엔드는 줄바꿈을 유지합니다.
-- **Rust와 JS/TS는 기본 설정에서도 주석을 잃고**, 되돌리는 기능은 없습니다. 훅
-  아래에서는 일회성 변환이 아닙니다 — 이후 누가 쓴 주석이든 다음 실행에서
-  지워집니다.
+- **기본 설정에서도 주석은 사라지고, 정도는 언어마다 다릅니다.** Rust는 `//`와
+  `/* */`를 전부 버립니다 — `syn` 토큰 스트림에서 재생성하므로 `///`와 `//!`
+  문서 주석만 살아남습니다. JS/TS는 자체 줄을 차지한 주석은 남기고 코드와 같은
+  줄에 있는 주석은 버립니다. 나머지 다섯은 둘 다 유지합니다. 되돌리는 기능은
+  없고, 훅 아래에서는 일회성 변환이 아닙니다 — 이후 누가 쓴 주석이든 다음
+  실행에서 지워집니다.
 
 역매핑이 없습니다: 소스맵도, 패치 백도 없습니다. 모델이 포맷된 코드를 읽고 답할
 수는 있지만, 그 사본을 기준으로 만든 diff는 포맷하지 않은 원본에 적용되지
@@ -320,9 +322,15 @@ tokenpress stats . --tokenizer kimi:tiktoken.model   # Kimi ranks 형식
 ## 개발
 
 TDD와 하드 게이트: `scripts/coverage.ps1` (Windows) / `scripts/coverage.sh` 는
-줄 커버리지 100% 미만이면 빌드를 실패시킵니다. CI 는 fmt, clippy `-D warnings`,
-Linux·Windows 테스트, 커버리지 게이트를 돌립니다. 규칙은
-[CONTRIBUTING.md](CONTRIBUTING.md)에 있습니다.
+줄 커버리지 100% 미만이면 빌드를 실패시킵니다. CI 는 clippy `-D warnings`,
+Linux·Windows 테스트, 그 게이트를 돌립니다 — 따라서 위의 CI 배지가 초록인 것
+자체가 커버리지 주장이며, 아무도 확인하지 않는 숫자를 배지가 우기는 방식이
+아닙니다.
+
+**여기서 `cargo fmt` 를 돌리지 마세요.** 이 저장소는 자기 소스를 TokenPress 로
+포맷하므로 rustfmt 는 CI 에 없고, 돌려봐야 훅이 되돌릴 diff 만 만듭니다. 규칙은
+[CONTRIBUTING.md](CONTRIBUTING.md)에 있고, `//` 주석이 살아남지 않는 만큼 근거를
+어디에 둘지도 거기 적혀 있습니다.
 
 ## 라이선스
 

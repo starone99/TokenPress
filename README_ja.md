@@ -9,7 +9,6 @@
 <p align="center">
   <a href="https://github.com/starone99/TokenPress/actions"><img src="https://github.com/starone99/TokenPress/workflows/CI/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage">
 </p>
 
 <p align="center">
@@ -130,9 +129,12 @@ gin (Go)              █████████░                        -18.
   ファイル全体を 1 行として再出力します。行単位でアドレスする編集ツール、
   `git diff`、マージコンフリクト、スタックトレースがいずれも役に立たなくなります。
   他のバックエンドは改行を保ちます。
-- **Rust と JS/TS はデフォルト設定でもコメントを失い**、元に戻す機能はありません。
-  フックの下では一度きりの変換ではなく、以後に書かれたコメントも次の実行で
-  消えます。
+- **デフォルト設定でもコメントは失われ、その度合いは言語によって違います。**
+  Rust は `//` と `/* */` をすべて捨てます — `syn` のトークンストリームから
+  再生成するため、生き残るのは `///` と `//!` の doc コメントだけです。JS/TS は
+  行を独占するコメントは残し、コードと同じ行にあるコメントは捨てます。残る五つは
+  どちらも保ちます。元に戻す機能はなく、フックの下では一度きりの変換ではありません
+  — 以後に書かれたコメントも次の実行で消えます。
 
 逆マッピングはありません。ソースマップもパッチバックもありません。モデルが
 フォーマット済みのコードを読んで答えることはできますが、そのコピーに対する差分は
@@ -325,9 +327,15 @@ tokenpress stats . --tokenizer kimi:tiktoken.model   # Kimi ranks 形式
 ## 開発
 
 TDD とハードゲート: `scripts/coverage.ps1`（Windows）/ `scripts/coverage.sh` は
-行カバレッジ 100% 未満でビルドを失敗させます。CI は fmt、clippy `-D warnings`、
-Linux と Windows でのテスト、カバレッジゲートを実行します。規則は
-[CONTRIBUTING.md](CONTRIBUTING.md) にあります。
+行カバレッジ 100% 未満でビルドを失敗させます。CI は clippy `-D warnings`、
+Linux と Windows でのテスト、そのゲートを実行します — つまり上の CI バッジが
+緑であること自体がカバレッジの主張であり、誰も検査しない数字をバッジが
+主張する形ではありません。
+
+**ここで `cargo fmt` を実行しないでください。**このリポジトリは自身のソースを
+TokenPress で整形するため rustfmt は CI になく、実行してもフックが元に戻す差分が
+出るだけです。規則は [CONTRIBUTING.md](CONTRIBUTING.md) にあり、`//` コメントが
+残らない以上どこに根拠を置くべきかもそこに書いてあります。
 
 ## ライセンス
 

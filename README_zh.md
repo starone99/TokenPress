@@ -9,7 +9,6 @@
 <p align="center">
   <a href="https://github.com/starone99/TokenPress/actions"><img src="https://github.com/starone99/TokenPress/workflows/CI/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage">
 </p>
 
 <p align="center">
@@ -123,8 +122,11 @@ pre-commit 钩子和 GitHub Action 正是为此存在。但有两件事要先知
 - **Rust 会把所有行合并。**在默认设置下，Rust 后端会把整个文件重新输出为一行。
   按行寻址的编辑工具、`git diff`、合并冲突和堆栈跟踪都会随之退化。其他后端保留
   换行。
-- **Rust 和 JS/TS 在默认设置下也会丢失注释**，并且没有反向还原。在钩子下这不是
-  一次性的转换 —— 之后任何人写下的注释都会在下一次运行时被删掉。
+- **默认设置下注释也会丢失，丢多少取决于语言。** Rust 会丢弃全部 `//` 与
+  `/* */` —— 它从 `syn` 的 token 流重新生成，因此只有 `///` 和 `//!` 文档注释
+  能留下。JS/TS 保留独占一行的注释，丢弃与代码同行的注释。其余五种两者都保留。
+  没有反向还原，且在钩子下这不是一次性的转换 —— 之后任何人写下的注释都会在下
+  一次运行时被删掉。
 
 没有反向映射：没有 source map，也没有回打补丁。模型可以读格式化后的代码并回答
 问题，但基于该副本生成的 diff 无法应用到未格式化的原文件上。**要让模型编辑的
@@ -307,9 +309,14 @@ tokenpress stats . --tokenizer kimi:tiktoken.model   # Kimi ranks 格式
 ## 开发
 
 TDD 加硬性关卡：`scripts/coverage.ps1`（Windows）/ `scripts/coverage.sh` 会在行
-覆盖率低于 100% 时让构建失败。CI 会运行 fmt、clippy `-D warnings`、Linux 与
-Windows 上的测试，以及覆盖率关卡。规则见
-[CONTRIBUTING.md](CONTRIBUTING.md)。
+覆盖率低于 100% 时让构建失败。CI 会运行 clippy `-D warnings`、Linux 与
+Windows 上的测试，以及那道关卡 —— 因此上面的 CI 徽章变绿本身就是覆盖率主张，
+而不是让徽章去断言一个无人核对的数字。
+
+**不要在这里运行 `cargo fmt`。**本仓库用 TokenPress 格式化自己的源码，所以 CI 中
+没有 rustfmt，运行它只会产生钩子随后撤销的 diff。规则见
+[CONTRIBUTING.md](CONTRIBUTING.md)，那里也说明了在 `//` 注释无法留存的前提下该把
+理由写到哪里。
 
 ## 许可证
 

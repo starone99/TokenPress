@@ -9,7 +9,6 @@
 <p align="center">
   <a href="https://github.com/starone99/TokenPress/actions"><img src="https://github.com/starone99/TokenPress/workflows/CI/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage">
 </p>
 
 <p align="center">
@@ -132,9 +131,12 @@ readers:
 - **Rust joins every line.** At default settings the Rust backend re-emits a
   whole file as one line, so line-addressed edit tools, `git diff`, merge
   conflicts and stack traces all degrade. The other backends keep newlines.
-- **Rust and JS/TS lose comments at default**, and there is no un-format.
-  Under a hook that is not a one-time conversion — every comment written
-  afterwards is removed on the next run.
+- **Comments are lost at default, and how much depends on the language.**
+  Rust drops every `//` and `/* */` — it re-emits from the `syn` token
+  stream, so only `///` and `//!` doc comments survive. JS/TS keeps a comment
+  that has its own line and drops one that shares a line with code. The other
+  five keep both. There is no un-format, and under a hook this is not a
+  one-time conversion: every comment written afterwards goes on the next run.
 
 There is no reverse mapping: no source map, no patch-back. A model can read
 formatted code and answer about it, but a diff against the formatted copy will
@@ -335,9 +337,14 @@ external checker is invoked — is in [LANGUAGES.md](docs/LANGUAGES.md).
 ## Development
 
 TDD with a hard gate: `scripts/coverage.ps1` (Windows) / `scripts/coverage.sh`
-fails the build under 100% line coverage. CI runs fmt, clippy `-D warnings`,
-tests on Linux and Windows, and the coverage gate. Rules in
-[CLAUDE.md](CLAUDE.md).
+fails the build under 100% line coverage. CI runs clippy `-D warnings`, tests
+on Linux and Windows, and that gate — so the CI badge above going green *is*
+the coverage claim, rather than a badge asserting a number nothing checks.
+
+**Do not run `cargo fmt` here.** This repository formats its own sources with
+TokenPress, so rustfmt is not in CI and would only produce a diff the hook
+undoes. Rules in [CONTRIBUTING.md](CONTRIBUTING.md), which also says where to
+put reasoning given that `//` comments do not survive.
 
 ## License
 
