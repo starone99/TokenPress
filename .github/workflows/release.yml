@@ -3,6 +3,14 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # A rehearsal trigger. Everything up to publishing runs on demand from any
+  # ref, so the four-platform build can be exercised without spending a version
+  # number on finding out it is broken. This exists because 2026-08-10 spent
+  # three tags learning things a dispatch run would have shown once: a libclang
+  # path that could not work on the macOS images, an Intel runner label that
+  # never scheduled, and a history rewrite. Archives land as workflow
+  # artifacts; the publish job below refuses to run for anything but a tag.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -124,6 +132,11 @@ jobs:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    # Tags only. A `workflow_dispatch` rehearsal builds all four archives and
+    # stops here: there is no version to publish under, and a dispatch that
+    # quietly created a release from whatever `master` happened to be would be
+    # the exact accident the rehearsal exists to prevent.
+    if: github.ref_type == 'tag'
     # Creating the release and uploading its assets is the only write needed.
     permissions:
       contents: write

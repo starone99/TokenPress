@@ -8,6 +8,13 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Nothing here writes anything back. Stated rather than inherited: this is the
+# workflow a fork's pull request runs, the repository default can be changed
+# from a settings page without touching this file, and the other two workflows
+# already declare their own.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Format & Clippy
@@ -391,3 +398,75 @@ jobs:
           tool: cargo-llvm-cov
       - name: Coverage (fails under 100% line coverage)
         run: sh scripts/coverage.sh
+
+  # The one path nothing else covers: a consumer on a clean machine getting a
+  # *released binary* rather than compiling this workspace. Every other job
+  # here builds from source on purpose -- `action` uses `uses: ./`, which
+  # resolves to an empty `github.action_ref` and forces a build so that CI
+  # tests the sources under review. That leaves the download route, which is
+  # what the README, the hook and the Action all promise, exercised by nothing.
+  #
+  # Deliberately without the `libclang` step every other job installs. If the
+  # download silently degrades to a source build, this job is the place it
+  # should hurt.
+  released-binary:
+    name: Released binary (no build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Is there a release to test against?
+        id: rel
+        run: |
+          set -euo pipefail
+          # A fork with no releases must skip rather than fail: there is
+          # nothing to download and that is not a defect in the pull request.
+          tag="$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest" \
+                 | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1 || true)"
+          if [ -z "$tag" ]; then
+            echo "no published release for ${GITHUB_REPOSITORY}; skipping"
+            echo "tag=" >>"$GITHUB_OUTPUT"
+          else
+            echo "latest release: $tag"
+            echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: install.sh, exactly as the README prints it
+        if: steps.rel.outputs.tag != ''
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/master/install.sh" | sh
+          "$HOME/.local/bin/tokenpress" --version
+
+      - name: the installed binary formats a file
+        if: steps.rel.outputs.tag != ''
+        run: |
+          set -euo pipefail
+          printf 'def  f( a ,  b ):\n    return   a  +  b\n' >probe.py
+          # `check` exits 1 when something would change, which is the point.
+          if "$HOME/.local/bin/tokenpress" check probe.py; then
+            echo "::error::check exited 0 on a file that is not normalized"
+            exit 1
+          fi
+
+      - name: the pre-commit hook must download at a tag, not compile
+        if: steps.rel.outputs.tag != ''
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # pre-commit clones this repository at `rev:` and runs the entry
+          # script from that clone; a shallow clone of the tag is the same
+          # shape. The script falls back to a source build silently by design
+          # -- it must never turn a failed download into a refusal to commit --
+          # so the fallback line on stderr is the only signal, and its absence
+          # is what this asserts.
+          git clone --quiet --depth 1 --branch "$TAG" \
+            "https://github.com/${GITHUB_REPOSITORY}.git" hookclone
+          printf 'def  f( a ,  b ):\n    return   a  +  b\n' >hook-probe.py
+          set +e
+          sh hookclone/scripts/pre-commit-hook.sh check hook-probe.py 2>hook.err
+          set -e
+          echo "--- hook stderr ---"; cat hook.err
+          if grep -q "building from source" hook.err; then
+            echo "::error::the hook fell back to a source build at tag ${TAG}; the prebuilt path is broken"
+            exit 1
+          fi
