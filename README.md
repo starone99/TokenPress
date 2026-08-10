@@ -30,7 +30,7 @@
 
 If you are doing agentic coding, why are you still running a formatter built
 for a human reader? Black, gofmt, rustfmt and Prettier all optimize for a
-person's eyes — line width, alignment, blank lines between things. When the
+person's eyes: line width, alignment, blank lines between things. When the
 reader is a model, none of that is value. It is billed tokens.
 
 TokenPress emits the equivalent program that costs the fewest input tokens:
@@ -40,7 +40,7 @@ minimize  tokenizer.encode(transformed_code)
 s.t.      the transformed code parses, compiles, and behaves identically
 ```
 
-It is not a minifier — character count and token count disagree, so the
+It is not a minifier. Character count and token count disagree, so the
 transforms are chosen against a real tokenizer. **Output that fails
 verification is never written**, and identifiers and string contents are never
 touched.
@@ -52,7 +52,7 @@ commit, every file passing verification. The solid bar is what *every*
 tokenizer saves; the shaded tail is how much further the most favourable one
 goes.
 
-**Aggressive settings** — the opt-in flags that also drop comments and
+**Aggressive settings**: the opt-in flags that also drop comments and
 docstrings:
 
 ```text
@@ -68,7 +68,7 @@ uv (Rust + Python)    ███████████░                      
 django (Python)       ██████████░░                      -20.7 … -24.8%
 ```
 
-**Default settings** — same codebases, no flags at all. Comments, docstrings
+**Default settings**: same codebases, no flags at all. Comments, docstrings
 and type annotations are all kept; only whitespace, blank lines and
 indentation go:
 
@@ -86,13 +86,13 @@ transformers (Python) ████░                             -7.0 … -10.3
 ```
 
 Note how the order changes. tokio leads the aggressive chart because it is
-doc-comment-dense — strip those and half the repo is gone — but at default
+doc-comment-dense (strip those and half the repo is gone), but at default
 settings it is mid-pack, because what is left to remove is only whitespace.
 **The default numbers are the ones that cost you nothing**; the aggressive
 ones are a trade you are choosing.
 
 The spread within each row is the other point: savings are per tokenizer,
-which is why the benchmark measures six — GLM-5.2, Kimi K3, Gemma 4, Qwen3.6,
+which is why the benchmark measures six: GLM-5.2, Kimi K3, Gemma 4, Qwen3.6,
 `o200k_base` and `cl100k_base`. The other five supported languages, one
 codebase each, aggressive, same run:
 
@@ -137,7 +137,7 @@ readers:
   whole file as one line, so line-addressed edit tools, `git diff`, merge
   conflicts and stack traces all degrade. The other backends keep newlines.
 - **Comments are lost at default, and how much depends on the language.**
-  Rust drops every `//` and `/* */` — it re-emits from the `syn` token
+  Rust drops every `//` and `/* */`, because it re-emits from the `syn` token
   stream, so only `///` and `//!` doc comments survive. JS/TS keeps a comment
   that has its own line and drops one that shares a line with code. The other
   five keep both. There is no un-format, and under a hook this is not a
@@ -151,7 +151,7 @@ be given to it unformatted.**
 **TokenPress runs TokenPress on itself**, through the `tokenpress-format` hook
 in its own [`.pre-commit-config.yaml`](.pre-commit-config.yaml), at default
 settings: **-22.6%**, 253,666 → 196,415 tokens. The costs are the ones this
-section describes and they were paid deliberately — 1,941 plain comment lines
+section describes and they were paid deliberately: 1,941 plain comment lines
 deleted, `git blame` and stack traces degraded, the reasoning moved to commit
 messages and `docs/`. The tests and the 100%-coverage gate came through
 unchanged. Full before/after in
@@ -170,28 +170,28 @@ your machine — otherwise two people on different versions reformat each
 other's files forever. Pin it in a hook or an Action and nobody has to install
 anything.
 
-**pre-commit** — the framework fetches the pinned revision itself:
+**pre-commit**: the framework fetches the pinned revision itself:
 
 ```yaml
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/starone99/TokenPress
-    rev: v0.1.0                  # the pin is the point — bump it deliberately
+    rev: v0.1.1                  # the pin is the point — bump it deliberately
     hooks:
       - id: tokenpress-check     # writes nothing; fails if anything would change
     # - id: tokenpress-format    # rewrites in place. Read the gate above first.
 ```
 
-**GitHub Action** — one step in an existing workflow:
+**GitHub Action**: one step in an existing workflow:
 
 ```yaml
-- uses: starone99/TokenPress@v0.1.0
+- uses: starone99/TokenPress@v0.1.1
   with:
     paths: src tests
     mode: check                  # `format` rewrites the workspace
 ```
 
-**`tokenpress.toml`** — flags per language, picked up from the nearest parent
+**`tokenpress.toml`**: flags per language, picked up from the nearest parent
 directory, so the hook, the Action and your own runs all agree:
 
 ```toml
@@ -207,20 +207,20 @@ Options, the full flag/config mapping and the cargo features are in
 [INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
 **Pin to a release tag, not to a branch.** On a tag both integrations download
-that release's binary and check it against the release's `SHA256SUMS` — a few
+that release's binary and check it against the release's `SHA256SUMS`: a few
 seconds, and no Rust toolchain, C compiler or libclang anywhere. A branch or a
 bare commit has no release binary to correspond to it, so the CLI is compiled
 from the checkout instead: correct, and minutes rather than seconds. Asking for
-a smaller binary than a release ships — the hook's `TOKENPRESS_NO_RUBY` and
-friends, the Action's `ruby`/`go`/`java`/`csharp` inputs — compiles for the
+a smaller binary than a release ships (the hook's `TOKENPRESS_NO_RUBY` and
+friends, the Action's `ruby`/`go`/`java`/`csharp` inputs) compiles for the
 same reason, and so does anything the releases have no archive for (Windows,
 Intel macOS, and every non-x86_64 Linux). `TOKENPRESS_NO_PREBUILT=1` forces the
 source build outright.
 
 ## Or run it yourself
 
-For a one-off — measuring a tree, or generating the copy you are about to hand
-a model — install the CLI.
+For a one-off, install the CLI: measuring a tree, or generating the copy you
+are about to hand a model.
 
 ```bash
 # install script: downloads the release for your host and verifies it against
@@ -243,7 +243,7 @@ x86_64, macOS (Apple Silicon) and Windows x86_64; any other platform builds
 from source — **Intel macOS included**, because the Intel build runner is
 being retired upstream and a release should not wait on a deprecated one. `TOKENPRESS_VERSION` pins a tag and `TOKENPRESS_BIN_DIR`
 changes where the script installs. Building the Ruby, Go, Java and C# backends
-needs a C compiler, and libclang for Ruby — `--no-default-features` needs
+needs a C compiler, and libclang for Ruby; `--no-default-features` needs
 neither, and `--features go,java` adds back only what you name.
 
 Then:
@@ -304,7 +304,7 @@ never that it is corrupted.
 
 ## Language support
 
-**Python and Rust are the primary targets** — what the project was built for,
+**Python and Rust are the primary targets**: what the project was built for,
 what the benchmarks cover most deeply, and where the work goes first. The
 other five are supported on the same invariant and the same verification, but
 each rests on a single corpus.
@@ -323,8 +323,8 @@ That last column cuts against the paragraph above it, and is stated here
 rather than buried: **the two primary languages are the two without external
 verification.** Closing that is the first item on the [roadmap](ROADMAP.md).
 
-Per-language detail — what each backend keeps, what it cannot, and how each
-external checker is invoked — is in [LANGUAGES.md](docs/LANGUAGES.md).
+Per-language detail (what each backend keeps, what it cannot, and how each
+external checker is invoked) is in [LANGUAGES.md](docs/LANGUAGES.md).
 
 ## Documentation
 
@@ -343,7 +343,7 @@ external checker is invoked — is in [LANGUAGES.md](docs/LANGUAGES.md).
 
 TDD with a hard gate: `scripts/coverage.ps1` (Windows) / `scripts/coverage.sh`
 fails the build under 100% line coverage. CI runs clippy `-D warnings`, tests
-on Linux and Windows, and that gate — so the CI badge above going green *is*
+on Linux and Windows, and that gate, so the CI badge above going green *is*
 the coverage claim, rather than a badge asserting a number nothing checks.
 
 **Do not run `cargo fmt` here.** This repository formats its own sources with

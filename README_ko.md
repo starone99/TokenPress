@@ -44,7 +44,7 @@ s.t.      변환된 코드가 파싱되고, 컴파일되고, 동일하게 동작
 ```
 
 미니파이어가 아닙니다 — 문자 수와 토큰 수는 일치하지 않으므로, 변환은 실제
-토크나이저를 기준으로 선택됩니다. **검증에 실패한 출력은 절대 기록되지
+토크나이저를 기준으로 선택됩니다. **검증에 실패한 출력은 절대 파일에 쓰이지
 않으며**, 식별자와 문자열 내용은 결코 건드리지 않습니다.
 
 ## 얼마나 줄어드나
@@ -84,13 +84,13 @@ requests (Python)     ████░                             -7.3 … -9.7%
 transformers (Python) ████░                             -7.0 … -10.3%
 ```
 
-순서가 바뀐 것에 주목하세요. tokio가 aggressive 차트에서 1위인 이유는 doc 주석이
-빽빽하기 때문입니다 — 그것을 지우면 리포의 절반이 사라집니다. 하지만 기본
+순서가 뒤집힌다는 점이 중요합니다. tokio가 aggressive 차트에서 1위인 이유는 doc 주석이
+빽빽하기 때문입니다 — 그걸 지우면 저장소의 절반이 사라집니다. 하지만 기본
 설정에서는 중위권인데, 남은 것이 공백뿐이기 때문입니다. **기본 설정 수치는
-아무 대가도 치르지 않는 절감**이고, aggressive 수치는 당신이 선택하는
+아무 대가도 치르지 않는 절감**이고, aggressive 수치는 스스로 선택해 치르는
 트레이드오프입니다.
 
-각 행 안의 폭도 요점입니다: 절감률은 토크나이저마다 다르고, 그래서 벤치마크는
+각 행의 폭도 그만큼 중요합니다: 절감률은 토크나이저마다 다르고, 그래서 벤치마크는
 여섯 개를 측정합니다 — GLM-5.2, Kimi K3, Gemma 4, Qwen3.6, `o200k_base`,
 `cl100k_base`. 나머지 다섯 언어는 코드베이스 하나씩, aggressive, 같은 실행:
 
@@ -144,13 +144,13 @@ gin (Go)              █████████░                        -18.
 수는 있지만, 그 사본을 기준으로 만든 diff는 포맷하지 않은 원본에 적용되지
 않습니다. **모델이 편집할 파일은 포맷하지 않은 채로 주세요.**
 
-**TokenPress는 TokenPress 자신에게 TokenPress를 돌립니다.** 자체
+**TokenPress는 자기 소스에도 TokenPress를 돌립니다.** 자체
 [`.pre-commit-config.yaml`](.pre-commit-config.yaml)의 `tokenpress-format` 훅으로,
-기본 설정에서 **-22.6%**, 253,666 → 196,415 토큰. 대가는 이 절이 설명하는 바로
-그것이고 알고서 치렀습니다 — 평문 주석 1,941줄 삭제, `git blame`과 스택 트레이스
+기본 설정에서 **-22.6%**, 253,666 → 196,415 토큰. 대가는 이 절에서 설명한 그대로이고,
+알면서 치렀습니다 — 평문 주석 1,941줄 삭제, `git blame`과 스택 트레이스
 열화, 근거는 커밋 메시지와 `docs/`로 이동. 테스트와 100% 커버리지 게이트는 그대로
-통과했습니다. 전후 전체는
-[SHOWCASE.md](benchmarks/SHOWCASE.md#the-fourteenth-codebase-tokenpress-itself-which-does-use-it)에.
+통과했습니다. 전후 비교는
+[SHOWCASE.md](benchmarks/SHOWCASE.md#the-fourteenth-codebase-tokenpress-itself-which-does-use-it)에 있습니다.
 
 **에디터 플러그인과 format-on-save가 없는 것도 같은 이유입니다.** 대부분의
 사람이 Black·Prettier·rustfmt를 만나는 경로가 그것이지만, TokenPress에는 있으면
@@ -159,7 +159,7 @@ gin (Go)              █████████░                        -18.
 
 ## 프로젝트에 적용하기
 
-다른 포매터와 마찬가지로, 버전은 당신의 머신이 아니라 프로젝트에 속합니다 —
+다른 포매터와 마찬가지로, 버전은 각자의 머신이 아니라 프로젝트에 속합니다 —
 그렇지 않으면 서로 다른 버전을 쓰는 두 사람이 상대의 파일을 영원히 다시
 포맷합니다. 훅이나 Action에 고정해 두면 아무도 따로 설치할 필요가 없습니다.
 
@@ -169,7 +169,7 @@ gin (Go)              █████████░                        -18.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/starone99/TokenPress
-    rev: v0.1.0                  # 고정이 핵심입니다 — 의도적으로만 올리세요
+    rev: v0.1.1                  # 고정이 핵심입니다 — 의도적으로만 올리세요
     hooks:
       - id: tokenpress-check     # 아무것도 쓰지 않고, 바뀔 것이 있으면 실패
     # - id: tokenpress-format    # 파일을 덮어씁니다. 위의 질문을 먼저 읽으세요.
@@ -178,7 +178,7 @@ repos:
 **GitHub Action** — 기존 워크플로에 한 스텝:
 
 ```yaml
-- uses: starone99/TokenPress@v0.1.0
+- uses: starone99/TokenPress@v0.1.1
   with:
     paths: src tests
     mode: check                  # `format`은 워크스페이스를 덮어씁니다
@@ -201,8 +201,8 @@ strip_doc_comments = true
 **브랜치가 아니라 릴리스 태그에 핀하세요.** 태그면 두 통합 모두 그 릴리스의
 바이너리를 받아 릴리스의 `SHA256SUMS`로 검증합니다 — 수 초면 끝나고 Rust 툴체인도
 C 컴파일러도 libclang도 필요 없습니다. 브랜치나 단순 커밋은 대응하는 릴리스
-바이너리가 없어서 체크아웃에서 CLI를 컴파일합니다: 정확하지만 수 초가 아니라 수 분
-걸립니다. 릴리스가 싣는 것보다 작은 바이너리를 요구할 때도 — 훅의
+바이너리가 없어서 체크아웃에서 CLI를 컴파일합니다. 결과는 정확하지만 수 초가 아니라 수 분
+걸립니다. 릴리스에 들어 있는 것보다 작은 바이너리를 요구할 때도 — 훅의
 `TOKENPRESS_NO_RUBY` 등, Action의 `ruby`/`go`/`java`/`csharp` 입력 — 같은 이유로
 컴파일하며, 릴리스에 아카이브가 없는 호스트(Windows, Intel macOS, x86_64가 아닌
 모든 Linux)도 마찬가지입니다. `TOKENPRESS_NO_PREBUILT=1`은 소스 빌드를 강제합니다.
@@ -242,7 +242,7 @@ tokenpress format <PATH>...        # 제자리에서 덮어쓰기 (디렉터리�
 tokenpress check  <PATH>...        # 바뀔 것이 있으면 exit 1
 ```
 
-`stats`부터 시작하세요. 아무것도 건드리지 않고, 당신의 트리에서 이것이 값어치가
+`stats`부터 시작하세요. 아무것도 건드리지 않고, 이 트리에서 값어치가
 있는지 알려줍니다:
 
 ```bash
@@ -268,7 +268,7 @@ tokenpress stats . --tokenizer kimi:tiktoken.model   # Kimi ranks 형식
 ```
 
 종료 코드: `0` 정상 · `1` check 가 변경을 발견 · `2` 오류. 파싱과 검증 실패는
-파일별로 보고되며, 손상된 것은 결코 기록되지 않습니다.
+파일별로 보고되며, 손상된 파일이 쓰이는 일은 없습니다.
 
 ## 동작 방식
 
@@ -284,7 +284,7 @@ tokenpress stats . --tokenizer kimi:tiktoken.model   # Kimi ranks 형식
                                             실패 ───┴──▶ 파일은 그대로 둠
 ```
 
-마지막 단계가 설계의 전부입니다. 동등함을 증명할 수 없는 변환은 기록되지 않으므로,
+마지막 단계가 설계의 전부입니다. 동등함을 증명할 수 없는 변환은 파일에 쓰이지 않으므로,
 최악의 경우는 파일이 그대로 남는 것이지 손상되는 것이 아닙니다.
 
 ## 언어 지원
