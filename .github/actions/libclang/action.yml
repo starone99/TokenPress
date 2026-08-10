@@ -31,17 +31,39 @@ runs:
       if: runner.os == 'macOS'
       shell: bash
       run: |
-        # The Xcode Command Line Tools ship libclang, and every hosted macOS
-        # image has them, so this checks rather than installs -- and fails
-        # loudly rather than letting bindgen produce a confusing error later.
-        lib="$(xcrun --find clang >/dev/null 2>&1 &&
-               echo "$(xcode-select -p)/usr/lib/libclang.dylib")"
-        if [ -f "$lib" ]; then
-          echo "libclang is already present at $lib"
-        else
-          echo "::error::libclang.dylib not found under $(xcode-select -p)"
+        # Xcode ships libclang, and every hosted macOS image has it, so this
+        # locates it rather than installing -- and fails loudly rather than
+        # letting bindgen produce a confusing error later.
+        #
+        # There are two layouts and they do not agree, which is what this got
+        # wrong before: with the Command Line Tools alone, `xcode-select -p` is
+        # `/Library/Developer/CommandLineTools` and libclang sits directly
+        # under its `usr/lib`; with a full Xcode -- what the hosted images have
+        # -- `xcode-select -p` is inside the app bundle and libclang is one
+        # more level in, under `Toolchains/XcodeDefault.xctoolchain/usr/lib`.
+        # Deriving the directory from `xcrun -f clang` covers both without
+        # hardcoding either: the compiler it finds is in the toolchain's
+        # `usr/bin`, so libclang is its sibling `usr/lib`. The `xcode-select`
+        # path stays as a fallback for a toolchain that resolves oddly.
+        lib=''
+        if clang_bin="$(xcrun -f clang 2>/dev/null)"; then
+          candidate="$(dirname "$(dirname "$clang_bin")")/lib/libclang.dylib"
+          [ -f "$candidate" ] && lib="$candidate"
+        fi
+        if [ -z "$lib" ]; then
+          candidate="$(xcode-select -p)/usr/lib/libclang.dylib"
+          [ -f "$candidate" ] && lib="$candidate"
+        fi
+
+        if [ -z "$lib" ]; then
+          echo "::error::libclang.dylib not found (xcode-select -p = $(xcode-select -p))"
           exit 1
         fi
+        echo "libclang is already present at $lib"
+        # Exported for every later step in the job, so bindgen resolves the
+        # same file this step verified instead of searching on its own -- the
+        # Windows branch below does the same, for the same reason.
+        echo "LIBCLANG_PATH=$(dirname "$lib")" >>"$GITHUB_ENV"
 
     - name: Ensure libclang (Windows)
       if: runner.os == 'Windows'

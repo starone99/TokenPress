@@ -49,6 +49,12 @@ jobs:
     # Gate: a tag whose tests fail never produces binaries.
     needs: test
     strategy:
+      # One platform's failure must not cancel the others. The publish job
+      # needs all four archives, so a partial release is impossible either
+      # way; what fail-fast costs here is knowing whether the other three
+      # would have worked, and at tag time that is exactly what has to be
+      # found out in one run rather than one platform per attempt.
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
