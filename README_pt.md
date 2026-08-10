@@ -147,6 +147,16 @@ pode ler código formatado e responder sobre ele, mas um diff contra essa cópia
 não se aplica ao original não formatado. **Um arquivo que um modelo vai editar
 deve ser entregue a ele não formatado.**
 
+**O TokenPress roda o TokenPress nele mesmo**, pelo hook
+`tokenpress-format` do seu próprio
+[`.pre-commit-config.yaml`](.pre-commit-config.yaml), nas configurações padrão:
+**-22,6%**, 253.666 → 196.415 tokens. Os custos são os que esta seção descreve e
+foram pagos deliberadamente — 1.941 linhas de comentários simples apagadas,
+`git blame` e stack traces degradados, o raciocínio movido para as mensagens de
+commit e para `docs/`. Os testes e o portão de cobertura de 100% passaram sem
+mudança. O antes e depois completo está em
+[SHOWCASE.md](benchmarks/SHOWCASE.md#the-fourteenth-codebase-tokenpress-itself-which-does-use-it).
+
 **É também por isso que não há plugin de editor nem format-on-save.** É assim
 que a maioria conhece Black, Prettier ou rustfmt, e é a única integração que o
 TokenPress não deveria ter: o arquivo aberto no seu editor é, por definição, um
@@ -195,6 +205,17 @@ strip_doc_comments = true
 no lado "ninguém lê este código" da pergunta acima. As opções, o mapeamento
 completo entre flags e configuração e as cargo features estão em
 [INTEGRATIONS.md](docs/INTEGRATIONS.md).
+
+**Fixe uma tag de release, não um branch.** Numa tag as duas integrações baixam
+o binário daquela release e o conferem contra o `SHA256SUMS` da release: alguns
+segundos, e nenhum toolchain Rust, compilador C ou libclang. Um branch ou um
+commit avulso não tem binário de release correspondente, então o CLI é compilado
+a partir do checkout: correto, e minutos em vez de segundos. Pedir um binário
+menor do que o que uma release traz — `TOKENPRESS_NO_RUBY` e afins no hook, as
+entradas `ruby`/`go`/`java`/`csharp` da Action — compila pelo mesmo motivo, e o
+mesmo vale para qualquer plataforma sem arquivo publicado (Windows, macOS Intel
+e todo Linux que não seja x86_64). `TOKENPRESS_NO_PREBUILT=1` força a
+compilação.
 
 ## Ou rode você mesmo
 
@@ -318,6 +339,7 @@ fazer, e como cada verificador externo é invocado — está em
 | [benchmarks/SHOWCASE.md](benchmarks/SHOWCASE.md) | O resumo e os candidatos ≥40% por tokenizador |
 | [ROADMAP.md](ROADMAP.md) | O que vem a seguir, e as questões ainda em aberto |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Compilar, testar, e os toolchains que cada backend exige |
+| [SECURITY.md](SECURITY.md) | Relatar uma vulnerabilidade, o modelo de ameaças, integridade das releases |
 
 ## Desenvolvimento
 

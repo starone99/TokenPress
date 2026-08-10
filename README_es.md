@@ -149,6 +149,16 @@ código formateado y responder sobre él, pero un diff contra esa copia no se
 aplicará al original sin formatear. **Un archivo que un modelo vaya a editar
 debe entregársele sin formatear.**
 
+**TokenPress ejecuta TokenPress sobre sí mismo**, mediante el hook
+`tokenpress-format` de su propio
+[`.pre-commit-config.yaml`](.pre-commit-config.yaml), con los ajustes por
+defecto: **-22.6%**, 253.666 → 196.415 tokens. Los costes son los que describe
+esta sección y se pagaron a sabiendas: 1.941 líneas de comentarios simples
+borradas, `git blame` y las trazas de pila degradadas, el razonamiento movido a
+los mensajes de commit y a `docs/`. Las pruebas y la barrera de cobertura del
+100% pasaron sin cambios. El antes y el después completo está en
+[SHOWCASE.md](benchmarks/SHOWCASE.md#the-fourteenth-codebase-tokenpress-itself-which-does-use-it).
+
 **Por eso tampoco hay plugin de editor ni format-on-save.** Así es como la
 mayoría conoce Black, Prettier o rustfmt, y es la única integración que
 TokenPress no debería tener: el archivo abierto en tu editor es, por
@@ -198,6 +208,17 @@ strip_doc_comments = true
 `format` solo en el lado «nadie lee este código» de la pregunta anterior. Las
 opciones, la correspondencia completa entre banderas y configuración y las
 cargo features están en [INTEGRATIONS.md](docs/INTEGRATIONS.md).
+
+**Fija una etiqueta de release, no una rama.** En una etiqueta ambas
+integraciones descargan el binario de esa release y lo comprueban contra el
+`SHA256SUMS` de la release: unos segundos, y ningún toolchain de Rust,
+compilador de C ni libclang. Una rama o un commit suelto no tienen binario de
+release que les corresponda, así que el CLI se compila desde el checkout:
+correcto, y minutos en lugar de segundos. Pedir un binario más pequeño del que
+trae una release —`TOKENPRESS_NO_RUBY` y compañía en el hook, las entradas
+`ruby`/`go`/`java`/`csharp` de la Action— compila por la misma razón, igual que
+cualquier plataforma sin archivo publicado (Windows, macOS Intel y todo Linux
+que no sea x86_64). `TOKENPRESS_NO_PREBUILT=1` fuerza la compilación.
 
 ## O ejecútalo tú
 
@@ -321,6 +342,7 @@ se invoca cada comprobador externo— está en [LANGUAGES.md](docs/LANGUAGES.md)
 | [benchmarks/SHOWCASE.md](benchmarks/SHOWCASE.md) | El resumen y los candidatos ≥40% por tokenizador |
 | [ROADMAP.md](ROADMAP.md) | Qué viene, y las preguntas que siguen abiertas |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Compilar, probar, y los toolchains que necesita cada backend |
+| [SECURITY.md](SECURITY.md) | Reportar una vulnerabilidad, el modelo de amenazas, integridad de las releases |
 
 ## Desarrollo
 

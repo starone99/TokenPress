@@ -137,6 +137,14 @@ gin (Go)              █████████░                        -18.
 수는 있지만, 그 사본을 기준으로 만든 diff는 포맷하지 않은 원본에 적용되지
 않습니다. **모델이 편집할 파일은 포맷하지 않은 채로 주세요.**
 
+**TokenPress는 TokenPress 자신에게 TokenPress를 돌립니다.** 자체
+[`.pre-commit-config.yaml`](.pre-commit-config.yaml)의 `tokenpress-format` 훅으로,
+기본 설정에서 **-22.6%**, 253,666 → 196,415 토큰. 대가는 이 절이 설명하는 바로
+그것이고 알고서 치렀습니다 — 평문 주석 1,941줄 삭제, `git blame`과 스택 트레이스
+열화, 근거는 커밋 메시지와 `docs/`로 이동. 테스트와 100% 커버리지 게이트는 그대로
+통과했습니다. 전후 전체는
+[SHOWCASE.md](benchmarks/SHOWCASE.md#the-fourteenth-codebase-tokenpress-itself-which-does-use-it)에.
+
 **에디터 플러그인과 format-on-save가 없는 것도 같은 이유입니다.** 대부분의
 사람이 Black·Prettier·rustfmt를 만나는 경로가 그것이지만, TokenPress에는 있으면
 안 되는 통합입니다. 에디터에 열려 있는 파일은 정의상 사람이 읽는 파일이니까요.
@@ -182,6 +190,15 @@ strip_doc_comments = true
 두 통합 모두 기본값은 `check`이고 아무것도 쓰지 않습니다. `format`은 위 질문의
 "아무도 읽지 않는다" 쪽에서만 쓰세요. 옵션과 플래그/설정 대응표, cargo feature는
 [INTEGRATIONS.md](docs/INTEGRATIONS.md)에 있습니다.
+
+**브랜치가 아니라 릴리스 태그에 핀하세요.** 태그면 두 통합 모두 그 릴리스의
+바이너리를 받아 릴리스의 `SHA256SUMS`로 검증합니다 — 수 초면 끝나고 Rust 툴체인도
+C 컴파일러도 libclang도 필요 없습니다. 브랜치나 단순 커밋은 대응하는 릴리스
+바이너리가 없어서 체크아웃에서 CLI를 컴파일합니다: 정확하지만 수 초가 아니라 수 분
+걸립니다. 릴리스가 싣는 것보다 작은 바이너리를 요구할 때도 — 훅의
+`TOKENPRESS_NO_RUBY` 등, Action의 `ruby`/`go`/`java`/`csharp` 입력 — 같은 이유로
+컴파일하며, 릴리스에 아카이브가 없는 호스트(Windows, Intel macOS, x86_64가 아닌
+모든 Linux)도 마찬가지입니다. `TOKENPRESS_NO_PREBUILT=1`은 소스 빌드를 강제합니다.
 
 ## 직접 실행하기
 
@@ -298,6 +315,7 @@ tokenpress stats . --tokenizer kimi:tiktoken.model   # Kimi ranks 형식
 | [benchmarks/SHOWCASE.md](benchmarks/SHOWCASE.md) | 요약과 토크나이저별 ≥40% 후보 |
 | [ROADMAP.md](ROADMAP.md) | 다음 작업과 열려 있는 질문들 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 빌드·테스트와 백엔드별 필요한 툴체인 |
+| [SECURITY.md](SECURITY.md) | 취약점 신고, 위협 모델, 릴리스 무결성 |
 
 ## 개발
 

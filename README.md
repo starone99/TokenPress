@@ -207,8 +207,8 @@ from the checkout instead: correct, and minutes rather than seconds. Asking for
 a smaller binary than a release ships — the hook's `TOKENPRESS_NO_RUBY` and
 friends, the Action's `ruby`/`go`/`java`/`csharp` inputs — compiles for the
 same reason, and so does anything the releases have no archive for (Windows,
-and every non-x86_64 Linux). `TOKENPRESS_NO_PREBUILT=1` forces the source build
-outright.
+Intel macOS, and every non-x86_64 Linux). `TOKENPRESS_NO_PREBUILT=1` forces the
+source build outright.
 
 ## Or run it yourself
 

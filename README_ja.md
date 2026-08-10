@@ -139,6 +139,14 @@ gin (Go)              █████████░                        -18.
 未フォーマットの原本には適用できません。**モデルが編集するファイルは、
 フォーマットせずに渡してください。**
 
+**TokenPress は TokenPress 自身に TokenPress を実行します。**自身の
+[`.pre-commit-config.yaml`](.pre-commit-config.yaml) の `tokenpress-format` フックで、
+デフォルト設定で **-22.6%**、253,666 → 196,415 トークン。代償はこの節が述べているもの
+そのもので、承知のうえで払いました — 素の `//` コメント 1,941 行を削除、`git blame` と
+スタックトレースの劣化、根拠はコミットメッセージと `docs/` へ移動。テストと 100%
+カバレッジゲートはそのまま通過しています。前後の全体は
+[SHOWCASE.md](benchmarks/SHOWCASE.md#the-fourteenth-codebase-tokenpress-itself-which-does-use-it) に。
+
 **エディタプラグインと format-on-save がないのも同じ理由です。**多くの人が
 Black・Prettier・rustfmt に出会う経路がそれですが、TokenPress にあってはならない
 統合です。エディタで開いているファイルは、定義上、人間が読んでいるファイルです。
@@ -185,6 +193,16 @@ strip_doc_comments = true
 どちらの統合もデフォルトは `check` で、何も書きません。`format` は上の問いの
 「誰も読まない」側でのみ使ってください。オプション、フラグと設定の対応、cargo
 フィーチャは [INTEGRATIONS.md](docs/INTEGRATIONS.md) にあります。
+
+**ブランチではなくリリースタグにピン留めしてください。**タグならどちらの統合も
+そのリリースのバイナリをダウンロードし、リリースの `SHA256SUMS` で検証します —
+数秒で終わり、Rust ツールチェインも C コンパイラも libclang も要りません。
+ブランチや素のコミットには対応するリリースバイナリがないため、チェックアウトから
+CLI をコンパイルします。正しくはありますが、数秒ではなく数分です。リリースが積む
+より小さいバイナリを求める場合も — フックの `TOKENPRESS_NO_RUBY` など、Action の
+`ruby`/`go`/`java`/`csharp` 入力 — 同じ理由でコンパイルし、リリースにアーカイブが
+ない環境（Windows、Intel macOS、x86_64 以外のすべての Linux）も同様です。
+`TOKENPRESS_NO_PREBUILT=1` はソースビルドを強制します。
 
 ## 自分で実行する
 
@@ -302,6 +320,7 @@ tokenpress stats . --tokenizer kimi:tiktoken.model   # Kimi ranks 形式
 | [benchmarks/SHOWCASE.md](benchmarks/SHOWCASE.md) | 要約と、トークナイザ別の ≥40% 候補 |
 | [ROADMAP.md](ROADMAP.md) | 次に何をするか、開いている問い |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | ビルドとテスト、バックエンドごとに必要なツールチェイン |
+| [SECURITY.md](SECURITY.md) | 脆弱性の報告、脅威モデル、リリースの完全性 |
 
 ## 開発
 

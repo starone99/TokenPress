@@ -130,6 +130,13 @@ pre-commit 钩子和 GitHub Action 正是为此存在。但有两件事要先知
 问题，但基于该副本生成的 diff 无法应用到未格式化的原文件上。**要让模型编辑的
 文件，应当以未格式化的形式交给它。**
 
+**TokenPress 对 TokenPress 自己运行 TokenPress。**通过自身
+[`.pre-commit-config.yaml`](.pre-commit-config.yaml) 中的 `tokenpress-format` 钩子，
+在默认设置下 **-22.6%**，253,666 → 196,415 tokens。代价正是本节所描述的那些，并且是
+明知而付的 —— 删除 1,941 行普通注释，`git blame` 与堆栈跟踪退化，理由迁到提交信息和
+`docs/`。测试与 100% 覆盖率门禁原样通过。完整前后对比见
+[SHOWCASE.md](benchmarks/SHOWCASE.md#the-fourteenth-codebase-tokenpress-itself-which-does-use-it)。
+
 **这也是为什么没有编辑器插件、没有保存时格式化。**多数人正是通过这种方式接触
 Black、Prettier、rustfmt，但它恰恰是 TokenPress 不该有的集成：在编辑器里打开的
 文件，按定义就是有人正在读的文件。一个在保存时运行它的扩展，在上面这个问题所问的
@@ -174,6 +181,14 @@ strip_doc_comments = true
 两种集成的默认都是 `check`，什么也不写。只在上述问题的「没人读」那一侧才使用
 `format`。选项、标志与配置的完整对应关系以及 cargo feature，见
 [INTEGRATIONS.md](docs/INTEGRATIONS.md)。
+
+**请固定到发布标签，而不是分支。**若是标签，两种集成都会下载该发布的二进制文件并对照
+发布的 `SHA256SUMS` 校验 —— 只需几秒，且完全不需要 Rust 工具链、C 编译器或 libclang。
+分支或裸提交没有与之对应的发布二进制，因此会从检出的源码编译 CLI：结果正确，但耗时是
+分钟而非秒。要求比发布所含更小的二进制时同理会编译 —— 钩子的 `TOKENPRESS_NO_RUBY`
+等，Action 的 `ruby`/`go`/`java`/`csharp` 输入 —— 发布没有对应归档的平台（Windows、
+Intel macOS，以及所有非 x86_64 的 Linux）也是如此。`TOKENPRESS_NO_PREBUILT=1`
+强制走源码构建。
 
 ## 或者自己运行
 
@@ -287,6 +302,7 @@ tokenpress stats . --tokenizer kimi:tiktoken.model   # Kimi ranks 格式
 | [benchmarks/SHOWCASE.md](benchmarks/SHOWCASE.md) | 摘要，以及按分词器分列的 ≥40% 候选 |
 | [ROADMAP.md](ROADMAP.md) | 接下来做什么，以及尚未决定的问题 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 构建、测试，以及各后端所需的工具链 |
+| [SECURITY.md](SECURITY.md) | 漏洞报告、威胁模型、发布完整性 |
 
 ## 开发
 

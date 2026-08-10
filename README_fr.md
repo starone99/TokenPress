@@ -148,6 +148,17 @@ patch. Un modèle peut lire du code formaté et répondre à son sujet, mais un
 diff produit contre cette copie ne s'appliquera pas à l'original non formaté.
 **Un fichier qu'un modèle va modifier doit lui être donné non formaté.**
 
+**TokenPress exécute TokenPress sur lui-même**, via le hook
+`tokenpress-format` de son propre
+[`.pre-commit-config.yaml`](.pre-commit-config.yaml), aux réglages par défaut :
+**-22,6 %**, 253 666 → 196 415 tokens. Les coûts sont ceux que décrit cette
+section et ils ont été payés en connaissance de cause — 1 941 lignes de
+commentaires simples supprimées, `git blame` et les traces de pile dégradées,
+le raisonnement déplacé vers les messages de commit et `docs/`. Les tests et la
+barrière de couverture à 100 % sont passés inchangés. L'avant/après complet est
+dans
+[SHOWCASE.md](benchmarks/SHOWCASE.md#the-fourteenth-codebase-tokenpress-itself-which-does-use-it).
+
 **C'est aussi pourquoi il n'y a ni plugin d'éditeur ni format-on-save.** C'est
 ainsi que la plupart des gens rencontrent Black, Prettier ou rustfmt, et c'est
 la seule intégration que TokenPress ne devrait pas avoir : le fichier ouvert
@@ -199,6 +210,17 @@ strip_doc_comments = true
 N'utilisez `format` que du côté « personne ne lit ce code » de la question
 ci-dessus. Les options, la correspondance complète options/configuration et les
 cargo features sont dans [INTEGRATIONS.md](docs/INTEGRATIONS.md).
+
+**Épinglez un tag de release, pas une branche.** Sur un tag, les deux
+intégrations téléchargent le binaire de cette release et le vérifient avec le
+`SHA256SUMS` de la release : quelques secondes, et aucun toolchain Rust,
+compilateur C ou libclang. Une branche ou un commit nu n'a pas de binaire de
+release correspondant, donc le CLI est compilé depuis le checkout : correct, et
+des minutes plutôt que des secondes. Demander un binaire plus petit que celui
+d'une release — `TOKENPRESS_NO_RUBY` et consorts pour le hook, les entrées
+`ruby`/`go`/`java`/`csharp` de l'Action — compile pour la même raison, tout
+comme toute plateforme sans archive publiée (Windows, macOS Intel et tout Linux
+non-x86_64). `TOKENPRESS_NO_PREBUILT=1` force la compilation depuis les sources.
 
 ## Ou l'exécuter vous-même
 
@@ -324,6 +346,7 @@ faire, et comment chaque vérificateur externe est invoqué — est dans
 | [benchmarks/SHOWCASE.md](benchmarks/SHOWCASE.md) | Le résumé, et les candidats ≥40% par tokeniseur |
 | [ROADMAP.md](ROADMAP.md) | La suite, et les questions encore ouvertes |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Compiler, tester, et les toolchains dont chaque backend a besoin |
+| [SECURITY.md](SECURITY.md) | Signaler une vulnérabilité, le modèle de menace, l'intégrité des releases |
 
 ## Développement
 
