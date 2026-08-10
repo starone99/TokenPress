@@ -39,7 +39,17 @@ arch="$(uname -m)"
 case "$os-$arch" in
     Linux-x86_64)             target="x86_64-unknown-linux-gnu" ;;
     Darwin-arm64|Darwin-aarch64) target="aarch64-apple-darwin" ;;
-    Darwin-x86_64)            target="x86_64-apple-darwin" ;;
+    Darwin-x86_64)
+        # Deliberately not shipped: building it needs a `macos-13` runner and
+        # GitHub is retiring the Intel macOS images, so the release would be
+        # gated on a deprecated label. Said plainly rather than left to the
+        # generic message below, because an Intel Mac is a supported host to
+        # build on -- it is only the prebuilt archive that is missing.
+        die "no prebuilt binary for Intel macOS -- the releases ship Apple
+Silicon only, because the Intel build runner is being retired upstream.
+Build from source instead (this works on your machine):
+  cargo install --git https://github.com/$REPO tokenpress-cli"
+        ;;
     *)
         die "no prebuilt binary for $os-$arch.
 Build from source instead:

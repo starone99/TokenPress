@@ -207,7 +207,7 @@ cargo install --git https://github.com/starone99/TokenPress tokenpress-cli
 
 ビルド済みアーカイブと `SHA256SUMS` は
 [リリースページ](https://github.com/starone99/TokenPress/releases) に Linux
-x86_64、macOS（Apple Silicon・Intel）、Windows x86_64 向けがあります。その他の
+x86_64、macOS（Apple Silicon）、Windows x86_64 向けがあります。Intel macOS を含むその他の
 プラットフォームはソースからビルドします。`TOKENPRESS_VERSION` でタグを固定し、
 `TOKENPRESS_BIN_DIR` でインストール先を変更できます。Ruby・Go・Java・C#
 バックエンドのビルドには C コンパイラが、Ruby にはさらに libclang が必要です。

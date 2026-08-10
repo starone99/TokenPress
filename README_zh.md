@@ -195,7 +195,7 @@ cargo install --git https://github.com/starone99/TokenPress tokenpress-cli
 
 预构建归档和 `SHA256SUMS` 在
 [发布页面](https://github.com/starone99/TokenPress/releases)，覆盖 Linux x86_64、
-macOS（Apple Silicon 与 Intel）和 Windows x86_64；其他平台请从源码构建。
+macOS（Apple Silicon）和 Windows x86_64；包括 Intel macOS 在内的其他平台请从源码构建。
 `TOKENPRESS_VERSION` 用于固定标签，`TOKENPRESS_BIN_DIR` 用于更改安装位置。构建
 Ruby、Go、Java 和 C# 后端需要 C 编译器，Ruby 还需要 libclang ——
 `--no-default-features` 两者都不需要，`--features go,java` 只加回你点名的部分。

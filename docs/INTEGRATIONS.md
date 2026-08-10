@@ -89,8 +89,9 @@ them; what stays is `curl` or `wget`, and `sh` on Windows:
   that clone's `target/`.
 - **When the source build is what runs.** Four cases, and only the last is a
   choice: the pin is not a tag; the host has no release archive (Windows, and
-  every non-x86_64 Linux — the release ships Linux x86_64, macOS on both
-  architectures, and Windows x86_64, but `install.sh` unpacks `tar.gz` only);
+  every non-x86_64 Linux, and Intel macOS — the release ships Linux x86_64,
+  Apple Silicon macOS and Windows x86_64, and `install.sh` unpacks `tar.gz`
+  only);
   the download or its checksum failed, which is reported on stderr and never
   turned into a refusal to commit; or `TOKENPRESS_NO_PREBUILT=1` is set. The
   `TOKENPRESS_NO_*` backend switches below also force it, because a release

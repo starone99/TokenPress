@@ -232,8 +232,9 @@ cargo install --git https://github.com/starone99/TokenPress tokenpress-cli
 
 Prebuilt archives and `SHA256SUMS` are on
 [the releases page](https://github.com/starone99/TokenPress/releases) for Linux
-x86_64, macOS (Apple Silicon and Intel) and Windows x86_64; any other platform
-builds from source. `TOKENPRESS_VERSION` pins a tag and `TOKENPRESS_BIN_DIR`
+x86_64, macOS (Apple Silicon) and Windows x86_64; any other platform builds
+from source — **Intel macOS included**, because the Intel build runner is
+being retired upstream and a release should not wait on a deprecated one. `TOKENPRESS_VERSION` pins a tag and `TOKENPRESS_BIN_DIR`
 changes where the script installs. Building the Ruby, Go, Java and C# backends
 needs a C compiler, and libclang for Ruby — `--no-default-features` needs
 neither, and `--features go,java` adds back only what you name.

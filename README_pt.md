@@ -218,7 +218,7 @@ cargo install --git https://github.com/starone99/TokenPress tokenpress-cli
 
 Os arquivos pré-compilados e o `SHA256SUMS` estão na
 [página de releases](https://github.com/starone99/TokenPress/releases) para
-Linux x86_64, macOS (Apple Silicon e Intel) e Windows x86_64; qualquer outra
+Linux x86_64, macOS (Apple Silicon) e Windows x86_64; qualquer outra, incluindo macOS Intel,
 plataforma compila a partir do fonte. `TOKENPRESS_VERSION` fixa uma tag e
 `TOKENPRESS_BIN_DIR` muda onde o script instala. Compilar os backends de Ruby,
 Go, Java e C# exige um compilador C, e libclang para Ruby —

@@ -60,14 +60,24 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
-          # Apple Silicon and Intel are built on their own runners rather than
+          # Apple Silicon is built on its own runner rather than
           # cross-compiled: the workspace compiles C (tree-sitter, prism) and
-          # runs bindgen, so a native host is the cheap way to get both right.
+          # runs bindgen, so a native host is the cheap way to get it right.
+          #
+          # **No `x86_64-apple-darwin`.** Building it natively needs a
+          # `macos-13` runner, and GitHub is retiring the Intel macOS images:
+          # the v0.1.0 tag sat queued for that label for over an hour while
+          # every other target finished in minutes, and a release that cannot
+          # be cut until a deprecated runner frees up is a standing tax on
+          # every future tag. Intel Mac users build from source --
+          # `cargo install --git https://github.com/starone99/TokenPress
+          # tokenpress-cli` -- which `install.sh` tells them when it finds no
+          # archive for their host. Cross-compiling from `macos-latest` was
+          # the alternative and was not taken: it would ship an artifact no
+          # job in this workflow has ever executed, and the C dependencies
+          # here are exactly where that goes wrong quietly.
           - os: macos-latest
             target: aarch64-apple-darwin
-            archive: tar.gz
-          - os: macos-13
-            target: x86_64-apple-darwin
             archive: tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc

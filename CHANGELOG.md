@@ -86,6 +86,16 @@ Everything so far. There has been no release.
 - `SECURITY.md`: private reporting route, the threat model for a tool that
   rewrites source files in place, and what release integrity does and does not
   cover.
+- **Releases ship Linux x86_64, Apple Silicon macOS and Windows x86_64.**
+  There is no Intel macOS archive: building it natively needs a `macos-13`
+  runner and GitHub is retiring the Intel images — the first v0.1.0 attempt
+  sat queued on that label for over an hour while every other target finished
+  in minutes. Intel Macs build from source with
+  `cargo install --git https://github.com/starone99/TokenPress tokenpress-cli`,
+  which is what `install.sh` now tells them by name rather than through its
+  generic unsupported-host message. Cross-compiling was rejected: it would
+  publish an artifact no job has ever run, and the C dependencies here are
+  where that fails quietly.
 
 ### Changed
 
