@@ -45,10 +45,4 @@
 //! here explicitly rather than left implied. The one job that deliberately
 //! runs without it, `no-ruby`, builds `tokenpress-cli
 //! --no-default-features`, which does not reach this crate.
-
-pub mod comparable;
-pub mod emit;
-pub mod parser;
-pub mod verify;
-
-pub use tokenpress_core::{Error, Result};
+pub mod comparable;pub mod emit;pub mod parser;pub mod verify;pub use tokenpress_core::{Error,Result};

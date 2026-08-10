@@ -13,18 +13,7 @@
 //! consequently created by the caller and passed in, so the whole
 //! parse → emit → verify pipeline runs inside a single function with one
 //! local arena that is dropped when that function returns.
-
-use std::path::Path;
-
-use oxc_allocator::Allocator;
-use oxc_parser::Parser;
-use oxc_span::SourceType;
-use tokenpress_core::{Error, Result};
-
-pub use oxc_allocator::Allocator as Arena;
-pub use oxc_ast::{ast, ast::Program};
-pub use oxc_span::SourceType as Dialect;
-
+use std::path::Path;use oxc_allocator::Allocator;use oxc_parser::Parser;use oxc_span::SourceType;use tokenpress_core::{Error,Result};pub use oxc_allocator::Allocator as Arena;pub use oxc_ast::{ast,ast::Program};pub use oxc_span::SourceType as Dialect;
 /// Parses `source` as the dialect implied by `path`'s extension.
 ///
 /// The dialect comes from [`SourceType::from_path`], which accepts
@@ -39,102 +28,4 @@ pub use oxc_span::SourceType as Dialect;
 ///
 /// The returned program borrows from `allocator`; see the module-level arena
 /// lifetime rule.
-pub fn parse<'a>(allocator: &'a Allocator, path: &Path, source: &'a str) -> Result<Program<'a>> {
-    let source_type = SourceType::from_path(path)
-        .map_err(|_| Error::UnsupportedLanguage(path.display().to_string()))?;
-
-    let parsed = Parser::new(allocator, source, source_type).parse();
-    if parsed.panicked || !parsed.diagnostics.is_empty() {
-        let details = parsed
-            .diagnostics
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("; ");
-        return Err(Error::Parse(format!("{}: {details}", path.display())));
-    }
-    Ok(parsed.program)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use oxc_allocator::Allocator;
-    use std::path::Path;
-
-    fn ok(name: &str, source: &str) {
-        let allocator = Allocator::default();
-        let program = parse(&allocator, Path::new(name), source).unwrap();
-        assert!(!program.body.is_empty(), "{name} produced an empty program");
-    }
-
-    #[test]
-    fn parses_plain_javascript() {
-        ok("a.js", "const a = 1;\n");
-    }
-
-    #[test]
-    fn parses_typescript_interface() {
-        ok("a.ts", "interface A { b: string }\n");
-    }
-
-    #[test]
-    fn parses_jsx() {
-        ok("a.jsx", "const a = <div className=\"x\">hi</div>;\n");
-    }
-
-    #[test]
-    fn parses_tsx() {
-        ok(
-            "a.tsx",
-            "const a = (b: string): JSX.Element => <p>{b}</p>;\n",
-        );
-    }
-
-    #[test]
-    fn parses_declaration_file() {
-        ok("a.d.ts", "declare function f(x: number): void;\n");
-    }
-
-    #[test]
-    fn parses_module_and_commonjs_extensions() {
-        ok("a.mjs", "export const a = 1;\n");
-        ok("a.cjs", "module.exports = 1;\n");
-        ok("a.mts", "export const a: number = 1;\n");
-        ok("a.cts", "const a: number = 1;\n");
-    }
-
-    #[test]
-    fn rejects_unknown_extension() {
-        let allocator = Allocator::default();
-        let err = parse(&allocator, Path::new("notes.txt"), "const a = 1;\n").unwrap_err();
-        assert_eq!(err.to_string(), "unsupported language for path: notes.txt");
-    }
-
-    #[test]
-    fn rejects_syntax_error_that_panics_the_parser() {
-        let allocator = Allocator::default();
-        let err = parse(&allocator, Path::new("broken.js"), "function (").unwrap_err();
-        let message = err.to_string();
-        assert!(message.starts_with("parse error: broken.js:"), "{message}");
-        assert!(
-            message.len() > "parse error: broken.js: ".len(),
-            "{message}"
-        );
-    }
-
-    #[test]
-    fn rejects_recoverable_error_without_panic() {
-        // oxc's parser is error-recovering: a top-level `return` yields
-        // `panicked == false` with a non-empty diagnostic list, so checking
-        // `panicked` alone would let this through.
-        let allocator = Allocator::default();
-        let err = parse(&allocator, Path::new("toplevel.js"), "return 1;\n").unwrap_err();
-        let message = err.to_string();
-        assert!(
-            message.starts_with("parse error: toplevel.js:"),
-            "{message}"
-        );
-        assert!(message.contains("return"), "{message}");
-    }
-}
+pub fn parse<'a>(allocator:&'a Allocator,path:&Path,source:&'a str)->Result<Program<'a>>{let source_type=SourceType::from_path(path).map_err(|_|Error::UnsupportedLanguage(path.display().to_string()))?;let parsed=Parser::new(allocator,source,source_type).parse();if parsed.panicked||!parsed.diagnostics.is_empty(){let details=parsed.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ");return Err(Error::Parse(format!("{}: {details}",path.display())));}Ok(parsed.program)}#[cfg(test)]mod tests{use super::*;use oxc_allocator::Allocator;use std::path::Path;fn ok(name:&str,source:&str){let allocator=Allocator::default();let program=parse(&allocator,Path::new(name),source).unwrap();assert!(!program.body.is_empty(),"{name} produced an empty program");}#[test]fn parses_plain_javascript(){ok("a.js","const a = 1;\n");}#[test]fn parses_typescript_interface(){ok("a.ts","interface A { b: string }\n");}#[test]fn parses_jsx(){ok("a.jsx","const a = <div className=\"x\">hi</div>;\n");}#[test]fn parses_tsx(){ok("a.tsx","const a = (b: string): JSX.Element => <p>{b}</p>;\n",);}#[test]fn parses_declaration_file(){ok("a.d.ts","declare function f(x: number): void;\n");}#[test]fn parses_module_and_commonjs_extensions(){ok("a.mjs","export const a = 1;\n");ok("a.cjs","module.exports = 1;\n");ok("a.mts","export const a: number = 1;\n");ok("a.cts","const a: number = 1;\n");}#[test]fn rejects_unknown_extension(){let allocator=Allocator::default();let err=parse(&allocator,Path::new("notes.txt"),"const a = 1;\n").unwrap_err();assert_eq!(err.to_string(),"unsupported language for path: notes.txt");}#[test]fn rejects_syntax_error_that_panics_the_parser(){let allocator=Allocator::default();let err=parse(&allocator,Path::new("broken.js"),"function (").unwrap_err();let message=err.to_string();assert!(message.starts_with("parse error: broken.js:"),"{message}");assert!(message.len()>"parse error: broken.js: ".len(),"{message}");}#[test]fn rejects_recoverable_error_without_panic(){let allocator=Allocator::default();let err=parse(&allocator,Path::new("toplevel.js"),"return 1;\n").unwrap_err();let message=err.to_string();assert!(message.starts_with("parse error: toplevel.js:"),"{message}");assert!(message.contains("return"),"{message}");}}
